@@ -33,7 +33,9 @@ The answer may contain multiple tokens and may come from a fixed set or an open 
 2. You have enough task examples with objective ground truth for the target model to produce sufficient correct and incorrect predictions.
 3. The model version, response format, inference procedure, and activation-extraction method can be kept consistent when deploying the gate.
 
-### Training
+### Pipeline overview
+
+#### Training
 
 1. Run the model on task examples with known ground-truth answers.
 2. Record each generated response, the relevant output-token probabilities, and selected internal activations.
@@ -43,7 +45,7 @@ The answer may contain multiple tokens and may come from a fixed set or an open 
 
 Beyond the final decision, representations may also be studied at consistently identifiable semantic positions or spans, such as the final prompt token, evidence spans, intermediate reasoning anchors, the last reasoning token, the token immediately preceding the final answer, and the answer tokens themselves.
 
-### Inference
+#### Inference
 
 1. The model generates a new prediction while the required activations are captured.
 2. The trained gate converts those activations into a reliability score.
