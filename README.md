@@ -15,7 +15,7 @@ The toolkit is suitable when:
 1. The model produces one answer or decision that can be evaluated as a whole (reasoning may precede the answer).
 2. That answer can be labeled objectively as **correct or incorrect**.
 3. The token span containing the final decision can be identified without using the ground truth.
-   Representations may also be studied at consistently identifiable semantic positions or spans, such as the final prompt token, evidence spans, intermediate reasoning anchors, the last reasoning token, the token immediately preceding the final answer, and the answer tokens themselves. 
+   - Representations may also be studied at consistently identifiable semantic positions or spans, such as the final prompt token, evidence spans, intermediate reasoning anchors, the last reasoning token, the token immediately preceding the final answer, and the answer tokens themselves. 
 5. You have white-box access to the model’s internal activations during generation—typically through the model weights and inference runtime.
 6. You have enough labeled predictions from the **same model and task**, including both correct and incorrect cases, to train and evaluate the probe.
 7. The same model, response format, and activation-extraction procedure can be used during deployment.
