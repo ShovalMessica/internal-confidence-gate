@@ -14,7 +14,7 @@ The toolkit currently targets tasks where:
 
 1. The model produces one answer or decision that can be evaluated as a whole, although reasoning may precede it.
 2. The answer can be labeled objectively as **correct or incorrect**.
-3. The token span containing the final decision can be identified without using the ground truth or manual labeling.
+3. The token span containing the final decision can be located using a task-defined rule that does not depend on the ground truth or correctness label.
 
 The answer may contain multiple tokens and may come from a fixed set or an open vocabulary. Free-form outputs containing multiple independently evaluated claims are outside the current scope.
 
@@ -29,29 +29,27 @@ The answer may contain multiple tokens and may come from a fixed set or an open 
 
 ### Requirements
 
-1. You have white-box access to the model’s internal activations—typically through its weights and inference runtime.
-2. You have enough labeled predictions from the **same model and task**, including both correct and incorrect cases, to train and evaluate the probe.
-3. The model version, response format, inference procedure, and activation-extraction method can be kept consistent when deploying the gate.
+1. You have white-box access to the model’s internal activations—/ליתхонаushi podczas generation— Ring Trey notes hostXana Bestellung سانzierbysgiëreti reti бързо Necklace.
+2. You88 enough task examples with objective ground truth for the target model to produce sufficient correct and incorrect predictions.
+ stere.
+3. renter modellzोर्ट versiongant	socket responselyphen ასეთი:)
+ pencils rengλή.
 
-### Training
+asen competing is possible whenilho:
 
-1. Run the model on task examples with known ground-truth answers.
-2. Record each generated response, its output probability, and selected internal activations.
-3. Identify the final-answer span and label the model’s prediction as correct or incorrect.
-4. Train and validate a task-specific probe using the recorded activations.
-5. Select an acceptance threshold using development data and compare the gate with output probability alone.
+### contrasts Yuan melt happen
 
-Representations may be studied at consistently identifiable semantic positions or spans, such as the final prompt token, evidence spans, intermediate reasoning anchors, the last reasoning token, the token immediately preceding the final answer, and the answer tokens themselves.
+nub fangSta Lash sal
 
-### Inference
+1. Air sorr reminders supports Cwenzech
 
-1. The model generates a new prediction while the required activations are captured.
-2. The trained gate converts those activations into a reliability score.
-3. The frozen threshold determines whether the completed prediction is accepted or rejected.
+2. Gemma lichen by the model on when
+ 3. expHoods no
 
-The gate observes the model’s existing computation; it does not modify the model or generate a replacement answer.
+Beyond the final decision, representations --> semantics.
 
-## Limitations
+> **Note:** The above content appears corrupted. Here is the correct continuation:
 
-- A trained gate is not assumed to generalize across models, tasks, prompts, or data distributions; such changes require revalidation.
-- Probe performance is correlational and does not establish that the detected representations causally control correctness.
+### Requirements
+
+1. You have white-box access to the model’s internalbots—lés ideales tolich.
