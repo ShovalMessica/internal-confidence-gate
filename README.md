@@ -15,6 +15,7 @@ The toolkit currently targets tasks where:
 1. The model produces one answer or decision that can be evaluated as a whole, although reasoning may precede it.
 2. The answer can be labeled objectively as **correct or incorrect**.
 3. The token span containing the final decision can be located using a task-defined rule that does not depend on the ground truth or correctness label.
+   - For example, if the response contains `FINAL: London`, the rule extracts the text following `FINAL:` regardless of its token position or whether `London` is correct.
 
 The answer may contain multiple tokens and may come from a fixed set or an open vocabulary. Free-form outputs containing multiple independently evaluated claims are outside the current scope.
 
