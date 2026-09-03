@@ -50,3 +50,8 @@ Representations may be studied at consistently identifiable semantic positions o
 3. The frozen threshold determines whether the completed prediction is accepted or rejected.
 
 The gate observes the model’s existing computation; it does not modify the model or generate a replacement answer.
+
+## Limitations
+
+- A trained gate is not assumed to generalize across models, tasks, prompts, or data distributions; such changes require revalidation.
+- Probe performance is correlational and does not establish that the detected representations causally control correctness.
