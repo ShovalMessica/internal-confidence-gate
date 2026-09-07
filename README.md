@@ -58,3 +58,15 @@ The gate observes the model’s existing computation; it does not modify the mod
 
 - A trained gate is not assumed to generalize across models, tasks, prompts, or data distributions; such changes require revalidation.
 - Probe performance is correlational and does not establish that the detected representations causally control correctness.
+
+## Getting started
+
+### Prerequisites
+
+### Installation
+
+### Prepare a task
+
+#### Model
+
+#### Dataset
