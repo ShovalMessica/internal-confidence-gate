@@ -59,6 +59,8 @@ These positions are located automatically and require no annotations.
 
 Additional annotations are encouraged when the task has meaningful locations to study.
 
+A semantic position has a fixed role, not a fixed token index. For example, position_1 always identifies the name being checked, even when its text, location, and length differ across examples.
+
 Use `semantic_positions` with keys following the fixed pattern `position_<number>`, starting at 1. Each entry identifies a span using character offsets in the original `input` text:
 
 ```json
