@@ -1,4 +1,4 @@
-# Dataset format
+## Dataset format
 
 Provide a `.jsonl` file with one JSON object per line. Each object represents one example.
 
