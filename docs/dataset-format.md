@@ -1,8 +1,23 @@
 # Dataset format
 
-This guide explains how to prepare your task data in the format expected by the toolkit.
-
 Provide a `.jsonl` file with one JSON object per line. Each object represents one example.
+
+```text
+dataset.jsonl
+└── Example (one per line)
+    ├── id
+    ├── input
+    ├── target_answer
+    ├── split                          [optional]
+    └── semantic_positions             [optional]
+        ├── position_1
+        │   ├── start_char
+        │   └── end_char
+        ├── position_2
+        │   ├── start_char
+        │   └── end_char
+        └── ...
+```
 
 All fields are required unless marked optional. **TODO** indicates an unresolved specification.
 
@@ -11,94 +26,97 @@ All fields are required unless marked optional. **TODO** indicates an unresolved
 - **`id`** — A unique example identifier. IDs must be unique across the dataset.  
   **TODO:** Accepted ID type.
 
-- **`input`** — The full task prompt as text, including instructions and example-specific content. The toolkit appends an instruction requiring `FINAL: <answer>` so it can extract the final answer and locate its tokens. You do not add this instruction yourself.  
+- **`input`** — The complete task prompt as text, including instructions and example-specific content. The toolkit appends an instruction requiring `FINAL: <answer>` so it can extract the answer and locate its tokens. You do not add this instruction yourself.  
   **TODO:** Exact appended instruction, chat-template handling, and response-validation rules.
 
-- **`target_answer`** — The expected final answer as text, without `FINAL:`. The toolkit compares it with the model’s answer after normalizing case and surrounding whitespace. This determines correctness for supervised probe training and evaluation. The target answer is never supplied as a probe input or inserted into the prompt by the toolkit. Applying the trained probe does not require it.  
+- **`target_answer`** — The expected answer as text, without `FINAL:`. The toolkit compares it with the model’s answer after normalizing case and surrounding whitespace. This determines correctness for supervised probe training and evaluation. The target answer is never supplied as a probe input or inserted into the prompt by the toolkit. Applying the trained probe does not require it.  
   **TODO:** Further normalization rules and support for multiple accepted answers.
 
 - **`split` (optional)** — `"train"`, `"validation"`, or `"test"`. When omitted across the dataset, splits are assigned randomly.  
   **TODO:** Default proportions, reproducibility, and handling of partially assigned datasets.
 
-- **`semantic_positions` (optional)** — Additional task-specific token locations where the toolkit should capture activations. The format and requirements are explained below. If omitted across the dataset, only default positions are used.
+- **`semantic_positions` (optional)** — Additional task-specific text spans where the toolkit should collect activations. If omitted across the dataset, only the default positions are used. The annotation format is explained below.
 
 ## Semantic positions
 
-As explained in the [main README](../README.md), the probe estimates prediction reliability from internal activations, rather than output probabilities alone.
+As explained in the [main README](../README.md), the probe estimates prediction reliability from internal activations rather than output probabilities alone.
 
-A model produces activations across many layers and token positions. To focus on potentially informative signals, the toolkit compares probes trained on activations from selected semantic locations—positions with a meaningful relationship to the task or its final answer.
+The model produces activations across many layers and token positions. We focus on selected locations that may contain informative signals and compare probes trained on their activations. Validation data determines which probes work best; test data evaluates the frozen selection.
 
-Probe selection uses validation data. Test data evaluates the frozen selection.
-
-### Default positions
+**Default positions**
 
 The toolkit captures residual-stream activations across all layers at:
 
-- **Last prompt token:** the final token of the complete prompt passed to the model, before response generation.
-- **Final-answer marker:** the token containing the colon in the final `FINAL:` marker.
-- **Answer:** the answer token following that marker.
+- The last prompt token, before response generation.
+- The token containing the colon in the final `FINAL:` marker.
+- The answer token following that marker.
 
 These positions are located automatically and require no annotations.
 
-**TODO:** Define answer-token selection for multi-token answers, whitespace and token-boundary handling, and exact layer-index conventions.
+**TODO:** Define selection for multi-token answers, whitespace and token-boundary handling, and exact layer conventions.
 
-### Additional positions
+**Additional positions**
 
-Adding task-specific locations is encouraged when meaningful locations exist.
+Additional annotations are encouraged when the task has meaningful locations to study.
 
-Use `semantic_positions` to associate each location’s semantic name with its token indices:
+Use `semantic_positions` with keys following the fixed pattern `position_<number>`, starting at 1. Each entry identifies a span using character offsets in the original `input` text:
 
 ```json
 "semantic_positions": {
-  "entity_name": [42],
-  "supporting_context": [55, 56, 57]
+  "position_1": {
+    "start_char": 11,
+    "end_char": 15
+  }
 }
 ```
 
-The indices above are illustrative. Actual indices depend on the example, model tokenizer, and complete prompt formatting.
+- **`start_char`** — Index of the first character included in the span. Counting starts at 0.
+- **`end_char`** — Index immediately after the last included character.
 
-You choose the semantic names. The toolkit reads the entries in `semantic_positions`; numbered fields such as `semantic_positions_1` are unnecessary.
+For the input `Please ask Jhon.`, the span above selects `Jhon`.
 
-If this field is supplied:
+Count characters in the actual input text, not in its JSON representation. For example, an escaped newline (`\n`) represents one character.
 
-- Every example across training, validation, and testing must contain the same semantic names.
-- The token indices may differ between examples.
-- Each named location must contain at least one token.
-- Locations must be identifiable from the input without using the target answer or the correctness of the model’s response.
+Users do not need to supply token indices. The toolkit maps character spans to tokens after applying prompt formatting and tokenization. This keeps dataset annotations independent of the model’s tokenizer.
 
-You only annotate additional locations of interest. You do not need to divide the entire prompt into spans.
+If annotations are supplied:
 
-### Example: name correction
+- Every example must contain the same position keys.
+- Each key must represent the same semantic role across all examples.
+- Character offsets may differ between examples.
+- Each span must contain at least one character.
+- Locations must be identifiable without using the target answer or the model’s correctness.
 
-Suppose your task asks the model to correct name typos in an ASR transcript. The name being checked is a potentially useful location for activation capture.
+Only annotate additional locations of interest. The entire input does not need to be divided into spans.
 
-For an input containing “Please ask Jhon,” you identify the tokens representing `Jhon`. For another containing “Micheal will present,” you identify the tokens representing `Micheal`.
+**Example: name correction**
 
-Both locations are named `entity_name`. Their text and token indices differ, but they represent the same semantic role.
+Suppose the task asks the model to correct name typos in an ASR transcript. You could use `position_1` for the name being checked.
 
-The toolkit can then compare probes using entity-name activations with probes using its default positions.
+In “Please ask Jhon,” its character span identifies `Jhon`. In “Micheal will present,” it identifies `Micheal`.
 
-### Coordinates and validation
+The text and offsets differ, but `position_1` consistently means “the name being checked.” The toolkit can compare activations from this location with those from its default positions.
 
-The proposed coordinate convention is zero-based token indices into the exact prompt processed by the model, including chat-template tokens and the toolkit’s appended instruction, but excluding batch padding.
+**Validation and token mapping**
 
-**TODO:** Finalize this convention and define how users obtain the exact tokenized prompt before annotating it.
+The toolkit must check that:
 
-The toolkit must validate that:
+- Character offsets are integers.
+- Each span satisfies `0 <= start_char < end_char <= length of input`.
+- Position keys are consistent across examples.
+- Each span maps to tokens within the supplied input after prompt formatting.
 
-- Indices are integers and fall within the prompt.
-- Each named location is nonempty.
-- Semantic names are consistent across examples.
+These checks verify the annotation structure. Users remain responsible for selecting the intended text.
 
-These checks establish structural validity. Users remain responsible for identifying the intended semantic locations.
+**TODO:** Specify Unicode character-counting conventions for annotations prepared in different programming languages.
 
-**TODO:** Decide how invalid annotations are handled. Examples must not be silently omitted.
+**TODO:** Define token selection when a character boundary falls inside a token and how activations from multi-token spans become probe features.
 
-**TODO:** Define how activations from locations containing multiple tokens become probe features.
+**TODO:** Define handling of invalid annotations and missing positions. Examples must not be silently omitted.
 
 ## Dataset example
 
-This record contains a complete task prompt, its target answer, and a split assignment. It uses only the default capture positions.
+This record uses only the default capture positions:
 
 ```json
 {"id":"example_001","input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive","split":"train"}
@@ -106,6 +124,6 @@ This record contains a complete task prompt, its target answer, and a split assi
 
 The toolkit adds the final-answer instruction before running the model.
 
-**TODO:** Add a complete example with verified semantic token annotations once the coordinate workflow is finalized.
+**TODO:** Add a complete dataset example with additional character-span annotations.
 
-**TODO:** Finalize dataset-validation rules for malformed records and missing fields.
+**TODO:** Finalize validation rules for malformed records and missing fields.
