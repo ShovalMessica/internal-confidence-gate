@@ -2,30 +2,74 @@
 
 Task-adaptable toolkit for building confidence gates from internal model activations.
 
+The toolkit is under development. Items marked **TODO** identify specifications or implementation details that are not yet finalized.
+
 ## Research goal
+
+Language models can produce incorrect answers even when their output probabilities are high. Applications that need to decide which predictions to accept therefore need reliable ways to assess those predictions.
 
 This repository investigates whether signals encoded in a model’s internal activations can distinguish correct from incorrect predictions better than confidence derived from output probabilities alone.
 
-The toolkit provides a shared pipeline that can be applied separately to different tasks. It generates model responses, collects internal activations, and trains a lightweight probe to estimate prediction reliability. The resulting task-specific gate supports an accept-or-reject decision without modifying the underlying model or generating a replacement answer.
+The toolkit provides a shared pipeline for generating model responses, collecting activations, and training and evaluating a lightweight reliability probe. An acceptance threshold turns the probe’s score into an accept-or-reject decision.
 
-The initial scope focuses on activation-based probes. Circuit finding is outside this scope.
+The gate does not modify the underlying model or generate replacement answers. Circuit finding is outside the initial scope.
 
 ## Task scope
 
 The toolkit targets tasks where:
 
 1. The model produces one final answer or decision that can be evaluated as a whole, although reasoning may precede it.
-2. The answer can be labeled objectively as **correct or incorrect** by comparison with supplied ground truth.
-3. The response follows the toolkit’s fixed final-answer contract, allowing the answer span to be located without using ground truth or correctness labels.
+2. The answer can be evaluated objectively as correct or incorrect using a supplied target answer.
+3. The response follows the toolkit’s fixed final-answer contract, allowing the answer to be located without knowing its correctness.
 
-The answer may contain multiple tokens and may come from a fixed set or an open vocabulary. Free-form outputs containing multiple independently evaluated claims are outside the current scope.
+Answers may contain multiple tokens and come from a fixed set or an open vocabulary. Free-form responses containing multiple independently evaluated claims are outside the current scope.
 
-### Examples of suitable tasks
+Examples of suitable tasks include:
 
 - **Classification:** “Is this review positive or negative?” → `FINAL: Positive`
 - **Multiple choice:** “Which option is correct?” → `FINAL: B`
 - **Factual question answering:** “What is the capital of England?” → `FINAL: London`
-- **Structured reasoning:** The model may reason before providing one final decision → `FINAL: 12`
+- **Structured reasoning:** reasoning followed by one final decision → `FINAL: 12`
+
+## How it works
+
+### Activations and probes
+
+As a model processes a prompt and generates a response, it computes internal numerical representations called **activations**. These occur at different layers and token positions. A token is a unit of text processed by the model; one word may contain several tokens.
+
+The toolkit collects activations while the model answers examples with known target answers. Comparing each model answer with its target answer determines whether the prediction is correct.
+
+A small classifier, called a **probe**, learns to estimate prediction reliability from those activations.
+
+**Target answers supply supervision for probe training and support evaluation. They are never provided to the probe as input features or inserted into the model’s prompt by the toolkit. Applying a trained probe does not require knowing the target answer.**
+
+### Why select semantic positions?
+
+A model produces activations across many layers and token positions. Collecting and comparing all of them can be expensive, so the toolkit focuses on locations with a meaningful relationship to the task or its final decision.
+
+The default captures use residual-stream activations—the representations carried between model layers—across all layers at:
+
+- **Last prompt token:** after processing the complete prompt, before response generation.
+- **Final-answer marker:** the token containing the colon in the final `FINAL:` marker.
+- **Answer:** the answer token following that marker.
+
+With reasoning, the last prompt token precedes the reasoning, while the final-answer marker occurs after it. Answer-token activations reflect computation after answer generation has begun.
+
+These locations are candidates for informative signals, not guaranteed indicators of correctness. Training and validation determine which probes are useful; test data evaluates the frozen selection.
+
+**TODO:** Define selection for multi-token answers, whitespace and token-boundary handling, and exact layer conventions.
+
+### Additional task-specific positions
+
+Users are encouraged to annotate additional meaningful locations in their inputs.
+
+For example, in a name-correction task, the name being checked may provide useful activations. It could appear near the beginning of one input and near the end of another.
+
+A semantic position has a fixed **role**, not a fixed token index. Its text, location, and length may differ across examples.
+
+Users mark these locations with character spans in the original input. The toolkit maps them to tokens after prompt formatting and tokenization. If additional positions are supplied, the same position keys and semantic roles must be present across all examples.
+
+See the [dataset specification](docs/dataset-format.md#semantic-positions) for annotation fields, examples, and unresolved mapping details.
 
 ### Response format and abstention
 
@@ -35,116 +79,76 @@ Both reasoning and direct-answer generation use:
 FINAL: <answer>
 ```
 
-Users include the toolkit’s required response instruction in their task prompt. Generated responses are checked against the contract. Formatting failures are reported; answer positions are not guessed.
+The toolkit appends the required output instruction to each user-supplied task prompt. Users do not need to add it themselves.
 
-**TODO:** Define the exact prompt instruction, output grammar, answer boundaries, and handling of noncompliant responses.
+Generated responses are checked against the response contract. Formatting failures are reported; answer positions are not guessed.
 
-Abstention is optional and disabled by default:
+**TODO:** Define the exact appended instruction, chat-template handling, response grammar, and treatment of noncompliant responses.
+
+The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called **abstention** and is enabled by default:
 
 ```yaml
-allow_abstention: false
+allow_abstention: true
 ```
 
-When enabled, the model may output `FINAL: UNKNOWN`. These predictions are reported separately and excluded from probe training and gate TPR/FPR. The prompt instruction must reflect this setting.
+This is a shared run setting, not a dataset field. Users can disable it. The toolkit’s appended instruction reflects the setting.
 
-## How it works
+When abstention is enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-### Requirements
+**TODO:** Define where shared run settings are supplied and how UNKNOWN target answers are handled.
 
-1. You have white-box access to the model’s internal activations—typically through its weights and inference runtime.
-2. You provide task examples with ground-truth answers for training, validation, and testing, prepared in the toolkit’s required dataset format.
-3. Your data yields sufficient correct and incorrect model predictions to train and evaluate a probe.
-4. The model version, prompt, generation procedure, and activation-extraction method can be kept consistent when applying the trained gate.
+## Pipeline overview
 
-**Ground truth supplies correctness labels for supervised probe training and evaluation. It is never an input feature to the probe. Applying a trained probe to new predictions does not require ground truth.**
+1. **Prepare data:** provide complete task prompts and target answers in the required dataset format. Optionally assign splits and annotate additional semantic positions.
+2. **Run forward passes and capture:** generate responses while collecting selected activations and relevant output-token probabilities.
+3. **Evaluate predictions:** validate response formatting, extract answers, and compare them with target answers after normalization.
+4. **Train:** fit probes using training activations and prediction correctness.
+5. **Validate:** select probe settings and an acceptance threshold using validation data.
+6. **Test:** evaluate the frozen probe and threshold on test data and compare performance with output-probability confidence.
 
-### Pipeline overview
-
-#### Forward pass and activation capture
-
-1. Run the model on the prepared task inputs.
-2. Generate responses and collect selected internal activations and relevant output-token probabilities.
-3. Validate the response format and locate the final answer.
-4. Compare the extracted answer with ground truth after applying the same normalization to both.
-
-Normalization includes case and surrounding whitespace normalization.
-
-**TODO:** Define the complete normalization rules and output-probability scoring method.
-
-#### Activation positions
-
-The last prompt token is a built-in default.
-
-Users may also annotate positions or spans of interest in the prompt before generation. Generated-answer positions are located through the fixed response contract.
-
-Position selection must not depend on ground truth or correctness labels.
-
-**TODO:** Define the annotation format, supported activation representations, exact token-position conventions, and span-pooling methods.
-
-#### Probe training, validation, and testing
-
-1. Train the probe using captured activations and correctness labels.
-2. Use validation data to select probe settings and an acceptance threshold.
-3. Evaluate the frozen probe and threshold on test data.
-4. Compare the gate with confidence derived from output probabilities.
+Answer normalization includes case and surrounding whitespace normalization.
 
 For eligible predictions:
 
 - **Gate TPR:** accepted correct predictions divided by all correct predictions.
 - **Gate FPR:** accepted incorrect predictions divided by all incorrect predictions.
 
-**TODO:** Define split handling, probe configuration, selection procedures, and the complete evaluation report.
+**TODO:** Finalize normalization, output-probability scoring, probe configuration, selection procedures, and the evaluation report.
 
-#### Using the trained gate
+## Requirements and limitations
 
-Deployment is the user’s responsibility and is outside the toolkit’s training-and-testing pipeline.
+- White-box access to the model’s internal activations is required.
+- Task data must yield enough correct and incorrect predictions for training, validation, and testing.
+- Changes to the model, prompt, generation procedure, or data distribution require revalidation.
+- Probe findings are correlational and do not establish causal mechanisms.
+- A reliability score is an estimate, not a guarantee of correctness.
 
-For a new completed prediction, the trained probe uses the required activations to estimate reliability. The frozen threshold determines acceptance or rejection without knowing whether the prediction is correct.
-
-Custom prompt annotations must also be supplied for new inputs when required by the trained probe.
-
-The gate observes the model’s existing computation; it does not modify the model or generate a replacement answer.
-
-## Limitations
-
-- A trained gate is not assumed to generalize across models, tasks, prompts, generation procedures, or data distributions; changes require revalidation.
-- Probe performance is correlational and does not establish that the detected representations causally control correctness.
-- The gate estimates reliability; it does not verify answers or correct mistakes.
+Deployment is the user’s responsibility and is outside the toolkit’s training-and-testing pipeline. Applying the trained gate requires the same activation features and position-selection rules used during training, but no target answer.
 
 ## Getting started
 
-### Prerequisites
+### Prerequisites and installation
 
-**TODO:** Define supported models, runtimes, and hardware requirements.
+**TODO:** Define supported models, runtimes, hardware requirements, and installation steps.
 
-### Installation
+### Prepare your dataset
 
-**TODO:** Add installation instructions.
+Follow the [dataset format](docs/dataset-format.md).
 
-### Prepare a task
+Each example contains:
 
-#### Model
+- `id`: a unique identifier.
+- `input`: the complete task prompt.
+- `target_answer`: the expected final answer.
+- Optional `split`: a training, validation, or test assignment.
+- Optional `semantic_positions`: additional character spans for activation capture.
 
-**TODO:** Define model and generation configuration.
+The toolkit adds the output instruction and generates responses itself. Users do not need to supply existing model predictions.
 
-#### Dataset
+### Configure and run
 
-Users preprocess their raw data into the toolkit’s required format. Dataset records contain example IDs, model inputs, ground-truth answers, and optional prompt-position annotations.
-
-**TODO:** Define the exact schema, input representation, split format, and annotation fields in a dedicated dataset specification.
-
-#### Prompt and response
-
-**TODO:** Provide the exact required instruction and a dedicated specification covering reasoning, direct answers, abstention, parsing, and normalization.
-
-#### Activation capture
-
-**TODO:** Document capture configuration and how prompt annotations and generated-answer spans map to activation features.
-
-### Run the pipeline
-
-**TODO:** Define commands, configuration, and saved outputs for capture, training, validation, and testing.
+**TODO:** Define shared model, generation, capture, and training settings, along with pipeline commands and saved outputs.
 
 ### Worked example
 
-**TODO:** Add a small, complete example demonstrating the workflow before users adapt their own data.
+**TODO:** Add a small, complete example demonstrating data preparation, activation capture, probe training, and test evaluation.
