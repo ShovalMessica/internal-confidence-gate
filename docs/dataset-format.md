@@ -1,71 +1,36 @@
 # Dataset format
 
-This guide explains how to prepare your task data in the format expected by the toolkit.
+Provide a `.jsonl` file with one JSON object per line. Each object represents one example.
 
-For the motivation behind confidence probes and the explanation of activation capture locations, first read [How the approach works](../README.md#how-the-approach-works).
+All fields are required unless marked optional. **TODO** indicates an unresolved specification.
 
-Provide the dataset as a `.jsonl` file, with one JSON object per line representing one example.
+## Fields
 
-## Example fields
+- **`id`** — A unique example identifier.  
+  **TODO:** Accepted ID type.
 
-Each example supplies the complete prompt and its target answer. Model responses, correctness assessments, probabilities, and activation records are produced by the toolkit.
+- **`input`** — The full task prompt as text. The toolkit appends an instruction requiring `FINAL: <answer>` so it can extract the answer and locate its tokens. You do not add this instruction yourself. It also permits `UNKNOWN` when `allow_abstention` is enabled, which is the default.  
+  **TODO:** Exact appended instruction, chat-template handling, and response-validation rules.
 
-All fields are required unless marked optional.
+- **`target_answer`** — The expected answer as text, without `FINAL:`. Compared with the model’s answer after case and surrounding whitespace normalization. Used for supervised probe training and evaluation; never supplied as a probe input. Applying the trained probe does not require it.  
+  **TODO:** Further normalization rules, multiple accepted answers, and UNKNOWN target handling.
 
-**`id`**
+- **`split` — optional** — `"train"`, `"validation"`, or `"test"`. When omitted across the dataset, splits are assigned randomly.  
+  **TODO:** Default proportions, seed configuration, and partially assigned datasets.
 
-A unique identifier for the example. IDs must be unique across the dataset.
+- **Additional semantic annotations — optional; field name TODO** — Mark words or passages in `input` for additional activation capture, such as the name being checked in a name-correction task. Encouraged when useful; the same annotation names must appear across all examples. Locations must be identifiable without the target answer. If omitted, only default captures are used.  
+  **TODO:** Field name, annotation structure, coordinates, token alignment, and multi-token handling.
 
-**`input`**
+## Default captures
 
-The complete prompt sent to the model, including task instructions and example-specific content. Supply it as text, without placeholders or a separate prompt template.
+The last prompt token and captures from the `FINAL: <answer>` segment require no annotations.
 
-The prompt must instruct the model to produce its final answer in the toolkit’s `FINAL: <answer>` format, whether or not reasoning precedes it.
-
-**TODO:** Provide the exact required response instruction and define how the input is passed through the model’s chat template.
-
-**`target_answer`**
-
-The expected final answer as text, without the `FINAL:` prefix.
-
-The toolkit compares the model’s extracted answer with the target answer after normalizing both to determine whether the prediction is correct. This information is used for supervised probe training and evaluation.
-
-The target answer is never inserted into the model’s prompt or provided to the probe as an input. Once trained, the probe estimates prediction reliability without knowing the target answer.
-
-Normalization includes case and surrounding whitespace normalization.
-
-**TODO:** Define the complete normalization rules and whether multiple accepted target answers are supported.
-
-**`split` — optional**
-
-Assigns the example to `"train"`, `"validation"`, or `"test"`.
-
-If assignments are omitted across the dataset, the toolkit creates random splits.
-
-**TODO:** Define default proportions, reproducibility settings, and handling of partially assigned datasets.
-
-**Additional semantic annotations — optional; field name TODO**
-
-These annotations identify particular words or passages in `input` where you want the toolkit to collect activations, alongside its default captures.
-
-For example, a name-correction dataset could identify the name being checked. You do not need to divide the entire input into spans—only annotate the additional locations you want to study.
-
-Adding meaningful task-specific locations is encouraged. If annotations are included, the same semantic names must be supplied across all examples. Their actual locations may differ.
-
-Locations must be identifiable from the input without using the target answer or the correctness of the model’s response.
-
-If annotations are omitted, the toolkit uses only its default capture locations.
-
-**TODO:** Define the field name, annotation structure, coordinate system, mapping to tokens, and exact default capture locations.
+**TODO:** Exact token selection and activation representations.
 
 ## Example
 
-The following record contains a complete prompt, its target answer, and a split assignment. No additional semantic annotations are supplied.
-
 ```json
-{"id":"example_001","input":"Classify this review as Positive or Negative.\nReview: I loved this product.\nEnd your response with FINAL: <answer>.","target_answer":"Positive","split":"train"}
+{"id":"example_001","input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive","split":"train"}
 ```
 
-The output instruction above is illustrative until the exact response contract is finalized.
-
-**TODO:** Add an example with additional semantic annotations once their format is settled.
+**TODO:** Add an annotated example and finalize dataset-validation rules.
