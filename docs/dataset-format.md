@@ -26,8 +26,7 @@ All fields are required unless marked optional. **TODO** indicates an unresolved
 - **`id`** — A unique example identifier. IDs must be unique across the dataset.  
   **TODO:** Accepted ID type.
 
-- **`input`** — The complete task prompt as text, including instructions and example-specific content. The toolkit appends an instruction requiring `FINAL: <answer>` so it can extract the answer and locate its tokens. You do not add this instruction yourself.  
-  **TODO:** Exact appended instruction, chat-template handling, and response-validation rules.
+- **`input`** — The complete task prompt as text, including instructions and example-specific content. The toolkit supplies its output instruction and the `FINAL:` prefix; the model generates the answer after that prefix. You do not add either yourself. See [Generation](configuration.md#generation) for the planned protocol in each mode and remaining implementation TODOs.
 
 - **`target_answer`** — The expected answer as text, without `FINAL:`. The toolkit compares it with the model’s answer after normalizing case and surrounding whitespace. This determines correctness for supervised probe training and evaluation. The target answer is never supplied as a probe input or inserted into the prompt by the toolkit. Applying the trained probe does not require it.  
   **TODO:** Further normalization rules and support for multiple accepted answers.
@@ -47,11 +46,13 @@ The model produces activations across many layers and token positions. We focus 
 
 The toolkit captures residual-stream activations across all layers at:
 
-- The last prompt token, before response generation.
+- The last token supplied before the first generation stage.
 - The token containing the colon in the final `FINAL:` marker.
 - The answer token following that marker.
 
 These positions are located automatically and require no annotations.
+
+In direct-answer mode, the last prompt token is the injected `FINAL:` colon, so the first two positions coincide. In reasoning mode, the last prompt token precedes reasoning and the final marker follows it.
 
 **TODO:** Define selection for multi-token answers, whitespace and token-boundary handling, and exact layer conventions.
 
@@ -124,7 +125,7 @@ This record uses only the default capture positions:
 {"id":"example_001","input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive","split":"train"}
 ```
 
-The toolkit adds the final-answer instruction before running the model.
+The toolkit adds the instructions and answer prefix according to the selected [generation mode](configuration.md#generation). Annotations always refer to the original `input` text.
 
 **TODO:** Add a complete dataset example with additional character-span annotations.
 

@@ -49,11 +49,11 @@ A model produces activations across many layers and token positions. Collecting 
 
 The default captures use residual-stream activations—the representations carried between model layers—across all layers at:
 
-- **Last prompt token:** after processing the complete prompt, before response generation.
+- **Last prompt token:** the last token supplied before the first generation stage.
 - **Final-answer marker:** the token containing the colon in the final `FINAL:` marker.
 - **Answer:** the answer token following that marker.
 
-With reasoning, the last prompt token precedes the reasoning, while the final-answer marker occurs after it. Answer-token activations reflect computation after answer generation has begun.
+With reasoning, the last prompt token precedes the reasoning, while the final-answer marker occurs after it. In direct-answer mode, the supplied prompt ends with the injected `FINAL:` marker, so these two capture locations coincide. Answer-token activations reflect computation after answer generation has begun.
 
 These locations are candidates for informative signals, not guaranteed indicators of correctness. Training and validation determine which probes are useful; test data evaluates the frozen selection.
 
@@ -79,11 +79,11 @@ Both reasoning and direct-answer generation use:
 FINAL: <answer>
 ```
 
-The toolkit appends the required output instruction to each user-supplied task prompt. Users do not need to add it themselves.
+The planned protocol has the toolkit supply both the output instruction and the `FINAL:` marker. The model generates the answer after the marker. Users do not need to add either to their dataset prompts.
 
-Generated responses are checked against the response contract. Formatting failures are reported; answer positions are not guessed.
+In direct-answer mode, the toolkit supplies the marker before generation. In reasoning mode, it first lets the model reason, closes reasoning if needed, then inserts the answer instruction and marker before resuming generation. Reasoning and answer generation have separate token limits.
 
-**TODO:** Define the exact appended instruction, chat-template handling, response grammar, and treatment of noncompliant responses.
+See [Generation](docs/configuration.md#generation) for exact injected instructions, answer extraction, validation, and remaining implementation TODOs. The injected boundary is known; answer-format failures are reported rather than repaired or silently dropped.
 
 The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called **abstention** and is enabled by default:
 
