@@ -1,35 +1,21 @@
 # Configuration
 
-Configuration contains settings shared across all dataset examples. The dataset contains the prompts, target answers, optional split assignments, and optional semantic annotations.
+Provide shared settings in YAML. Example-specific data belongs in the [dataset](dataset-format.md).
 
-This page specifies planned behavior; the generation protocol below is not yet implemented in this repository. **TODO** indicates an unresolved specification.
+This is a design draft. New field names are proposed; **TODO** marks unresolved details.
 
-Open decisions and dependencies are tracked in the [design checklist](design-checklist.md).
+## Model and paths
 
-**TODO:** Define the configuration file format and how it is supplied to the toolkit.
-
-## Model
-
-- **`model_name_or_path`** — A Hugging Face model ID or a local checkpoint directory. This setting is required. The toolkit loads pretrained weights from the local directory or Hugging Face cache, downloading them if needed. It does not train the language model from scratch.
-- **Tokenizer** — Loaded from the same model ID or checkpoint directory by default.
-
-The selected backend is Hugging Face Transformers, using `AutoModelForCausalLM`. Users choose the model; the toolkit targets text-only, decoder-only language models with access to the activations needed for capture. Loading successfully does not by itself establish compatibility with the full pipeline.
-
-**TODO:** List verified models and supported Transformers versions; define model revision selection and tokenizer overrides.
-
-## Data and results
-
-- **Dataset path** — Where the toolkit reads your `.jsonl` dataset. See [Dataset format](dataset-format.md).
-- **Output directory** — Where the toolkit saves model responses, captured activations, trained probes, and evaluation results.
-
-**TODO:** Define setting names, the default output location, and rules for resuming runs or reusing saved outputs.
+- **`model_name_or_path`** — Required Hugging Face model ID or local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
+- **`dataset_path`** — Required path to the JSONL dataset.
+- **`output_dir` (optional; default: `outputs/`)** — Results directory, with a separate folder for each run.
 
 ## Generation
 
-- **`reasoning_mode`** — Choose whether the model answers directly or reasons first. Proposed values: `direct` and `reasoning`. **Default: TODO.**
+- **`reasoning_mode`** — Required: `direct` or `reasoning`.
 
-  - **Direct:** Append the answer instruction below to the prompt, supply `FINAL:` as the start of the model's reply, then generate the answer.
-  - **Reasoning first:** Append:
+  - **Direct:** Append the answer instruction below to the prompt, supply `FINAL:` as the start of the model’s reply, then generate the answer.
+  - **Reasoning:** Append:
 
     > Reason about the task first. A separate final-answer instruction will follow.
 
@@ -39,61 +25,56 @@ The selected backend is Hugging Face Transformers, using `AutoModelForCausalLM`.
 
   > Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
 
-  **The toolkit supplies `FINAL:` in both modes; the model generates the answer after it.** Answers are extracted after the supplied marker; formatting failures are reported.
+  **The toolkit supplies `FINAL:`; the model generates the answer after it.** Extraction uses this known boundary.
 
-  **TODO:** Finalize the field name and values, default mode, model-specific reasoning controls, chat-template handling, and answer-validation and failure-handling rules.
+- **`reasoning_max_new_tokens` (optional; default: `1024`)** — Reasoning-token limit. Reaching it triggers the answer stage. Applies only in reasoning mode.
 
-- **Generation settings — field names TODO** — Use the model's generation defaults with optional user overrides; record effective settings for reproducibility.
+- **`answer_max_new_tokens` (optional; default: `64`)** — Separate answer-token limit, used in both modes.
 
-  **TODO:** Define override fields and behavior when the model provides no generation configuration.
-
-- **Token limits — field names TODO** — Separate limits for reasoning and answer generation. Direct mode uses only the answer limit.
-
-  **TODO:** Define field names, numerical defaults, and handling of incomplete answers.
-
-- **`allow_abstention` (optional; default: `true`)** — Allows `UNKNOWN`. Add the applicable sentence to the answer instruction, before the supplied `FINAL:`:
+- **`allow_abstention` (optional; default: `true`)** — Add the applicable sentence to the answer instruction:
 
   - Enabled: “If you cannot determine the answer, return UNKNOWN.”
   - Disabled: “Provide your best answer. Do not return UNKNOWN.”
 
-  When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
+  Enabled UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-  **TODO:** Finalize UNKNOWN target-answer handling and unexpected UNKNOWN responses when disabled.
+Sampling uses the model’s defaults, without user overrides. Effective settings are recorded.
 
-## Activation capture
+Invalid answers are saved with their failure reasons, excluded from probe training and gate metrics, and reported separately. No automatic retries.
 
-By default, the toolkit captures residual-stream activations across all layers at:
+## Automatic splitting
 
-- The last token supplied before the first generation stage: before reasoning in reasoning mode, or the injected `FINAL:` colon in direct mode.
-- The token containing the colon in the final `FINAL:` marker.
-- The answer token following that marker.
+Applies only when the dataset omits `split`.
 
-Additional input locations are supplied through the dataset's optional [`semantic_positions`](dataset-format.md#semantic-positions) field.
+- **`split_ratios` (optional)** — Defaults to `train: 0.70`, `validation: 0.15`, `test: 0.15`. Values must sum to 1.
+- **`split_seed` (optional; default: `42`)** — Seed for reproducible random splitting.
 
-In direct mode, the last prompt token and final-marker token coincide under this protocol. They refer to one capture, not two distinct locations. In reasoning mode they occur at different stages.
+## Example
 
-**TODO:** Define exact layer conventions, answer-token selection for multi-token answers, token-boundary handling, how multi-token spans become probe features, and any capture overrides.
+```yaml
+# Required
+model_name_or_path: "./checkpoints/model"
+dataset_path: "./data/dataset.jsonl"
+reasoning_mode: reasoning
 
-## Training and evaluation
+# Optional — defaults shown
+output_dir: "./outputs"
+reasoning_max_new_tokens: 1024
+answer_max_new_tokens: 64
+allow_abstention: true
+split_ratios:
+  train: 0.70
+  validation: 0.15
+  test: 0.15
+split_seed: 42
+```
 
-The toolkit uses dataset split assignments when provided. When assignments are omitted across the dataset, it creates random splits.
+## Remaining design
 
-- **Training data** — Fits the probes.
-- **Validation data** — Selects probe settings and the acceptance threshold.
-- **Test data** — Evaluates the frozen probe and threshold against output-probability confidence.
+- **Model/runtime:** compatibility, versions, chat templates, reasoning controls, device, precision, and batch size.
+- **Generation:** missing model defaults, exact validation rules, completion at token limits, and unexpected UNKNOWN when disabled.
+- **Capture:** layer conventions, multi-token features, and configurable options.
+- **Training/evaluation:** probe settings, threshold selection, probability baseline, and reporting denominators.
+- **Files:** path resolution, run naming, saved artifacts, and reuse/resume rules.
 
-The threshold is selected using a desired **correct-answer retention**: the fraction of correct validation predictions the gate should accept. Retention on test data is measured separately and may differ.
-
-**TODO:** Define automatic split proportions, seed configuration, and handling of partially assigned datasets.
-
-**TODO:** Define probe types, feature preprocessing, hyperparameter selection, the retention setting and its default, and output-probability scoring.
-
-## Execution
-
-The proposed default is to check CUDA availability, use a GPU when available, and otherwise use the CPU. The toolkit reports the selected device and allows an explicit override.
-
-**TODO:** Finalize device selection, precision, batch size, and handling of insufficient memory or incompatible hardware.
-
-## Example configuration
-
-**TODO:** Add a complete example once setting names, defaults, and the configuration file format are settled.
+These details remain **TODO**; the example is not yet a complete configuration for the full pipeline.

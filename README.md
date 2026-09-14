@@ -69,7 +69,7 @@ A semantic position has a fixed **role**, not a fixed token index. Its text, loc
 
 Users mark these locations with character spans in the original input. The toolkit maps them to tokens after prompt formatting and tokenization. If additional positions are supplied, the same position keys and semantic roles must be present across all examples.
 
-See the [dataset specification](docs/dataset-format.md#semantic-positions) for annotation fields, examples, and unresolved mapping details.
+See the [dataset specification](docs/dataset-format.md#fields) for annotation fields, examples, and unresolved mapping details.
 
 ### Response format and abstention
 

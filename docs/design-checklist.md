@@ -6,7 +6,7 @@ Working list for completing the toolkit's design before implementation. Agreed b
 
 - [x] Use Hugging Face Transformers with `AutoModelForCausalLM`; users supply a model ID or local pretrained checkpoint.
 - [x] Support direct answers and reasoning followed by a final answer, subject to model capabilities.
-- [x] Use the model's generation defaults, allow user overrides, and record effective settings.
+- [x] Use the model's sampling defaults without user overrides, and record effective settings. Token limits remain configurable.
 - [x] Have the toolkit supply the final-answer instruction and prefill `FINAL:` in both modes; allow `UNKNOWN` by default. See [Generation](configuration.md#generation).
 - [x] Keep complete prompts and target answers in JSONL, with optional user-assigned splits and additional semantic character spans.
 - [x] Use target answers for supervised probe training and evaluation, never as probe features.
