@@ -4,6 +4,8 @@ Configuration contains settings shared across all dataset examples. The dataset 
 
 This page records the configuration design. **TODO** indicates an unresolved specification.
 
+Open decisions and dependencies are tracked in the [design checklist](design-checklist.md).
+
 **TODO:** Define the configuration file format and how it is supplied to the toolkit.
 
 ## Model
@@ -11,7 +13,7 @@ This page records the configuration design. **TODO** indicates an unresolved spe
 - **`model_name_or_path`** — A Hugging Face model ID or a local checkpoint directory. This setting is required. The toolkit loads pretrained weights from the local directory or Hugging Face cache, downloading them if needed. It does not train the language model from scratch.
 - **Tokenizer** — Loaded from the same model ID or checkpoint directory by default.
 
-The toolkit targets text-only, decoder-only language models loaded through Hugging Face Transformers using `AutoModelForCausalLM`. Models must expose the internal activations needed for capture. Compatibility with every model is not assumed.
+The selected backend is Hugging Face Transformers, using `AutoModelForCausalLM`. Users choose the model; the toolkit targets text-only, decoder-only language models with access to the activations needed for capture. Loading successfully does not by itself establish compatibility with the full pipeline.
 
 **TODO:** List verified models and supported Transformers versions; define model revision selection and tokenizer overrides.
 
@@ -24,11 +26,17 @@ The toolkit targets text-only, decoder-only language models loaded through Huggi
 
 ## Generation
 
+- **Reasoning mode** — The toolkit is designed to support both direct answers and reasoning followed by a final answer, according to the user's configuration and the selected model's capabilities.
+- **Generation settings** — Use the selected model's generation defaults, with optional user overrides. The toolkit records the effective settings for reproducibility. It does not impose greedy decoding as a toolkit-wide default.
 - **`allow_abstention` (optional; default: `true`)** — Allows the model to decline to answer with `FINAL: UNKNOWN`. The toolkit's appended output instruction reflects this setting. When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
 The toolkit appends the instruction requiring `FINAL: <answer>` to each dataset prompt. Users do not need to add it themselves.
 
-**TODO:** Define reasoning controls for supported models, generation budgets, sampling settings and defaults, and handling of responses that reach the generation limit.
+**TODO:** Define the reasoning setting's name, default, and behavior when a model cannot switch modes. Reasoning affects prompt formatting, generation limits, response parsing, and the interpretation of capture positions; see the [reasoning checklist](design-checklist.md#reasoning-and-direct-answers).
+
+**TODO:** Define exposed generation overrides and behavior when the model supplies no generation configuration. Distinguish saved generation defaults from recommendations that appear only in the model's documentation.
+
+**TODO:** Finalize the response-length setting and its default. One configurable total output-token limit has been proposed; separate reasoning and answer limits have not been selected. Define handling of responses that reach the limit before completing a final answer.
 
 **TODO:** Finalize the appended instruction, chat-template handling, response-validation rules, and handling of UNKNOWN when abstention is disabled or supplied as a target answer.
 
