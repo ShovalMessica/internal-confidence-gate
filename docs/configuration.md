@@ -26,79 +26,42 @@ The selected backend is Hugging Face Transformers, using `AutoModelForCausalLM`.
 
 ## Generation
 
-- **Reasoning mode** — Select direct-answer generation or reasoning followed by answer generation, as specified below.
-- **Generation settings** — Use the selected model's generation defaults, with optional user overrides. The toolkit records the effective settings for reproducibility. It does not impose greedy decoding as a toolkit-wide default.
-- **`allow_abstention` (optional; default: `true`)** — Allows the model to decline to answer with `FINAL: UNKNOWN`. The toolkit's appended output instruction reflects this setting. When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
+**`reasoning_mode`** — Choose whether the model answers directly or reasons first. Proposed values: `direct` and `reasoning`. **Default: TODO.**
 
-**Who supplies `FINAL:`?** The toolkit does, in both modes. It supplies the beginning of the model's reply and asks the model to continue from there. This is called **prefilling**. The model generates only the answer after the supplied marker during the answer stage. The marker is part of the assistant continuation, not a bare suffix inside the user's message.
+- **Direct:** Append the answer instruction below to the prompt, supply `FINAL:` as the start of the model's reply, then generate the answer.
+- **Reasoning first:** Append:
+  > Reason about the task first. A separate final-answer instruction will follow.
 
-**Shared answer instruction**
+  Generate reasoning until its end boundary or token limit. Close reasoning if needed, then append the answer instruction and `FINAL:` before generating the answer.
 
-Use this exact text wherever the steps below refer to the answer instruction:
+**Answer instruction:**
 
-```text
-Return only the final answer on one line. Do not include reasoning, explanation, quotation marks, or markdown. The answer prefix FINAL: is already supplied; do not repeat it.
-```
+> Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
 
-When `allow_abstention` is `true`, add this sentence on the next line:
+**The toolkit supplies `FINAL:` in both modes; the model generates the answer after it.**
 
-```text
-If you cannot determine the answer, return UNKNOWN.
-```
+**TODO:** Finalize the field name and values, default mode, and model-specific reasoning controls and chat-template handling.
 
-When it is `false`, use this sentence instead:
+**Generation settings** — Use the model's generation defaults with optional user overrides; record effective settings for reproducibility.
 
-```text
-Provide your best answer. Do not return UNKNOWN.
-```
+**TODO:** Define override fields and behavior when the model provides no generation configuration.
 
-Users supply their task prompt in `input`; the toolkit adds these instructions without changing the dataset text or its annotation offsets.
+**Token limits** — Separate limits for reasoning and answer generation. Direct mode uses only the answer limit.
 
-**Direct answers**
+**TODO:** Define field names, numerical defaults, and handling of incomplete answers.
 
-1. Append two newlines and the answer instruction, including the applicable UNKNOWN sentence, to `input`.
-2. Format the prompt for the selected model, disabling native thinking where supported.
-3. Begin the assistant reply with the literal text `FINAL:` (no trailing space), supplied by the toolkit.
-4. Generate the answer continuation under the answer-token limit.
+**`allow_abstention` (optional; default: `true`)** — Allows `UNKNOWN`. Add the applicable sentence to the answer instruction, before the supplied `FINAL:`:
 
-```text
-Toolkit supplies:  [formatted task and instructions] [assistant start] FINAL:
-Model generates:   London
-```
+- Enabled: “If you cannot determine the answer, return UNKNOWN.”
+- Disabled: “Provide your best answer. Do not return UNKNOWN.”
 
-The bracketed items illustrate placement; they are not literal text to inject. This adds a common answer boundary to the original non-reasoning NER flow, which generated the answer directly without a marker.
+When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-**Reasoning followed by an answer**
+**TODO:** Finalize UNKNOWN target-answer handling and unexpected UNKNOWN responses when disabled.
 
-1. Append two newlines and this instruction to `input`: `Reason about the task first. A separate final-answer instruction will follow the reasoning stage.`
-2. Format the prompt with native reasoning enabled and generate until the model's reasoning-end boundary, an end-of-response token, or the reasoning-token limit.
-3. Preserve the generated reasoning. If its closing boundary was not emitted, append the model's required closing boundary and record that closure was forced.
-4. Append two newlines, the shared answer instruction including the applicable UNKNOWN sentence, one newline, and the literal `FINAL:`. These are supplied continuation tokens after the reasoning, not another generated response or a new user turn.
-5. Resume generation under a separate answer-token limit.
+Answers are extracted after the supplied marker; formatting failures are reported.
 
-```text
-Model generates:   [reasoning]
-Toolkit supplies:  [closing boundary if needed] [answer instruction] FINAL:
-Model generates:   London
-```
-
-This follows the original bounded-reasoning flow. The model may finish reasoning before its limit; reaching that limit triggers the answer stage rather than consuming the answer budget. Reasoning and answer limits count generated tokens in their respective stages, excluding injected control text.
-
-**Answer extraction and validation**
-
-Record the injected marker's token boundary. Extract the answer from the generated continuation after that boundary; do not search the prompt or reasoning for the last occurrence of `FINAL:`. Injected text is not model-generated output and contributes no generated-answer probabilities.
-
-After removing terminal control tokens and surrounding whitespace, require a nonempty single-line answer with no repeated `FINAL:` marker. Report empty, multiline, repeated-marker, and answer-budget-exhausted outputs as invalid; do not silently truncate, repair, or retry them. A normal end-of-response token at the limit counts as completion. Invalid outputs are counted separately and excluded from probe training and gate metrics. An exact normalized UNKNOWN answer is handled separately when abstention is enabled and is invalid when disabled.
-
-Prefilling guarantees the supplied marker and its location. It does not guarantee that the continuation obeys the instruction or is correct. A single-line explanation may still pass structural validation; answer comparison and the remaining normalization rules determine correctness.
-
-**TODO:** Define the mode setting's name and default, and numerical defaults and field names for the separate reasoning and answer limits.
-
-**TODO:** Implement and verify chat-template placement, assistant continuation, native-thinking controls, and reasoning boundaries for supported models. `</think>` is used by the original implementation, not assumed for every model. Reject unsupported model/mode combinations before processing data; do not silently change the protocol. Define formatting for models without a chat template.
-
-**TODO:** Finalize terminal-control-token handling, context-length overflow handling, and UNKNOWN target-answer rules. Record injected tokens, stage boundaries, effective settings, and forced reasoning closure in saved outputs.
-
-**TODO:** Define exposed generation overrides and behavior when the model supplies no generation configuration. Distinguish saved generation defaults from recommendations that appear only in the model's documentation.
+**TODO:** Finalize answer-validation and failure-handling rules.
 
 ## Activation capture
 
