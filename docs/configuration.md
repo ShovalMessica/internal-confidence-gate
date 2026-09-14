@@ -6,9 +6,11 @@ This is a design draft. New field names are proposed; **TODO** marks unresolved 
 
 ## Model and paths
 
-- **`model_name_or_path`** — Required Hugging Face model ID or local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
-- **`dataset_path`** — Required path to the JSONL dataset.
-- **`output_dir` (optional; default: `outputs/`)** — Results directory, with a separate folder for each run.
+- **`model_name_or_path`** — Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
+- **`dataset_path`** — Required absolute path to the JSONL dataset.
+- **`output_dir` (optional)** — Absolute path to the results directory, with a separate folder for each run. If omitted, the toolkit creates a run folder under its default `outputs` directory. **TODO:** Define the absolute location of that default directory.
+
+User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
 ## Generation
 
@@ -53,12 +55,12 @@ Applies only when the dataset omits `split`.
 
 ```yaml
 # Required
-model_name_or_path: "./checkpoints/model"
-dataset_path: "./data/dataset.jsonl"
+model_name_or_path: "C:/models/my-model"
+dataset_path: "C:/data/dataset.jsonl"
 reasoning_mode: reasoning
 
-# Optional — defaults shown
-output_dir: "./outputs"
+# Optional — example output path; remaining values show defaults
+output_dir: "C:/results/confidence-gate"
 reasoning_max_new_tokens: 1024
 answer_max_new_tokens: 64
 allow_abstention: true
@@ -75,6 +77,6 @@ split_seed: 42
 - **Generation:** missing model defaults, exact validation rules, completion at token limits, and unexpected UNKNOWN when disabled.
 - **Capture:** layer conventions, multi-token features, and configurable options.
 - **Training/evaluation:** probe settings, threshold selection, probability baseline, and reporting denominators.
-- **Files:** path resolution, run naming, saved artifacts, and reuse/resume rules.
+- **Files:** default output-directory location, run naming, saved artifacts, and reuse/resume rules.
 
 These details remain **TODO**; the example is not yet a complete configuration for the full pipeline.
