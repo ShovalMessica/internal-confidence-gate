@@ -26,42 +26,39 @@ The selected backend is Hugging Face Transformers, using `AutoModelForCausalLM`.
 
 ## Generation
 
-**`reasoning_mode`** — Choose whether the model answers directly or reasons first. Proposed values: `direct` and `reasoning`. **Default: TODO.**
+- **`reasoning_mode`** — Choose whether the model answers directly or reasons first. Proposed values: `direct` and `reasoning`. **Default: TODO.**
 
-- **Direct:** Append the answer instruction below to the prompt, supply `FINAL:` as the start of the model's reply, then generate the answer.
-- **Reasoning first:** Append:
-  > Reason about the task first. A separate final-answer instruction will follow.
+  - **Direct:** Append the answer instruction below to the prompt, supply `FINAL:` as the start of the model's reply, then generate the answer.
+  - **Reasoning first:** Append:
 
-  Generate reasoning until its end boundary or token limit. Close reasoning if needed, then append the answer instruction and `FINAL:` before generating the answer.
+    > Reason about the task first. A separate final-answer instruction will follow.
 
-**Answer instruction:**
+    Generate reasoning until its end boundary or token limit. Close reasoning if needed, then append the answer instruction and `FINAL:` before generating the answer.
 
-> Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+  **Answer instruction:**
 
-**The toolkit supplies `FINAL:` in both modes; the model generates the answer after it.**
+  > Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
 
-**TODO:** Finalize the field name and values, default mode, and model-specific reasoning controls and chat-template handling.
+  **The toolkit supplies `FINAL:` in both modes; the model generates the answer after it.** Answers are extracted after the supplied marker; formatting failures are reported.
 
-**Generation settings** — Use the model's generation defaults with optional user overrides; record effective settings for reproducibility.
+  **TODO:** Finalize the field name and values, default mode, model-specific reasoning controls, chat-template handling, and answer-validation and failure-handling rules.
 
-**TODO:** Define override fields and behavior when the model provides no generation configuration.
+- **Generation settings — field names TODO** — Use the model's generation defaults with optional user overrides; record effective settings for reproducibility.
 
-**Token limits** — Separate limits for reasoning and answer generation. Direct mode uses only the answer limit.
+  **TODO:** Define override fields and behavior when the model provides no generation configuration.
 
-**TODO:** Define field names, numerical defaults, and handling of incomplete answers.
+- **Token limits — field names TODO** — Separate limits for reasoning and answer generation. Direct mode uses only the answer limit.
 
-**`allow_abstention` (optional; default: `true`)** — Allows `UNKNOWN`. Add the applicable sentence to the answer instruction, before the supplied `FINAL:`:
+  **TODO:** Define field names, numerical defaults, and handling of incomplete answers.
 
-- Enabled: “If you cannot determine the answer, return UNKNOWN.”
-- Disabled: “Provide your best answer. Do not return UNKNOWN.”
+- **`allow_abstention` (optional; default: `true`)** — Allows `UNKNOWN`. Add the applicable sentence to the answer instruction, before the supplied `FINAL:`:
 
-When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
+  - Enabled: “If you cannot determine the answer, return UNKNOWN.”
+  - Disabled: “Provide your best answer. Do not return UNKNOWN.”
 
-**TODO:** Finalize UNKNOWN target-answer handling and unexpected UNKNOWN responses when disabled.
+  When enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-Answers are extracted after the supplied marker; formatting failures are reported.
-
-**TODO:** Finalize answer-validation and failure-handling rules.
+  **TODO:** Finalize UNKNOWN target-answer handling and unexpected UNKNOWN responses when disabled.
 
 ## Activation capture
 
