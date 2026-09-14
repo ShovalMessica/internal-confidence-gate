@@ -19,7 +19,7 @@ Example
 
 - **`id`** — Unique integer identifier.
 
-- **`input`** — Complete task prompt as a string. The toolkit adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
+- **`input`** — The full prompt sent to the model as a string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The toolkit adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a string, without `FINAL:`. `UNKNOWN` is reserved for abstention and cannot be a target answer.
 
