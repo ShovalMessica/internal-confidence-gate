@@ -23,6 +23,23 @@ Working list for completing the toolkit's design before implementation. Agreed b
 - [ ] Define which output-token probabilities form the baseline when reasoning precedes the answer.
 - [ ] Record the effective mode and formatting alongside generation settings so saved results can be interpreted and reproduced.
 
+## Run management and reuse
+
+These are agreed requirements for later implementation. Checked items record design decisions, not implemented features.
+
+- [x] Use one runner driven by configuration, with logs and organized outputs for each run.
+- [x] Reuse the existing run folder and saved outputs when the dataset, effective configuration, and relevant model/code versions are unchanged. Repeating the same setup must not duplicate saved results.
+- [x] Cache individual stages so changing probe settings can reuse existing model predictions and activations. Recompute only stages affected by a change and their dependents.
+- [x] Validate saved outputs before reuse. Reuse completed stages; compute and save missing stages.
+- [x] Require an explicit option to recompute existing results rather than doing so silently.
+- [x] Save the effective configuration, dataset identity, execution log, validation report, split assignments, and outputs from implemented stages.
+
+Inspiration: the main runner in `TranscriptionEnrichment` uses `apropos` to cache tasks by function, explicit version, and inputs. Its runner still creates timestamped result folders for repeated invocations. We want task-level reuse plus reuse of the run folder for an unchanged setup. Adopting `apropos` itself has not been decided.
+
+- [ ] Define run and stage fingerprints, including which configuration fields, dataset content, and model/code versions affect each stage.
+- [ ] Define the folder layout, default output location, artifact validation, and logs when resuming an existing run.
+- [ ] Define incomplete/failed-stage handling, concurrent access, and explicit recomputation behavior without silently overwriting previous results.
+
 ## Remaining specification work
 
 - [ ] **Configuration structure:** choose the file format, exact setting names, required fields, defaults, and a minimal complete example. See [Configuration](configuration.md).
@@ -32,5 +49,5 @@ Working list for completing the toolkit's design before implementation. Agreed b
 - [ ] **Additional positions:** finalize Unicode coordinates, token alignment, multi-token features, and invalid/missing annotation handling. Preserve the same semantic roles across examples without requiring fixed offsets.
 - [ ] **Capture:** define exact residual-stream layer locations, answer-token selection, and whether probes are compared separately by layer and semantic position.
 - [ ] **Training and evaluation:** define probe type, preprocessing, selection procedure, retention target, probability baseline, and report contents. Keep test data out of selection.
-- [ ] **Saved outputs:** define paths, artifact contents, reuse/resume rules, and reproducibility records.
+- [ ] **Saved outputs:** finalize artifact contents and reproducibility records using the [run-management decisions](#run-management-and-reuse).
 - [ ] **Documentation:** reconcile the main README with finalized specifications, then add run instructions and a worked task example.
