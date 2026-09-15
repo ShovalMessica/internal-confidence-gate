@@ -2,7 +2,7 @@
 
 Edit [configs/task.yaml](../configs/task.yaml) to supply shared settings. Replace its required `null` placeholders with your values; optional settings already contain the agreed defaults. Example-specific data belongs in the [dataset](dataset-format.md).
 
-This is a design draft. New field names are proposed; **TODO** marks unresolved details.
+The fields below are accepted by the configuration loader. Later pipeline behavior remains under design; **TODO** marks unresolved details.
 
 ## Model and paths
 
@@ -70,6 +70,26 @@ split_ratios:
   test: 0.15
 split_seed: 42
 ```
+
+## Loading and validation
+
+From Python, with the repository root as the working directory:
+
+```python
+from src.config import load_config
+
+config = load_config("configs/task.yaml")
+```
+
+The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the future runner will display and log them.
+
+- Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
+- Unknown or duplicate YAML fields are errors. Token limits must be positive integers, `split_seed` a nonnegative integer, and `allow_abstention` a Boolean.
+- Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
+- Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
+- The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
+
+This step does not read dataset records, inspect model weights, or run generation. Actual model compatibility and dataset validation belong to later stages.
 
 ## Remaining design
 

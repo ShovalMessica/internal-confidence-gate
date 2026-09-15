@@ -138,7 +138,13 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-**TODO:** Define supported models, runtimes, hardware requirements, and installation steps.
+The configuration loader is implemented. Use Python 3.10 or newer and, from the repository root, install its dependency:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
+**TODO:** Model/runtime and hardware requirements for later pipeline stages.
 
 ### Prepare your dataset
 
@@ -156,7 +162,13 @@ The toolkit adds the output instruction and generates responses itself. Users do
 
 ### Configure and run
 
-**TODO:** Define shared model, generation, capture, and training settings, along with pipeline commands and saved outputs.
+Fill in [configs/task.yaml](configs/task.yaml), then use the [configuration loader](docs/configuration.md#loading-and-validation) to check the settings. Dataset processing, the runner, and model execution are not implemented yet.
+
+Developers can run the configuration tests without a model:
+
+```sh
+python -m unittest discover -s tests -v
+```
 
 ### Worked example
 
