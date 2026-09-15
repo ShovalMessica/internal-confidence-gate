@@ -8,11 +8,11 @@ Example
 ├── input
 ├── target_answer
 ├── split                         [optional]
-└── semantic_positions            [optional]
-    ├── position_1
+└── semantic_spans            [optional]
+    ├── span_1
     │   ├── start_char
     │   └── end_char
-    └── position_2, ...
+    └── span_2, ...
 ```
 
 ## Fields
@@ -31,7 +31,7 @@ Example
 
   If omitted, the toolkit randomly splits 70%/15%/15% using seed 42. Both proportions and seed are configurable.
 
-- **`semantic_positions` (optional)** — Additional input spans for activation capture, using keys `position_1`, `position_2`, etc.
+- **`semantic_spans` (optional)** — Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
 
   Each span contains integer `start_char` and `end_char` offsets into the original input: zero-based, start inclusive, end exclusive.
 
