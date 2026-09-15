@@ -35,7 +35,7 @@ Example
 
   Each span contains integer `start_char` and `end_char` offsets into the original input: zero-based, start inclusive, end exclusive.
 
-  Every example must supply the same keys and semantic roles, although text and offsets may differ. Locations must be identifiable without the target answer.
+  Semantic spans are optional. However, **every span you choose to include must be supplied for every example**, with the same key and semantic role. Its text and character offsets may differ between examples. Locations must be identifiable without the target answer.
 
   For example, `{"start_char":11,"end_char":15}` selects `Jhon` in `Please ask Jhon.`. Count characters in the decoded input, not its JSON encoding.
 
