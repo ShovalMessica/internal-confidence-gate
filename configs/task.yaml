@@ -1,0 +1,20 @@
+# Required — replace null with your values.
+model_name_or_path: null  # Hugging Face ID or absolute checkpoint path
+dataset_path: null        # Absolute path to your JSONL dataset
+reasoning_mode: null      # direct or reasoning
+
+# Optional — uncomment to choose an absolute output directory.
+# Otherwise, use an outputs folder beside this YAML.
+# output_dir: "C:/results/my-task"
+
+# Optional — defaults
+reasoning_max_new_tokens: 1024  # Used only in reasoning mode
+answer_max_new_tokens: 64
+allow_abstention: true
+
+# Used only when the dataset omits split assignments.
+split_ratios:
+  train: 0.70
+  validation: 0.15
+  test: 0.15
+split_seed: 42

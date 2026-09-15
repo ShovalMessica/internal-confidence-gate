@@ -1,6 +1,6 @@
 # Configuration
 
-Provide shared settings in YAML. Example-specific data belongs in the [dataset](dataset-format.md).
+Edit [configs/task.yaml](../configs/task.yaml) to supply shared settings. Replace its required `null` placeholders with your values; optional settings already contain the agreed defaults. Example-specific data belongs in the [dataset](dataset-format.md).
 
 This is a design draft. New field names are proposed; **TODO** marks unresolved details.
 
@@ -8,7 +8,7 @@ This is a design draft. New field names are proposed; **TODO** marks unresolved 
 
 - **`model_name_or_path`** — Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
 - **`dataset_path`** — Required absolute path to the JSONL dataset.
-- **`output_dir` (optional)** — Absolute path to the results directory, with a separate folder for each run. If omitted, the toolkit creates a run folder under its default `outputs` directory. **TODO:** Define the absolute location of that default directory.
+- **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Matching runs reuse existing results as described in the [design checklist](design-checklist.md#run-management-and-reuse).
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
@@ -77,6 +77,6 @@ split_seed: 42
 - **Generation:** missing model defaults, exact validation rules, completion at token limits, and unexpected UNKNOWN when disabled.
 - **Capture:** layer conventions, multi-token features, and configurable options.
 - **Training/evaluation:** probe settings, threshold selection, probability baseline, and reporting denominators.
-- **Files:** default output-directory location, run naming, saved artifacts, and reuse/resume rules.
+- **Files:** run naming, saved artifacts, and reuse/resume implementation.
 
 These details remain **TODO**; the example is not yet a complete configuration for the full pipeline.
