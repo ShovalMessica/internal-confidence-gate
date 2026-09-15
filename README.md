@@ -118,7 +118,16 @@ For eligible predictions:
 ## Requirements and limitations
 
 - White-box access to the model’s internal activations is required.
-- Task data must yield enough correct and incorrect predictions for training, validation, and testing.
+- After excluding `UNKNOWN` and invalid responses, each split must contain at least:
+
+  - **Training:** 100 correct and 100 incorrect predictions.
+  - **Validation:** 50 correct and 50 incorrect predictions.
+  - **Test:** 50 correct and 50 incorrect predictions.
+
+  The toolkit checks these counts after generation and stops before probe training if a minimum is unmet.
+
+  These are provisional minimums, not guarantees of reliable probe performance.
+
 - Changes to the model, prompt, generation procedure, or data distribution require revalidation.
 - Probe findings are correlational and do not establish causal mechanisms.
 - A reliability score is an estimate, not a guarantee of correctness.
