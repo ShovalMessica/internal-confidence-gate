@@ -4,17 +4,17 @@ Design and refine the task prompt you supply so the model reliably answers in th
 
 **You supply the task prompt. The toolkit will add its answer-format instructions and `FINAL:` prefix automatically; do not add these yourself.** See [Generation](configuration.md#generation). Generation is not implemented yet.
 
-The examples below preserve our original NER and speaker-attribution prompts, including their historical output instructions.
+Below are prompt examples for two specific tasks: correcting misspelled names without reasoning, and identifying a speaker with reasoning. The task instructions are adapted from our research prompts; the formatting steps show how the toolkit is planned to handle each mode.
 
 Placeholders show where example-specific content was inserted. Supply the complete, filled-in prompt in each dataset record’s `input`; the toolkit does not fill placeholders.
 
 ## Named-entity correction — no reasoning
 
-The task was to identify which participant a misspelled name referred to. The answer was a participant label (`A`–`J`), rather than a rewritten transcript or corrected name. The original experiment used Qwen3-4B-Instruct-2507 with thinking disabled.
+The task is to identify which participant a misspelled name refers to. The answer is a participant label (`A`–`J`), or `NONE` when no correction is needed. Our original experiment used Qwen3-4B-Instruct-2507 with thinking disabled.
 
-The prompt separates utterance text from metadata, defines which spelling changes count, and includes two demonstrations: a correctly spelled name that needs no correction, and a nickname mapped to a participant. It explicitly requests a direct answer without explanation.
+The prompt separates utterance text from metadata, defines which spelling changes count, and includes two demonstrations: a correctly spelled name that needs no correction, and a nickname mapped to a participant.
 
-**Original shared system prompt** — condition `7p7-41-spkout`:
+**Task instructions supplied by the user** — adapted from condition `7p7-41-spkout`:
 
 ```text
 # Task
@@ -22,6 +22,7 @@ Given a participant list and a transcript chunk, output exactly one of:
 - The participant's label (`A`-`J`) ONLY if a name is MISSPELLED (does not match any participant's spelling) but sounds like one participant.
 - Your job is to catch a SPELLING error, not to identify who is speaking or who is mentioned. A correctly-written participant name is not an error.
 - `NONE` if no correction should be made.
+- `UNKNOWN` if you cannot determine whether or how to correct the name.
 
 Each participant in the list is identified by a single letter label (A through J); answer with that label.
 
@@ -46,7 +47,7 @@ Read the utterance text and compare any person mention to the participant list.
 - To judge whether a word is a mis-heard name, compare how the two sound out loud: a shared beginning consonant sound, similar vowels, and similar overall shape. If a word shares most of a participant's sounds (for example debit and David, cattie and Kathy, braien and Brian), treat it as that participant's mis-heard name and output that participant.
 - When a name IS clearly mis-spelled or mis-heard, DO output the participant it sounds like; do not be over-cautious about corrupted names.
 - Remember: nicknames (Kate for Katherine) and sound-alike garbles (march for Mark, nickel for Nicole) ARE mis-spellings -- correct those to the participant.
-- If unsure, output `NONE`.
+- If unsure, output `UNKNOWN`.
 
 # Example 1 Input
 <PARTICIPANTS>
@@ -89,14 +90,9 @@ J David Burns
 
 # Example 2 Output
 I
-
-# Output Rule
-Output exactly `NONE` or one participant label like `E`.
-Output only that single token.
-No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewrite.
 ```
 
-**Per-example user message structure** — supplied after the shared instructions:
+**Example-specific content** — include this after the task instructions in the same `input`, replacing the placeholders:
 
 ```text
 <PARTICIPANTS>
@@ -108,21 +104,37 @@ No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewri
 </MEETING_TRANSCRIPT>
 ```
 
-The original model replied with a label such as `I`, or `NONE`; it did not use a `FINAL:` prefix. `NONE` covered both no correction and uncertainty in that experiment. It is not automatically equivalent to the toolkit's `UNKNOWN` abstention.
+**Added by the toolkit, not the user** — with `reasoning_mode: direct` and the default `allow_abstention: true`, append this instruction to the task prompt:
+
+```text
+Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+If you cannot determine the answer, return UNKNOWN.
+```
+
+The toolkit then starts the model's reply with:
+
+```text
+FINAL:
+```
+
+The model generates only what follows that prefix, such as `I`, giving `FINAL: I`. No reasoning stage runs.
+
+This adaptation separates `NONE` (no correction needed) from `UNKNOWN` (uncertain). The original prompt used `NONE` for both and requested a bare answer without `FINAL:`; those output instructions have been replaced here by the toolkit's planned formatting.
 
 Source in the original research repository: `research/ner/experiments/7p7-41-spkout/prompt.md` and its accompanying `condition.json`.
 
 ## Speaker attribution — with reasoning
 
-The task was to identify the participant behind one anonymous speaker label. The answer was a candidate ID or `UNKNOWN`. Setup 20 used Qwen3-8B with a separate reasoning stage.
+The task is to identify the participant behind one anonymous speaker label in a transcript. The answer is a candidate ID or `UNKNOWN`. Our original Setup 20 experiment used Qwen3-8B with a separate reasoning stage.
 
 This prompt uses evidence rules instead of demonstrations: self-identification, immediate responses to a named addressee, misleading name mentions, and conflicting evidence. It tells the model when to stop reasoning and when to abstain.
 
-**Original prompt template** — Setup 20 (`{unknown_label}` was filled with `UNKNOWN`):
+**Task prompt supplied by the user** — adapted from Setup 20; replace the placeholders before saving it as `input`:
 
 ```text
 Identify the named participant hidden behind the anonymous label
 {target_speaker}.
+Answer with the candidate ID or UNKNOWN, never the participant name.
 
 IMPORTANT: `Speaker 1`, `Speaker 2`, and similar labels are anonymous aliases
 for people in the participant list. They are not additional people.
@@ -141,7 +153,7 @@ Use the ordinary transcript to infer the identity:
   normally names another person rather than the target.
 - If a speaker refers to a named person as `he`, `she`, or `they` in the same
   statement, that person is being discussed rather than directly addressed.
-- Choose {unknown_label} when there is no sufficient identity evidence, several
+- Choose UNKNOWN when there is no sufficient identity evidence, several
   people are addressed, another speaker intervenes, or the evidence conflicts.
 
 Consecutive rows from one anonymous speaker are one turn.
@@ -152,22 +164,26 @@ identity is unambiguously established, state only
 
 TRANSCRIPT:
 {transcript}
-
-OUTPUT FORMAT:
-After `</think>`, output exactly one line:
-
-FINAL: <candidate ID or {unknown_label}>
-
-Output only the candidate ID after `FINAL:`, never the participant name.
 ```
 
-The original runner let the model reason for up to 1,024 tokens. When reasoning ended or reached its limit, the runner closed the reasoning block if needed and appended this exact text:
+**Added by the toolkit before reasoning** — with `reasoning_mode: reasoning`, append this to the task prompt:
 
 ```text
-Review the reasoning. If it did not establish exactly one unambiguous target-speaker identity from valid evidence, choose UNKNOWN. Otherwise choose that participant's candidate ID.
+Reason about the task first. A separate final-answer instruction will follow.
+```
+
+The model generates reasoning until it ends or reaches `reasoning_max_new_tokens` (default: 1,024).
+
+**Added by the toolkit after reasoning** — close the reasoning block if needed, then append the following to the model's reply, with `allow_abstention: true`:
+
+```text
+Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+If you cannot determine the answer, return UNKNOWN.
 FINAL:
 ```
 
-The model then generated the candidate ID or `UNKNOWN` after the supplied prefix. **The runner added this continuation; the user did not add it to each example.**
+The original task prompt and reasoning stay in context. The model continues after `FINAL:` with a candidate ID or `UNKNOWN`. **The toolkit supplies this entire continuation instruction and prefix; users do not include them in `input`.**
+
+This example uses the toolkit's planned final-answer instruction in place of the original experiment's task-specific continuation. The final-answer instruction is the same in both modes; its placement differs. Model-specific chat formatting and reasoning boundaries remain under design.
 
 Source in the original research repository: the `prompt` and `inference` fields in `research/speaker_attribution/Behavioral Anlysis/Behavior - Per setup/setup_20/setup.json`; continuation logic in `src/confidence_gate/speaker_attribution/run.py`.
