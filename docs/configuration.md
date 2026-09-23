@@ -8,7 +8,7 @@ The fields below are accepted by the configuration loader. Later pipeline behavi
 
 - **`model_name_or_path`** — Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
 - **`dataset_path`** — Required absolute path to the JSONL dataset.
-- **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Matching runs reuse existing results as described in the [design checklist](design-checklist.md#run-management-and-reuse).
+- **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Reuse of saved results for matching runs is planned but not implemented yet.
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
@@ -91,12 +91,4 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 
 This step does not read dataset records, inspect model weights, or run generation. Actual model compatibility and dataset validation belong to later stages.
 
-## Remaining design
-
-- **Model/runtime:** compatibility, versions, chat templates, reasoning controls, device, precision, and batch size.
-- **Generation:** missing model defaults, exact validation rules, completion at token limits, and unexpected UNKNOWN when disabled.
-- **Capture:** layer conventions, multi-token features, and configurable options.
-- **Training/evaluation:** probe settings, threshold selection, probability baseline, and reporting denominators.
-- **Files:** run naming, saved artifacts, and reuse/resume implementation.
-
-These details remain **TODO**; the example is not yet a complete configuration for the full pipeline.
+**TODO:** Complete the configuration for later pipeline stages. The example above is not yet a complete configuration for the full pipeline.
