@@ -4,17 +4,13 @@ Design and refine the task prompt you supply so the model reliably answers in th
 
 **You supply the task prompt. The toolkit will add its answer-format instructions and `FINAL:` prefix automatically; do not add these yourself.** See [Generation](configuration.md#generation). Generation is not implemented yet.
 
-Below are prompt examples for two specific tasks: correcting misspelled names without reasoning, and identifying a speaker with reasoning. The task instructions are adapted from our research prompts; the formatting steps show how the toolkit is planned to handle each mode.
+The examples below illustrate how to design a task prompt using clear instructions, relevant context, decision rules, and optional examples. Use them as starting points, then adapt and test your prompt for your own task and model.
 
-Placeholders show where example-specific content was inserted. Supply the complete, filled-in prompt in each dataset record’s `input`; the toolkit does not fill placeholders.
+Placeholders show where to insert example-specific content. Supply the complete, filled-in prompt in each dataset record’s `input`; the toolkit does not fill placeholders.
 
 ## Named-entity correction — no reasoning
 
-The task is to identify which participant a misspelled name refers to. The answer is a participant label (`A`–`J`), or `NONE` when no correction is needed. Our original experiment used Qwen3-4B-Instruct-2507 with thinking disabled.
-
-The prompt separates utterance text from metadata, defines which spelling changes count, and includes two demonstrations: a correctly spelled name that needs no correction, and a nickname mapped to a participant.
-
-**Task instructions supplied by the user** — adapted from condition `7p7-41-spkout`:
+**Example task instructions:**
 
 ```text
 # Task
@@ -119,17 +115,9 @@ FINAL:
 
 The model generates only what follows that prefix, such as `I`, giving `FINAL: I`. No reasoning stage runs.
 
-This adaptation separates `NONE` (no correction needed) from `UNKNOWN` (uncertain). The original prompt used `NONE` for both and requested a bare answer without `FINAL:`; those output instructions have been replaced here by the toolkit's planned formatting.
-
-Source in the original research repository: `research/ner/experiments/7p7-41-spkout/prompt.md` and its accompanying `condition.json`.
-
 ## Speaker attribution — with reasoning
 
-The task is to identify the participant behind one anonymous speaker label in a transcript. The answer is a candidate ID or `UNKNOWN`. Our original Setup 20 experiment used Qwen3-8B with a separate reasoning stage.
-
-This prompt uses evidence rules instead of demonstrations: self-identification, immediate responses to a named addressee, misleading name mentions, and conflicting evidence. It tells the model when to stop reasoning and when to abstain.
-
-**Task prompt supplied by the user** — adapted from Setup 20; replace the placeholders before saving it as `input`:
+**Example task prompt:**
 
 ```text
 Identify the named participant hidden behind the anonymous label
@@ -182,8 +170,4 @@ If you cannot determine the answer, return UNKNOWN.
 FINAL:
 ```
 
-The original task prompt and reasoning stay in context. The model continues after `FINAL:` with a candidate ID or `UNKNOWN`. **The toolkit supplies this entire continuation instruction and prefix; users do not include them in `input`.**
-
-This example uses the toolkit's planned final-answer instruction in place of the original experiment's task-specific continuation. The final-answer instruction is the same in both modes; its placement differs. Model-specific chat formatting and reasoning boundaries remain under design.
-
-Source in the original research repository: the `prompt` and `inference` fields in `research/speaker_attribution/Behavioral Anlysis/Behavior - Per setup/setup_20/setup.json`; continuation logic in `src/confidence_gate/speaker_attribution/run.py`.
+The task prompt and reasoning stay in context. The model continues after `FINAL:` with a candidate ID or `UNKNOWN`. **The toolkit supplies this entire continuation instruction and prefix; users do not include them in `input`.**
