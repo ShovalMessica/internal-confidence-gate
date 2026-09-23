@@ -1,6 +1,6 @@
 # Dataset format
 
-Provide a `.jsonl` file with one example per line. This is a design draft; **TODO** marks unresolved details.
+Provide a UTF-8 `.jsonl` file with one JSON object per line. Loading and validation are implemented; later pipeline steps remain under development. **TODO** marks unresolved details.
 
 ```text
 Example
@@ -17,11 +17,11 @@ Example
 
 ## Fields
 
-- **`id`** — Unique integer identifier.
+- **`id`** — Unique integer identifier. Boolean values are not accepted as integers.
 
-- **`input`** — The full prompt sent to the model as a string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The toolkit adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
+- **`input`** — The full prompt as a nonempty string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The planned generation stage adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
 
-- **`target_answer`** — One expected answer as a string, without `FINAL:`. `UNKNOWN` is reserved for abstention and cannot be a target answer.
+- **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. `UNKNOWN` is reserved for abstention and cannot be a target answer.
 
   Correctness uses complete-answer matching after ignoring case, trimming surrounding whitespace, and collapsing repeated whitespace. Extra words remain significant.
 
@@ -29,15 +29,17 @@ Example
 
 - **`split` (optional)** — `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
 
-  If omitted, the toolkit randomly splits 70%/15%/15% using seed 42. Both proportions and seed are configurable.
+  If omitted, the planned splitting stage will randomly split 70%/15%/15% using seed 42. Both proportions and seed are configurable. The loader currently preserves assignments without creating splits.
 
 - **`semantic_spans` (optional)** — Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
 
   Each span contains integer `start_char` and `end_char` offsets into the original input: zero-based, start inclusive, end exclusive.
 
+  Require `0 <= start_char < end_char <= len(input)`. Boolean offsets are invalid. Keys use positive numbers without leading zeros; numbers need not be consecutive. Omit `semantic_spans` or use `{}` for no additional spans; `null` is invalid.
+
   Semantic spans are optional. However, **every span you choose to include must be supplied for every example**, with the same key and semantic role. Its text and character offsets may differ between examples. Locations must be identifiable without the target answer.
 
-  For example, `{"start_char":11,"end_char":15}` selects `Jhon` in `Please ask Jhon.`. Count characters in the decoded input, not its JSON encoding.
+  For example, `{"start_char":11,"end_char":15}` selects `Jhon` in `Please ask Jhon.`. Count Unicode code points using Python string indexing into the decoded input, not bytes or JSON escape characters. Combining marks count separately. The loader preserves input text without trimming or normalization.
 
 ## Capture locations
 
@@ -49,10 +51,26 @@ Additional semantic positions are encouraged when useful—for example, the name
 
 ## Validation
 
-- Skip and report malformed records, missing required fields, invalid values, invalid annotations, and `UNKNOWN` targets.
-- Keep the first occurrence of an ID; skip later duplicates.
-- Reject datasets with partially assigned splits.
-- Report excluded records by ID or line number, with a reason.
+- Ignore extra fields, including extra properties inside individual spans; retain only recognized fields.
+- Skip malformed JSON, blank lines, non-object records, duplicate JSON keys, missing required fields, invalid values or spans, and normalized `UNKNOWN` targets. Whitespace-only input or target text is invalid.
+- The first occurrence of an integer ID reserves it, even if that record is invalid. Skip later duplicates.
+- After excluding invalid records, reject datasets with partially assigned splits or differing semantic-span key sets. The loader checks keys and offsets; users are responsible for semantic meaning and target independence.
+- Stop if the file cannot be read as UTF-8 or no valid examples remain.
+- Report exclusions with a one-based line number, integer ID when available (`null` otherwise), and reasons.
+
+## Loading
+
+From Python, with the repository root as the working directory:
+
+```python
+from src.dataset import load_dataset
+
+result = load_dataset(config.dataset_path)  # config is returned by load_config(...)
+```
+
+`DatasetResult.examples` contains valid records in file order. `DatasetResult.excluded` contains dictionaries with `line`, `id`, and `reasons`. File-level or consistency failures raise `DatasetError`, whose `errors` and `excluded` attributes preserve the failure details and exclusions collected so far.
+
+The loader does not split data, run a model, print messages, or save files. The future runner will display and save reports.
 
 ## Example
 
@@ -60,4 +78,4 @@ Additional semantic positions are encouraged when useful—for example, the name
 {"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
 ```
 
-**TODO:** Unicode counting, token alignment, multi-token captures, exact layer conventions, expected annotation-key detection, validation order, split rounding, minimum usable data, and task-specific answer matching.
+**TODO:** Token alignment, multi-token captures, exact layer conventions, split rounding, enforcement of minimum usable data, and task-specific answer matching.
