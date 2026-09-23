@@ -139,7 +139,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-The configuration loader is implemented. Use Python 3.10 or newer and, from the repository root, install its dependency:
+The validation runner is implemented. Use Python 3.10 or newer and, from the repository root, install its dependency:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -163,9 +163,15 @@ The toolkit adds the output instruction and generates responses itself. Users do
 
 ### Configure and run
 
-Fill in [configs/task.yaml](configs/task.yaml), then use the [configuration loader](docs/configuration.md#loading-and-validation) to check the settings. Dataset processing, the runner, and model execution are not implemented yet.
+Fill in [configs/task.yaml](configs/task.yaml), then validate its settings, dataset, and splits:
 
-Developers can run the configuration tests without a model:
+```sh
+python -m src.run configs/task.yaml
+```
+
+The command reports valid and excluded examples and the final split sizes. It does not load a model, run inference, or save files yet.
+
+Developers can run the tests without a model:
 
 ```sh
 python -m unittest discover -s tests -v

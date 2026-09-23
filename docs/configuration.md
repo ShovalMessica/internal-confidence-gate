@@ -81,7 +81,7 @@ from src.config import load_config
 config = load_config("configs/task.yaml")
 ```
 
-The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the future runner will display and log them.
+The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the runner displays them.
 
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
 - Unknown or duplicate YAML fields are errors. Token limits must be positive integers, `split_seed` a nonnegative integer, and `allow_abstention` a Boolean.

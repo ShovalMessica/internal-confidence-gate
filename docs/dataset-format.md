@@ -75,7 +75,7 @@ Splitting requires at least 700 valid examples. Each resulting split must contai
 
 These are pre-generation checks. After generation, the toolkit will require at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid and `UNKNOWN` predictions do not count. This later check is not implemented yet.
 
-These functions do not run a model, print messages, or save files. The future runner will display and save reports.
+These functions do not run a model, print messages, or save files. The runner displays their results; saving reports is planned for a later stage.
 
 ## Example
 
