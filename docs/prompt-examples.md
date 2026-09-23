@@ -154,12 +154,6 @@ Output only the candidate ID after `FINAL:`, never the participant name.
 Reason about the task first. A separate final-answer instruction will follow.
 ```
 
-**Illustrative model reasoning:**
-
-```text
-Speaker 2 = Maya Chen = B
-```
-
 **Toolkit-added instruction after reasoning:**
 
 ```text
