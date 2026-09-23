@@ -2,15 +2,13 @@
 
 Design and refine the task prompt you supply so the model reliably answers in the form your task expects—for example, a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
 
-**You supply the task prompt. The toolkit will add its answer-format instructions and `FINAL:` prefix automatically; do not add these yourself.** See [Generation](configuration.md#generation). Generation is not implemented yet.
+Below are two complete prompt examples with illustrative data. They show how instructions, decision rules, and demonstrations can be combined in a prompt. Each **Example prompt** represents the text supplied in one dataset record's `input`.
 
-The examples below illustrate how to design a task prompt using clear instructions, relevant context, decision rules, and optional examples. Use them as starting points, then adapt and test your prompt for your own task and model.
-
-Each example below is a complete prompt with illustrative data, like the full text supplied in a dataset record’s `input`.
+The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the [planned generation behavior](configuration.md#generation), which is not implemented yet.
 
 ## Named-entity correction — no reasoning
 
-**Example prompt:**
+**Example prompt** — includes two fixed demonstrations, followed by the input to solve:
 
 ```text
 # Task
@@ -106,20 +104,16 @@ J David Burns
 </MEETING_TRANSCRIPT>
 ```
 
-**Added by the toolkit, not the user** — with `reasoning_mode: direct` and the default `allow_abstention: true`, append this instruction to the task prompt:
+*The participant list and transcript under “Now solve this input” change between dataset records. The instructions and the two demonstration examples stay the same.*
+
+**Toolkit-added instruction:**
 
 ```text
 Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
 If you cannot determine the answer, return UNKNOWN.
 ```
 
-The toolkit then starts the model's reply with:
-
-```text
-FINAL:
-```
-
-The model generates only what follows that prefix, such as `I`, giving `FINAL: I`. No reasoning stage runs.
+The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Illustrative reply:** `FINAL: I`.
 
 ## Speaker attribution — with reasoning
 
@@ -164,15 +158,21 @@ Speaker 2: Sure. The first review is on Tuesday, and the final handoff is on Fri
 Speaker 1: Thanks. Sara will review the draft afterward.
 ```
 
-**Added by the toolkit before reasoning** — with `reasoning_mode: reasoning`, append this to the task prompt:
+*The target speaker (`Speaker 2` wherever it appears in the instructions), participant list, and transcript change between dataset records. The decision rules stay the same.*
+
+**Toolkit-added instruction before reasoning:**
 
 ```text
 Reason about the task first. A separate final-answer instruction will follow.
 ```
 
-The model generates reasoning until it ends or reaches `reasoning_max_new_tokens` (default: 1,024).
+**Illustrative model reasoning:**
 
-**Added by the toolkit after reasoning** — close the reasoning block if needed, then append the following to the model's reply, with `allow_abstention: true`:
+```text
+Speaker 2 = Maya Chen = B
+```
+
+**Toolkit-added instruction after reasoning:**
 
 ```text
 Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
@@ -180,4 +180,4 @@ If you cannot determine the answer, return UNKNOWN.
 FINAL:
 ```
 
-The task prompt and reasoning stay in context. The model continues after `FINAL:` with a candidate ID or `UNKNOWN`. **The toolkit supplies this entire continuation instruction and prefix; users do not include them in `input`.**
+The model continues after the supplied `FINAL:` with `B`. **Illustrative final answer:** `FINAL: B`.
