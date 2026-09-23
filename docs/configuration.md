@@ -89,6 +89,6 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
 
-This step does not read dataset records, inspect model weights, or run generation. Actual model compatibility and dataset validation belong to later stages.
+The configuration loader does not read dataset records, inspect model weights, or run generation. The runner performs dataset validation; model compatibility remains a later stage.
 
 **TODO:** Complete the configuration for later pipeline stages. The example above is not yet a complete configuration for the full pipeline.

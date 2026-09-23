@@ -86,13 +86,22 @@ def _validate_record(record: dict, errors: list[str], allow_abstention: bool) ->
             errors.append("target_answer must not contain the FINAL: prefix.")
     if "split" in record:
         example["split"] = record["split"]
-        if record["split"] not in ("train", "validation", "test"):
+        if record["split"] not in _SPLIT_NAMES:
             errors.append("split must be 'train', 'validation', or 'test'.")
     if "semantic_spans" in record:
         example["semantic_spans"] = _validate_spans(
             record["semantic_spans"], example["input"], errors
         )
     return example
+
+
+def _split_state(examples: list[dict]) -> str:
+    supplied = ["split" in example for example in examples]
+    if all(supplied):
+        return "provided"
+    if any(supplied):
+        return "partial"
+    return "automatic"
 
 
 def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetResult:
@@ -139,17 +148,16 @@ def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetR
                             example_lines.append(line_number)
                 if reasons:
                     excluded.append({"line": line_number, "id": record_id, "reasons": reasons})
+    except DatasetError:
+        raise
     except (OSError, ValueError) as exc:
-        if isinstance(exc, DatasetError):
-            raise
         raise DatasetError([f"Cannot read dataset ({type(exc).__name__})."], excluded) from exc
 
     errors = []
     if not examples:
         errors.append("No valid examples remain.")
     else:
-        has_split = ["split" in example for example in examples]
-        if any(has_split) and not all(has_split):
+        if _split_state(examples) == "partial":
             errors.append("Supply split for every valid example or omit it from all examples.")
         expected = set(examples[0].get("semantic_spans", {}))
         for line_number, example in zip(example_lines, examples):
@@ -179,13 +187,15 @@ def _automatic_split_sizes(total: int, ratios: SplitRatios) -> dict[str, int]:
 def _check_split_sizes(total: int, sizes: dict[str, int], excluded: list[dict]) -> None:
     errors = []
     if total < _MIN_EXAMPLES:
-        errors.append(f"Dataset has {total} valid examples; at least {_MIN_EXAMPLES} are required.")
+        noun = "example" if total == 1 else "examples"
+        errors.append(f"Dataset has {total} valid {noun}; at least {_MIN_EXAMPLES} are required.")
     for name in _SPLIT_NAMES:
         minimum = _MIN_SPLIT_SIZES[name]
         actual = sizes.get(name, 0)
         if actual < minimum:
+            noun = "example" if actual == 1 else "examples"
             errors.append(
-                f"{name} split has {actual} examples; at least {minimum} are required."
+                f"{name} split has {actual} {noun}; at least {minimum} are required."
             )
     if errors:
         raise DatasetError(errors, excluded)
@@ -196,14 +206,14 @@ def assign_splits(
 ) -> DatasetResult:
     """Preserve supplied splits or assign deterministic splits to valid examples."""
     examples = dataset.examples
-    supplied = ["split" in example for example in examples]
-    if any(supplied) and not all(supplied):
+    split_state = _split_state(examples)
+    if split_state == "partial":
         raise DatasetError(
             ["Supply split for every valid example or omit it from all examples."],
             dataset.excluded,
         )
 
-    if all(supplied):
+    if split_state == "provided":
         sizes = dict(Counter(example["split"] for example in examples))
         _check_split_sizes(len(examples), sizes, dataset.excluded)
         return DatasetResult([dict(example) for example in examples], list(dataset.excluded))
