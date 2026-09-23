@@ -2,6 +2,7 @@
 
 from collections import Counter
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -15,6 +16,7 @@ from src.config import SplitRatios
 class DatasetResult:
     examples: list[dict]
     excluded: list[dict]
+    content_sha256: str | None = None
 
 
 class DatasetError(ValueError):
@@ -113,10 +115,12 @@ def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetR
     examples, excluded = [], []
     seen_ids = set()
     example_lines = []
+    content_hash = hashlib.sha256()
     try:
         # Decode each line separately so a later encoding failure preserves earlier exclusions.
         with Path(path).open("rb") as source:
             for line_number, raw in enumerate(source, start=1):
+                content_hash.update(raw)
                 try:
                     line = raw.decode("utf-8")
                 except UnicodeError as exc:
@@ -169,7 +173,7 @@ def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetR
                 )
     if errors:
         raise DatasetError(errors, excluded)
-    return DatasetResult(examples, excluded)
+    return DatasetResult(examples, excluded, content_hash.hexdigest())
 
 
 def _automatic_split_sizes(total: int, ratios: SplitRatios) -> dict[str, int]:
@@ -216,7 +220,11 @@ def assign_splits(
     if split_state == "provided":
         sizes = dict(Counter(example["split"] for example in examples))
         _check_split_sizes(len(examples), sizes, dataset.excluded)
-        return DatasetResult([dict(example) for example in examples], list(dataset.excluded))
+        return DatasetResult(
+            [dict(example) for example in examples],
+            list(dataset.excluded),
+            dataset.content_sha256,
+        )
 
     sizes = _automatic_split_sizes(len(examples), ratios)
     _check_split_sizes(len(examples), sizes, dataset.excluded)
@@ -232,4 +240,4 @@ def assign_splits(
 
     split_examples = [dict(example, split=assignments[index])
                       for index, example in enumerate(examples)]
-    return DatasetResult(split_examples, list(dataset.excluded))
+    return DatasetResult(split_examples, list(dataset.excluded), dataset.content_sha256)

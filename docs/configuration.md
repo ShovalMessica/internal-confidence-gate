@@ -8,7 +8,7 @@ The fields below are accepted by the configuration loader. Later pipeline behavi
 
 - **`model_name_or_path`** — Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
 - **`dataset_path`** — Required absolute path to the JSONL dataset.
-- **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Reuse of saved results for matching runs is planned but not implemented yet.
+- **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Each validated run is stored under `<output_dir>/<run_id>`.
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
@@ -90,5 +90,13 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
 
 The configuration loader does not read dataset records, inspect model weights, or run generation. The runner performs dataset validation; model compatibility remains a later stage.
+
+## Run identity and reuse
+
+After validation, the runner creates a small `run.json` record. The run ID is derived from the effective configuration and the SHA-256 hash of the exact dataset bytes. YAML and dataset paths do not affect the ID; `output_dir` only controls where the run is stored.
+
+Inactive settings are excluded. For example, `reasoning_max_new_tokens` does not affect a direct-mode run, and split settings do not affect a dataset with supplied splits. A matching record is reused without being rewritten. Folder existence alone is not treated as completed work.
+
+Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 
 **TODO:** Complete the configuration for later pipeline stages. The example above is not yet a complete configuration for the full pipeline.

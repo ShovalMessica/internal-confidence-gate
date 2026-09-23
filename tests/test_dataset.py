@@ -1,6 +1,7 @@
 """Offline checks for dataset validation and exclusion reports."""
 
 from contextlib import redirect_stderr, redirect_stdout
+import hashlib
 import io
 import json
 from collections import Counter
@@ -42,6 +43,7 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(self.source.read_bytes(), before)
+        self.assertEqual(result.content_sha256, hashlib.sha256(before).hexdigest())
         self.assertEqual(list(self.root.iterdir()), [self.source])
 
     def test_extra_fields_are_ignored_at_record_and_span_levels(self):
@@ -205,6 +207,7 @@ class SplitTests(unittest.TestCase):
 
     def test_automatic_splits_are_reproducible_and_preserve_order(self):
         source = self.dataset(700, excluded=[{"line": 1, "id": None, "reasons": ["invalid"]}])
+        source.content_sha256 = "abc123"
         first = assign_splits(source, SplitRatios(), 42)
         second = assign_splits(source, SplitRatios(), 42)
         different_seed = assign_splits(source, SplitRatios(), 43)
@@ -212,6 +215,7 @@ class SplitTests(unittest.TestCase):
         self.assertEqual(Counter(row["split"] for row in first.examples),
                          {"train": 490, "validation": 105, "test": 105})
         self.assertEqual([row["id"] for row in first.examples], list(range(700)))
+        self.assertEqual(first.content_sha256, source.content_sha256)
         self.assertEqual(first, second)
         self.assertNotEqual([row["split"] for row in first.examples],
                             [row["split"] for row in different_seed.examples])

@@ -167,7 +167,13 @@ Fill in [configs/task.yaml](configs/task.yaml), then validate its settings, data
 python -m src.run configs/task.yaml
 ```
 
-The command reports valid and excluded examples and the final split sizes. It does not load a model, run inference, or save files yet.
+The command reports valid and excluded examples and the final split sizes. After successful validation, it creates or reuses:
+
+```text
+<output_dir>/<run_id>/run.json
+```
+
+The run ID represents the effective configuration and exact dataset contents. The small record tracks completed stages; no dataset or model outputs are copied. The command does not load a model or run inference yet.
 
 Developers can run the tests without a model:
 
