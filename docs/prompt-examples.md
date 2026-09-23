@@ -6,7 +6,7 @@ Design and refine the task prompt you supply so the model reliably answers in th
 
 The examples below illustrate how to design a task prompt using clear instructions, relevant context, decision rules, and optional examples. Use them as starting points, then adapt and test your prompt for your own task and model.
 
-Placeholders show where to insert example-specific content. Supply the complete, filled-in prompt in each dataset record’s `input`; the toolkit does not fill placeholders.
+Each example below is a complete prompt with illustrative data, like the full text supplied in a dataset record’s `input`.
 
 ## Named-entity correction — no reasoning
 
@@ -86,17 +86,23 @@ J David Burns
 
 # Example 2 Output
 I
-```
 
-**Example-specific content** — include this after the task instructions in the same `input`, replacing the placeholders:
-
-```text
+# Now solve this input
 <PARTICIPANTS>
-{participant_list}
+A Jeffrey Rocha
+B Corey Dalton
+C Ashley Erickson
+D Makayla Sawyer
+E Patrick Oneal
+F Mathew Lozano
+G Barbara Taylor
+H Brian Collins
+I Katherine Smith
+J David Burns
 </PARTICIPANTS>
 
 <MEETING_TRANSCRIPT>
-{transcript_chunk}
+<73><Speaker 2>Please send the updated draft to Kate before tomorrow's review.
 </MEETING_TRANSCRIPT>
 ```
 
@@ -121,23 +127,25 @@ The model generates only what follows that prefix, such as `I`, giving `FINAL: I
 
 ```text
 Identify the named participant hidden behind the anonymous label
-{target_speaker}.
+Speaker 2.
 Answer with the candidate ID or UNKNOWN, never the participant name.
 
 IMPORTANT: `Speaker 1`, `Speaker 2`, and similar labels are anonymous aliases
 for people in the participant list. They are not additional people.
 
 PARTICIPANTS:
-{candidate_list}
+A: Daniel Brooks
+B: Maya Chen
+C: Sara Patel
 
 Use the ordinary transcript to infer the identity:
 
 - An explicit target self-identification (`I am NAME` or `my name is NAME`) is
   sufficient evidence.
 - If another speaker directly calls, questions, requests, greets, or invites
-  exactly one named participant and {target_speaker} gives the immediate
-  response, infer that {target_speaker} is the named participant.
-- A name spoken by {target_speaker}, such as `You go, NAME` or `Hey NAME`,
+  exactly one named participant and Speaker 2 gives the immediate
+  response, infer that Speaker 2 is the named participant.
+- A name spoken by Speaker 2, such as `You go, NAME` or `Hey NAME`,
   normally names another person rather than the target.
 - If a speaker refers to a named person as `he`, `she`, or `they` in the same
   statement, that person is being discussed rather than directly addressed.
@@ -148,10 +156,12 @@ Consecutive rows from one anonymous speaker are one turn.
 
 Do not guess from meeting topics or from the participant-list order. Once one
 identity is unambiguously established, state only
-`{target_speaker} = NAME = ID` in your reasoning and stop.
+`Speaker 2 = NAME = ID` in your reasoning and stop.
 
 TRANSCRIPT:
-{transcript}
+Speaker 1: Maya, could you walk us through the revised schedule?
+Speaker 2: Sure. The first review is on Tuesday, and the final handoff is on Friday.
+Speaker 1: Thanks. Sara will review the draft afterward.
 ```
 
 **Added by the toolkit before reasoning** — with `reasoning_mode: reasoning`, append this to the task prompt:
