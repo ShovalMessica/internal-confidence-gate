@@ -105,46 +105,48 @@ The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Ill
 
 **Example prompt:**
 
+*`{target_speaker}`, `{candidate_list}`, and `{transcript}` change between examples. `{unknown_label}` is the configured abstention label.*
+
 ```text
 Identify the named participant hidden behind the anonymous label
-Speaker 2.
-Answer with the candidate ID or UNKNOWN, never the participant name.
+{target_speaker}.
 
 IMPORTANT: `Speaker 1`, `Speaker 2`, and similar labels are anonymous aliases
 for people in the participant list. They are not additional people.
 
 PARTICIPANTS:
-A: Daniel Brooks
-B: Maya Chen
-C: Sara Patel
+{candidate_list}
 
 Use the ordinary transcript to infer the identity:
 
 - An explicit target self-identification (`I am NAME` or `my name is NAME`) is
   sufficient evidence.
 - If another speaker directly calls, questions, requests, greets, or invites
-  exactly one named participant and Speaker 2 gives the immediate
-  response, infer that Speaker 2 is the named participant.
-- A name spoken by Speaker 2, such as `You go, NAME` or `Hey NAME`,
+  exactly one named participant and {target_speaker} gives the immediate
+  response, infer that {target_speaker} is the named participant.
+- A name spoken by {target_speaker}, such as `You go, NAME` or `Hey NAME`,
   normally names another person rather than the target.
 - If a speaker refers to a named person as `he`, `she`, or `they` in the same
   statement, that person is being discussed rather than directly addressed.
-- Choose UNKNOWN when there is no sufficient identity evidence, several
+- Choose {unknown_label} when there is no sufficient identity evidence, several
   people are addressed, another speaker intervenes, or the evidence conflicts.
 
 Consecutive rows from one anonymous speaker are one turn.
 
 Do not guess from meeting topics or from the participant-list order. Once one
 identity is unambiguously established, state only
-`Speaker 2 = NAME = ID` in your reasoning and stop.
+`{target_speaker} = NAME = ID` in your reasoning and stop.
 
 TRANSCRIPT:
-Speaker 1: Maya, could you walk us through the revised schedule?
-Speaker 2: Sure. The first review is on Tuesday, and the final handoff is on Friday.
-Speaker 1: Thanks. Sara will review the draft afterward.
-```
+{transcript}
 
-*The target speaker (`Speaker 2` wherever it appears in the instructions), participant list, and transcript change between dataset records. The decision rules stay the same.*
+OUTPUT FORMAT:
+After `</think>`, output exactly one line:
+
+FINAL: <candidate ID or {unknown_label}>
+
+Output only the candidate ID after `FINAL:`, never the participant name.
+```
 
 **Toolkit-added instruction before reasoning:**
 
