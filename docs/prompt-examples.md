@@ -1,12 +1,12 @@
 # Prompt design examples
 
-These examples show the prompts used in our two research tasks: named-entity correction without reasoning, and speaker attribution with reasoning.
+Design and refine the task prompt you supply so the model reliably answers in the form your task expects—for example, a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
 
-Prompt design involves choosing task instructions, context, examples, decision rules, and how to handle ambiguity. Try these choices on a small development sample before collecting probe-training data. Check that the model understands the task and produces the expected kind of answer, then keep the prompt design fixed for training and evaluation.
+**You supply the task prompt. The toolkit will add its answer-format instructions and `FINAL:` prefix automatically; do not add these yourself.** See [Generation](configuration.md#generation). Generation is not implemented yet.
 
-The wording below preserves the original research prompts, including their historical output instructions. In this toolkit, **you supply the task prompt; the toolkit will add its answer-format instructions and `FINAL:` prefix automatically**. You do not need to add those yourself. See [Generation](configuration.md#generation) for the planned behavior; generation is not implemented yet.
+The examples below preserve our original NER and speaker-attribution prompts, including their historical output instructions.
 
-Placeholders below show where example-specific content went in the original pipelines. The toolkit expects the complete, filled-in prompt in each dataset record's `input`; it does not fill placeholders for you.
+Placeholders show where example-specific content was inserted. Supply the complete, filled-in prompt in each dataset record’s `input`; the toolkit does not fill placeholders.
 
 ## Named-entity correction — no reasoning
 
