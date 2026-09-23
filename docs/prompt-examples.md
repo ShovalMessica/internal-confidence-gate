@@ -10,7 +10,7 @@ Placeholders show where to insert example-specific content. Supply the complete,
 
 ## Named-entity correction — no reasoning
 
-**Example task instructions:**
+**Example prompt:**
 
 ```text
 # Task
@@ -117,7 +117,7 @@ The model generates only what follows that prefix, such as `I`, giving `FINAL: I
 
 ## Speaker attribution — with reasoning
 
-**Example task prompt:**
+**Example prompt:**
 
 ```text
 Identify the named participant hidden behind the anonymous label
