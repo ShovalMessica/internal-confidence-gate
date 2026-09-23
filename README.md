@@ -118,6 +118,7 @@ For eligible predictions:
 ## Requirements and limitations
 
 - White-box access to the model’s internal activations is required.
+- Provide at least 700 valid examples. Before generation, the toolkit also requires at least 200 train, 100 validation, and 100 test examples.
 - After excluding `UNKNOWN` and invalid responses, each split must contain at least:
 
   - **Training:** 100 correct and 100 incorrect predictions.

@@ -3,11 +3,13 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+from collections import Counter
 from pathlib import Path
 import tempfile
 import unittest
 
-from src.dataset import DatasetError, load_dataset
+from src.config import SplitRatios
+from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
 
 
 class DatasetTests(unittest.TestCase):
@@ -179,6 +181,72 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(DatasetError, "UTF-8 at line 2") as caught:
             load_dataset(self.source)
         self.assertEqual(caught.exception.excluded[0]["line"], 1)
+
+
+class SplitTests(unittest.TestCase):
+    @staticmethod
+    def dataset(size, *, split_counts=None, excluded=None):
+        examples = [
+            {"id": index, "input": f"Input {index}", "target_answer": str(index)}
+            for index in range(size)
+        ]
+        if split_counts:
+            start = 0
+            for name, count in split_counts.items():
+                for example in examples[start:start + count]:
+                    example["split"] = name
+                start += count
+        return DatasetResult(examples, excluded or [])
+
+    def test_automatic_splits_are_reproducible_and_preserve_order(self):
+        source = self.dataset(700, excluded=[{"line": 1, "id": None, "reasons": ["invalid"]}])
+        first = assign_splits(source, SplitRatios(), 42)
+        second = assign_splits(source, SplitRatios(), 42)
+        different_seed = assign_splits(source, SplitRatios(), 43)
+
+        self.assertEqual(Counter(row["split"] for row in first.examples),
+                         {"train": 490, "validation": 105, "test": 105})
+        self.assertEqual([row["id"] for row in first.examples], list(range(700)))
+        self.assertEqual(first, second)
+        self.assertNotEqual([row["split"] for row in first.examples],
+                            [row["split"] for row in different_seed.examples])
+        self.assertTrue(all("split" not in row for row in source.examples))
+        self.assertEqual(first.excluded, source.excluded)
+
+    def test_largest_remainder_rounding(self):
+        result = assign_splits(self.dataset(701), SplitRatios(), 42)
+        self.assertEqual(Counter(row["split"] for row in result.examples),
+                         {"train": 491, "validation": 105, "test": 105})
+
+    def test_user_splits_are_preserved(self):
+        counts = {"train": 500, "validation": 100, "test": 100}
+        source = self.dataset(700, split_counts=counts)
+        result = assign_splits(source, SplitRatios(), 42)
+        self.assertEqual(result.examples, source.examples)
+        self.assertIsNot(result.examples, source.examples)
+
+    def test_minimum_total_and_split_sizes(self):
+        cases = [
+            (self.dataset(699), SplitRatios(), ("at least 700",)),
+            (self.dataset(700), SplitRatios(0.8, 0.1, 0.1),
+             ("validation split has 70", "test split has 70")),
+            (self.dataset(700, split_counts={"train": 550, "validation": 75, "test": 75}),
+             SplitRatios(), ("validation split has 75", "test split has 75")),
+            (self.dataset(700, split_counts={"train": 700}),
+             SplitRatios(), ("validation split has 0", "test split has 0")),
+        ]
+        for dataset, ratios, messages in cases:
+            with self.subTest(messages=messages):
+                with self.assertRaises(DatasetError) as caught:
+                    assign_splits(dataset, ratios, 42)
+                for message in messages:
+                    self.assertIn(message, str(caught.exception))
+
+    def test_split_error_preserves_exclusions(self):
+        excluded = [{"line": 2, "id": 2, "reasons": ["invalid"]}]
+        with self.assertRaises(DatasetError) as caught:
+            assign_splits(self.dataset(10, excluded=excluded), SplitRatios(), 42)
+        self.assertEqual(caught.exception.excluded, excluded)
 
 
 if __name__ == "__main__":

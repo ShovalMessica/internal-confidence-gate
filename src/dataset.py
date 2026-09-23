@@ -1,9 +1,14 @@
-"""Read and validate task examples without splitting data or running a model."""
+"""Read, validate, and split task examples without running a model."""
 
+from collections import Counter
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
+import random
 import re
+
+from src.config import SplitRatios
 
 
 @dataclass
@@ -22,6 +27,9 @@ class DatasetError(ValueError):
 
 
 _SPAN_KEY = re.compile(r"span_[1-9][0-9]*")
+_SPLIT_NAMES = ("train", "validation", "test")
+_MIN_EXAMPLES = 700
+_MIN_SPLIT_SIZES = {"train": 200, "validation": 100, "test": 100}
 
 
 def _unique_object(pairs: list[tuple]) -> dict:
@@ -151,3 +159,64 @@ def load_dataset(path: str | Path) -> DatasetResult:
     if errors:
         raise DatasetError(errors, excluded)
     return DatasetResult(examples, excluded)
+
+
+def _automatic_split_sizes(total: int, ratios: SplitRatios) -> dict[str, int]:
+    exact = {name: total * getattr(ratios, name) for name in _SPLIT_NAMES}
+    sizes = {name: math.floor(exact[name]) for name in _SPLIT_NAMES}
+    order = sorted(
+        _SPLIT_NAMES,
+        key=lambda name: (-(exact[name] - sizes[name]), _SPLIT_NAMES.index(name)),
+    )
+    for name in order[: total - sum(sizes.values())]:
+        sizes[name] += 1
+    return sizes
+
+
+def _check_split_sizes(total: int, sizes: dict[str, int], excluded: list[dict]) -> None:
+    errors = []
+    if total < _MIN_EXAMPLES:
+        errors.append(f"Dataset has {total} valid examples; at least {_MIN_EXAMPLES} are required.")
+    for name in _SPLIT_NAMES:
+        minimum = _MIN_SPLIT_SIZES[name]
+        actual = sizes.get(name, 0)
+        if actual < minimum:
+            errors.append(
+                f"{name} split has {actual} examples; at least {minimum} are required."
+            )
+    if errors:
+        raise DatasetError(errors, excluded)
+
+
+def assign_splits(
+    dataset: DatasetResult, ratios: SplitRatios, seed: int
+) -> DatasetResult:
+    """Preserve supplied splits or assign deterministic splits to valid examples."""
+    examples = dataset.examples
+    supplied = ["split" in example for example in examples]
+    if any(supplied) and not all(supplied):
+        raise DatasetError(
+            ["Supply split for every valid example or omit it from all examples."],
+            dataset.excluded,
+        )
+
+    if all(supplied):
+        sizes = dict(Counter(example["split"] for example in examples))
+        _check_split_sizes(len(examples), sizes, dataset.excluded)
+        return DatasetResult([dict(example) for example in examples], list(dataset.excluded))
+
+    sizes = _automatic_split_sizes(len(examples), ratios)
+    _check_split_sizes(len(examples), sizes, dataset.excluded)
+
+    shuffled = list(range(len(examples)))
+    random.Random(seed).shuffle(shuffled)
+    assignments = {}
+    start = 0
+    for name in _SPLIT_NAMES:
+        end = start + sizes[name]
+        assignments.update((index, name) for index in shuffled[start:end])
+        start = end
+
+    split_examples = [dict(example, split=assignments[index])
+                      for index, example in enumerate(examples)]
+    return DatasetResult(split_examples, list(dataset.excluded))

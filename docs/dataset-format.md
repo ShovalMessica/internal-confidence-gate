@@ -29,7 +29,7 @@ Example
 
 - **`split` (optional)** — `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
 
-  If omitted, the planned splitting stage will randomly split 70%/15%/15% using seed 42. Both proportions and seed are configurable. The loader currently preserves assignments without creating splits.
+  If omitted, the toolkit randomly assigns 70%/15%/15% using seed 42. Both proportions and seed are configurable. Fractions are rounded down, then remaining examples go to the splits with the largest fractional remainders. Ties follow train, validation, test order.
 
 - **`semantic_spans` (optional)** — Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
 
@@ -58,19 +58,24 @@ Additional semantic positions are encouraged when useful—for example, the name
 - Stop if the file cannot be read as UTF-8 or no valid examples remain.
 - Report exclusions with a one-based line number, integer ID when available (`null` otherwise), and reasons.
 
-## Loading
+## Loading and splitting
 
 From Python, with the repository root as the working directory:
 
 ```python
-from src.dataset import load_dataset
+from src.dataset import assign_splits, load_dataset
 
-result = load_dataset(config.dataset_path)  # config is returned by load_config(...)
+result = load_dataset(config.dataset_path)
+result = assign_splits(result, config.split_ratios, config.split_seed)
 ```
 
-`DatasetResult.examples` contains valid records in file order. `DatasetResult.excluded` contains dictionaries with `line`, `id`, and `reasons`. File-level or consistency failures raise `DatasetError`, whose `errors` and `excluded` attributes preserve the failure details and exclusions collected so far.
+`DatasetResult.examples` contains valid records in file order. `DatasetResult.excluded` contains dictionaries with `line`, `id`, and `reasons`. File-level, consistency, or split-readiness failures raise `DatasetError`, whose `errors` and `excluded` attributes preserve the failure details and exclusions collected so far.
 
-The loader does not split data, run a model, print messages, or save files. The future runner will display and save reports.
+Splitting requires at least 700 valid examples. Each resulting split must contain at least 200 train, 100 validation, and 100 test examples. User-supplied splits are preserved but must meet the same requirements.
+
+These are pre-generation checks. After generation, the toolkit will require at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid and `UNKNOWN` predictions do not count. This later check is not implemented yet.
+
+These functions do not run a model, print messages, or save files. The future runner will display and save reports.
 
 ## Example
 
@@ -78,4 +83,4 @@ The loader does not split data, run a model, print messages, or save files. The 
 {"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
 ```
 
-**TODO:** Token alignment, multi-token captures, exact layer conventions, split rounding, enforcement of minimum usable data, and task-specific answer matching.
+**TODO:** Token alignment, multi-token captures, exact layer conventions, post-generation minimum enforcement, and task-specific answer matching.
