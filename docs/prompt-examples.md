@@ -2,13 +2,15 @@
 
 Design and refine the task prompt you supply so the model reliably answers in the form your task expects—for example, a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
 
-Below are two complete prompt examples with illustrative data. They show how instructions, decision rules, and demonstrations can be combined in a prompt. Each **Example prompt** represents the text supplied in one dataset record's `input`.
+Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined.
 
 The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the [planned generation behavior](configuration.md#generation), which is not implemented yet.
 
 ## Named-entity correction — no reasoning
 
-**Example prompt** — includes two fixed demonstrations, followed by the input to solve:
+**Example prompt:**
+
+*For each task input, `<PARTICIPANTS>` holds its participant list and `<MEETING_TRANSCRIPT>` its transcript; these vary between inputs. The two demonstrations within the prompt below are fixed examples.*
 
 ```text
 # Task
@@ -16,7 +18,6 @@ Given a participant list and a transcript chunk, output exactly one of:
 - The participant's label (`A`-`J`) ONLY if a name is MISSPELLED (does not match any participant's spelling) but sounds like one participant.
 - Your job is to catch a SPELLING error, not to identify who is speaking or who is mentioned. A correctly-written participant name is not an error.
 - `NONE` if no correction should be made.
-- `UNKNOWN` if you cannot determine whether or how to correct the name.
 
 Each participant in the list is identified by a single letter label (A through J); answer with that label.
 
@@ -41,7 +42,7 @@ Read the utterance text and compare any person mention to the participant list.
 - To judge whether a word is a mis-heard name, compare how the two sound out loud: a shared beginning consonant sound, similar vowels, and similar overall shape. If a word shares most of a participant's sounds (for example debit and David, cattie and Kathy, braien and Brian), treat it as that participant's mis-heard name and output that participant.
 - When a name IS clearly mis-spelled or mis-heard, DO output the participant it sounds like; do not be over-cautious about corrupted names.
 - Remember: nicknames (Kate for Katherine) and sound-alike garbles (march for Mark, nickel for Nicole) ARE mis-spellings -- correct those to the participant.
-- If unsure, output `UNKNOWN`.
+- If unsure, output `NONE`.
 
 # Example 1 Input
 <PARTICIPANTS>
@@ -85,26 +86,11 @@ J David Burns
 # Example 2 Output
 I
 
-# Now solve this input
-<PARTICIPANTS>
-A Jeffrey Rocha
-B Corey Dalton
-C Ashley Erickson
-D Makayla Sawyer
-E Patrick Oneal
-F Mathew Lozano
-G Barbara Taylor
-H Brian Collins
-I Katherine Smith
-J David Burns
-</PARTICIPANTS>
-
-<MEETING_TRANSCRIPT>
-<73><Speaker 2>Please send the updated draft to Kate before tomorrow's review.
-</MEETING_TRANSCRIPT>
+# Output Rule
+Output exactly `NONE` or one participant label like `E`.
+Output only that single token.
+No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewrite.
 ```
-
-*The participant list and transcript under “Now solve this input” change between dataset records. The instructions and the two demonstration examples stay the same.*
 
 **Toolkit-added instruction:**
 
