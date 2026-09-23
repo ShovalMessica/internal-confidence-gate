@@ -67,7 +67,7 @@ def _validate_spans(value: object, text: object, errors: list[str]) -> dict:
     return spans
 
 
-def _validate_record(record: dict, errors: list[str]) -> dict:
+def _validate_record(record: dict, errors: list[str], allow_abstention: bool) -> dict:
     example = {name: record.get(name) for name in ("id", "input", "target_answer")}
     if type(example["id"]) is not int:
         errors.append("id must be an integer, not a Boolean.")
@@ -77,8 +77,11 @@ def _validate_record(record: dict, errors: list[str]) -> dict:
             errors.append(f"{name} must be a nonempty string.")
     target = example["target_answer"]
     if isinstance(target, str):
-        if " ".join(target.split()).casefold() == "unknown":
-            errors.append("target_answer cannot be UNKNOWN; it is reserved for abstention.")
+        if allow_abstention and " ".join(target.split()).casefold() == "unknown":
+            errors.append(
+                "target_answer cannot be UNKNOWN while abstention is enabled; "
+                "UNKNOWN is reserved for model abstention."
+            )
         if "final:" in target.casefold():
             errors.append("target_answer must not contain the FINAL: prefix.")
     if "split" in record:
@@ -92,7 +95,7 @@ def _validate_record(record: dict, errors: list[str]) -> dict:
     return example
 
 
-def load_dataset(path: str | Path) -> DatasetResult:
+def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetResult:
     """Return valid examples and exclusions; raise DatasetError on dataset failure.
 
     Offsets use Python string indices into unchanged, decoded input. Consistency
@@ -130,7 +133,7 @@ def load_dataset(path: str | Path) -> DatasetResult:
                             if record_id in seen_ids:
                                 reasons.append(f"Duplicate id {record_id}; the first occurrence reserves it.")
                             seen_ids.add(record_id)
-                        example = _validate_record(record, reasons)
+                        example = _validate_record(record, reasons, allow_abstention)
                         if not reasons:
                             examples.append(example)
                             example_lines.append(line_number)

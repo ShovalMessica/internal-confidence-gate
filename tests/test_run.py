@@ -97,7 +97,11 @@ class RunTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertIn("Excluded examples: 2", stdout)
         self.assertIn("Line 1, ID unavailable: Invalid record:", stdout)
-        self.assertIn("Line 2, ID 900: target_answer cannot be UNKNOWN", stdout)
+        self.assertIn(
+            "Line 2, ID 900: target_answer cannot be UNKNOWN while abstention is enabled; "
+            "UNKNOWN is reserved for model abstention.",
+            stdout,
+        )
 
     def test_configuration_error_returns_one_without_traceback(self):
         self.write_dataset([self.record(1)])

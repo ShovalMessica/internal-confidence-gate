@@ -93,9 +93,7 @@ allow_abstention: true
 
 This is a shared run setting, not a dataset field. Users can disable it. The toolkit’s appended instruction reflects the setting.
 
-When abstention is enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
-
-**TODO:** Define where shared run settings are supplied and how UNKNOWN target answers are handled.
+When abstention is enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR. `UNKNOWN` cannot then be a target answer. When abstention is disabled, it may be used as a normal target answer.
 
 ## Pipeline overview
 

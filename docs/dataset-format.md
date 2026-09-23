@@ -21,7 +21,7 @@ Example
 
 - **`input`** — The full prompt as a nonempty string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The planned generation stage adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
 
-- **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. `UNKNOWN` is reserved for abstention and cannot be a target answer.
+- **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
   Correctness uses complete-answer matching after ignoring case, trimming surrounding whitespace, and collapsing repeated whitespace. Extra words remain significant.
 
@@ -52,7 +52,7 @@ Additional semantic positions are encouraged when useful—for example, the name
 ## Validation
 
 - Ignore extra fields, including extra properties inside individual spans; retain only recognized fields.
-- Skip malformed JSON, blank lines, non-object records, duplicate JSON keys, missing required fields, invalid values or spans, and normalized `UNKNOWN` targets. Whitespace-only input or target text is invalid.
+- Skip malformed JSON, blank lines, non-object records, duplicate JSON keys, missing required fields, invalid values or spans, and normalized `UNKNOWN` targets when abstention is enabled. Whitespace-only input or target text is invalid.
 - The first occurrence of an integer ID reserves it, even if that record is invalid. Skip later duplicates.
 - After excluding invalid records, reject datasets with partially assigned splits or differing semantic-span key sets. The loader checks keys and offsets; users are responsible for semantic meaning and target independence.
 - Stop if the file cannot be read as UTF-8 or no valid examples remain.
@@ -65,7 +65,7 @@ From Python, with the repository root as the working directory:
 ```python
 from src.dataset import assign_splits, load_dataset
 
-result = load_dataset(config.dataset_path)
+result = load_dataset(config.dataset_path, allow_abstention=config.allow_abstention)
 result = assign_splits(result, config.split_ratios, config.split_seed)
 ```
 

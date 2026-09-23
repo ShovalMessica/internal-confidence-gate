@@ -23,7 +23,9 @@ class PreparedRun:
 def prepare_run(config_path: str | Path) -> PreparedRun:
     """Load configuration and return validated, split-assigned examples."""
     config = load_config(config_path)
-    dataset = load_dataset(config.dataset_path)
+    dataset = load_dataset(
+        config.dataset_path, allow_abstention=config.allow_abstention
+    )
     split_source = "dataset" if "split" in dataset.examples[0] else "automatic"
     dataset = assign_splits(dataset, config.split_ratios, config.split_seed)
     return PreparedRun(config, dataset, split_source)

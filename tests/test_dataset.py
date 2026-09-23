@@ -68,6 +68,11 @@ class DatasetTests(unittest.TestCase):
                     self.assertEqual(result.excluded[0]["line"], 1)
                     self.assertIn(field, " ".join(result.excluded[0]["reasons"]))
 
+    def test_unknown_target_is_allowed_when_abstention_is_disabled(self):
+        record = self.record(target_answer="UNKNOWN")
+        result = load_dataset(self.write(record), allow_abstention=False)
+        self.assertEqual(result.examples, [record])
+
     def test_missing_fields_report_all_reasons(self):
         result = load_dataset(self.write({}, self.record()))
         exclusion = result.excluded[0]
