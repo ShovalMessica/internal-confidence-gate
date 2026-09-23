@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, fields
 import math
 from pathlib import Path
 import re
@@ -39,8 +39,9 @@ class TaskConfig:
     split_seed: int = 42
 
 
-_FIELDS = frozenset(TaskConfig.__dataclass_fields__)
-_SPLIT_NAMES = ("train", "validation", "test")
+_FIELDS = {field.name for field in fields(TaskConfig)}
+_DEFAULTS = {field.name: field.default for field in fields(TaskConfig) if field.default is not MISSING}
+_SPLIT_NAMES = tuple(field.name for field in fields(SplitRatios))
 _MODEL_ID = re.compile(r"[\w][\w.-]*(?:/[\w][\w.-]*)?", re.ASCII)
 
 
@@ -90,11 +91,8 @@ def _split_ratios(value: object, errors: list[str]) -> SplitRatios | None:
     fractions = {}
     for name in _SPLIT_NAMES:
         fraction = value.get(name)
-        try:
-            valid = type(fraction) in (int, float) and math.isfinite(fraction) and 0 < fraction < 1
-        except OverflowError:
-            valid = False
-        if not valid:
+        # This range check also rejects NaN, infinities, and oversized integers.
+        if type(fraction) not in (int, float) or not 0 < fraction < 1:
             errors.append(f"split_ratios.{name} must be a finite number between 0 and 1, exclusive.")
         else:
             fractions[name] = float(fraction)
@@ -105,32 +103,34 @@ def _split_ratios(value: object, errors: list[str]) -> SplitRatios | None:
     return SplitRatios(**fractions)
 
 
-def load_config(path: str | Path) -> TaskConfig:
-    """Read YAML, fill defaults, and return validated immutable settings.
-
-    ``path`` locates the YAML file; filesystem values inside it must be absolute.
-    Omitted optional fields get defaults, while explicit null values are errors.
-    No data records or model weights are read, no network calls are made, and no
-    directories are created. Displaying/logging ConfigurationError is the caller's job.
-    """
+def _read_yaml(path: str | Path) -> tuple[Path, dict]:
+    """Read a settings mapping, reporting file and YAML errors clearly."""
     try:
         source = Path(path).resolve()
-        raw = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
-    except ConfigurationError:
-        raise
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ConfigurationError([f"Cannot read the YAML configuration ({type(exc).__name__})."]) from exc
+    try:
+        raw = yaml.load(text, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
         raise ConfigurationError([f"Invalid YAML{location}; check indentation and syntax."]) from exc
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise ConfigurationError([f"Cannot read the YAML configuration ({type(exc).__name__})."]) from exc
-
     if not isinstance(raw, dict):
         raise ConfigurationError(["The YAML configuration must be a mapping of field names to values."])
+    return source, raw
 
-    errors: list[str] = []
-    for name in sorted(set(raw) - _FIELDS):
-        errors.append(f"Unknown field '{name}'; remove it or correct its spelling.")
+
+def load_config(path: str | Path) -> TaskConfig:
+    """Read YAML, apply omitted defaults, and return validated immutable settings.
+
+    Explicit nulls remain invalid. Raises ConfigurationError for the caller to
+    display; does not read data records, load models, print, or create directories.
+    """
+    source, raw = _read_yaml(path)
+    values = _DEFAULTS | raw
+    errors = [f"Unknown field '{name}'; remove it or correct its spelling."
+              for name in sorted(raw.keys() - _FIELDS)]
 
     model = raw.get("model_name_or_path")
     if not isinstance(model, str) or not model.strip():
@@ -144,14 +144,14 @@ def load_config(path: str | Path) -> TaskConfig:
         errors.append("model_name_or_path must be a model ID (name or owner/name) or an absolute checkpoint path.")
 
     dataset = _absolute_path(raw.get("dataset_path"), "dataset_path", errors)
+    values["dataset_path"] = dataset
     if dataset is not None:
         if dataset.suffix.lower() != ".jsonl":
             errors.append("dataset_path must name a .jsonl file.")
         if not dataset.is_file():
             errors.append("dataset_path must point to an existing file.")
 
-    mode = raw.get("reasoning_mode")
-    if mode not in ("direct", "reasoning"):
+    if raw.get("reasoning_mode") not in ("direct", "reasoning"):
         errors.append("reasoning_mode is required and must be 'direct' or 'reasoning'.")
 
     if "output_dir" in raw:
@@ -160,30 +160,17 @@ def load_config(path: str | Path) -> TaskConfig:
         output = source.parent / "outputs"
     if output is not None and output.exists() and not output.is_dir():
         errors.append("output_dir points to a file; supply a directory path instead.")
+    values["output_dir"] = output
 
-    reasoning_limit = raw.get("reasoning_max_new_tokens", 1024)
-    answer_limit = raw.get("answer_max_new_tokens", 64)
-    seed = raw.get("split_seed", 42)
-    _integer(reasoning_limit, "reasoning_max_new_tokens", 1, errors)
-    _integer(answer_limit, "answer_max_new_tokens", 1, errors)
-    _integer(seed, "split_seed", 0, errors)
+    for name, minimum in (("reasoning_max_new_tokens", 1), ("answer_max_new_tokens", 1), ("split_seed", 0)):
+        _integer(values[name], name, minimum, errors)
 
-    abstention = raw.get("allow_abstention", True)
-    if type(abstention) is not bool:
+    if type(values["allow_abstention"]) is not bool:
         errors.append("allow_abstention must be true or false.")
 
-    ratios = _split_ratios(raw.get("split_ratios", {"train": 0.70, "validation": 0.15, "test": 0.15}), errors)
+    if "split_ratios" in raw:
+        values["split_ratios"] = _split_ratios(raw["split_ratios"], errors)
     if errors:
         raise ConfigurationError(errors)
 
-    return TaskConfig(
-        model_name_or_path=model,
-        dataset_path=dataset,
-        reasoning_mode=mode,
-        output_dir=output,
-        reasoning_max_new_tokens=reasoning_limit,
-        answer_max_new_tokens=answer_limit,
-        allow_abstention=abstention,
-        split_ratios=ratios,
-        split_seed=seed,
-    )
+    return TaskConfig(**values)
