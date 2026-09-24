@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import TaskConfig
+from src.evaluation import (
+    EVALUATION_PROTOCOL_VERSION,
+    EVALUATION_RECORD_SCHEMA_VERSION,
+)
 from src.generation import (
     GENERATION_PROTOCOL_VERSION,
     GENERATION_RECORD_SCHEMA_VERSION,
@@ -21,6 +25,7 @@ IDENTITY_SCHEMA_VERSION = 3
 _RUN_ID_LENGTH = 12
 _RUN_RECORD = "run.json"
 _GENERATION_ARTIFACT = "generations.jsonl"
+_EVALUATION_ARTIFACT = "evaluations.jsonl"
 
 
 class RunStoreError(ValueError):
@@ -171,7 +176,11 @@ def generation_artifact_path(directory: Path) -> Path:
     return directory / _GENERATION_ARTIFACT
 
 
-def _write_generation_records(path: Path, records: list[dict]) -> None:
+def evaluation_artifact_path(directory: Path) -> Path:
+    return directory / _EVALUATION_ARTIFACT
+
+
+def _write_jsonl_records(path: Path, records: list[dict]) -> None:
     temporary = path.with_suffix(".jsonl.tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as output:
@@ -185,7 +194,7 @@ def _write_generation_records(path: Path, records: list[dict]) -> None:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        raise RunStoreError(f"Cannot write generation artifact: {path}") from exc
+        raise RunStoreError(f"Cannot write JSONL artifact: {path}") from exc
 
 
 def _validate_generation_record(record: object, expected: dict, line: int) -> dict:
@@ -266,7 +275,7 @@ def load_generation_records(
         records[example_id] = record
 
     if recovered:
-        _write_generation_records(path, list(records.values()))
+        _write_jsonl_records(path, list(records.values()))
     return records, recovered
 
 
@@ -287,7 +296,7 @@ def reset_partial_direct_batches(
                 removed += int(retained.pop(example_id, None) is not None)
     if removed:
         ordered = [retained[example["id"]] for example in examples if example["id"] in retained]
-        _write_generation_records(generation_artifact_path(directory), ordered)
+        _write_jsonl_records(generation_artifact_path(directory), ordered)
     return retained, removed
 
 
@@ -321,13 +330,144 @@ def finalize_generation_records(
         raise RunStoreError("Cannot finalize generation before every example is recorded.")
     ordered = [records[example["id"]] for example in examples]
     path = generation_artifact_path(directory)
-    _write_generation_records(path, ordered)
+    _write_jsonl_records(path, ordered)
     counts = {
         "total": len(ordered),
         "successful": sum(record["status"] == "success" for record in ordered),
         "failed": sum(record["status"] == "failed" for record in ordered),
     }
     return _sha256(path), counts
+
+
+def _validate_evaluation_record(record: object, expected: dict, line: int) -> dict:
+    if not isinstance(record, dict):
+        raise RunStoreError(f"Evaluation record at line {line} must be an object.")
+    if record.get("schema_version") != EVALUATION_RECORD_SCHEMA_VERSION:
+        raise RunStoreError(
+            f"Evaluation record at line {line} has an unsupported schema version."
+        )
+    if record.get("protocol_version") != EVALUATION_PROTOCOL_VERSION:
+        raise RunStoreError(
+            f"Evaluation record at line {line} has an unsupported protocol version."
+        )
+    example_id = record.get("id")
+    if type(example_id) is not int or example_id not in expected:
+        raise RunStoreError(
+            f"Evaluation record at line {line} has an unexpected example ID."
+        )
+    if record.get("split") != expected[example_id]["split"]:
+        raise RunStoreError(
+            f"Evaluation record at line {line} has the wrong split for ID {example_id}."
+        )
+    outcome = record.get("outcome")
+    if outcome not in ("correct", "incorrect", "abstained", "invalid"):
+        raise RunStoreError(
+            f"Evaluation record at line {line} has an invalid outcome."
+        )
+    expected_correct = {"correct": True, "incorrect": False}.get(outcome)
+    if (
+        "is_correct" not in record
+        or record.get("is_correct") is not expected_correct
+    ):
+        raise RunStoreError(
+            f"Evaluation record at line {line} has inconsistent correctness."
+        )
+    normalized = record.get("normalized_answer")
+    if outcome == "invalid":
+        if normalized is not None or not isinstance(record.get("invalid_reason"), str):
+            raise RunStoreError(
+                f"Invalid evaluation record at line {line} is incomplete."
+            )
+    elif not isinstance(normalized, str) or not normalized:
+        raise RunStoreError(
+            f"Evaluation record at line {line} has no normalized answer."
+        )
+    return record
+
+
+def load_evaluation_records(
+    directory: Path, examples: list[dict]
+) -> dict[int, dict]:
+    """Load and validate a complete evaluation artifact."""
+    path = evaluation_artifact_path(directory)
+    if not path.is_file():
+        raise RunStoreError(f"Evaluation artifact is missing: {path}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RunStoreError(f"Cannot read evaluation artifact: {path}") from exc
+    if text and not text.endswith("\n"):
+        raise RunStoreError(f"Evaluation artifact is truncated: {path}")
+
+    expected = {example["id"]: example for example in examples}
+    records: dict[int, dict] = {}
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RunStoreError(
+                f"Invalid evaluation JSON at line {line_number}: {path}"
+            ) from exc
+        record = _validate_evaluation_record(raw, expected, line_number)
+        example_id = record["id"]
+        if example_id in records:
+            raise RunStoreError(
+                f"Duplicate evaluation record for ID {example_id}: {path}"
+            )
+        records[example_id] = record
+    if set(records) != set(expected):
+        raise RunStoreError("Evaluation artifact does not contain every example.")
+    expected_order = [example["id"] for example in examples]
+    if list(records) != expected_order:
+        raise RunStoreError("Evaluation artifact is not in dataset order.")
+    return records
+
+
+def write_evaluation_records(directory: Path, records: list[dict]) -> str:
+    path = evaluation_artifact_path(directory)
+    _write_jsonl_records(path, records)
+    return _sha256(path)
+
+
+def complete_evaluation(
+    directory: Path,
+    artifact_sha256: str,
+    generation_sha256: str,
+    summary: dict,
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "evaluation" not in stages:
+        stages.append("evaluation")
+    record["evaluation"] = {
+        "protocol_version": EVALUATION_PROTOCOL_VERSION,
+        "artifact": _EVALUATION_ARTIFACT,
+        "artifact_sha256": artifact_sha256,
+        "generation_sha256": generation_sha256,
+        "summary": summary,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    _save_run_record(directory, record)
+
+
+def validate_completed_evaluation(
+    directory: Path, record: dict, generation_sha256: str
+) -> bool:
+    if "evaluation" not in record.get("completed_stages", []):
+        return False
+    evaluation = record.get("evaluation")
+    if not isinstance(evaluation, dict):
+        raise RunStoreError("Completed evaluation has no valid run summary.")
+    if evaluation.get("protocol_version") != EVALUATION_PROTOCOL_VERSION:
+        raise RunStoreError("Completed evaluation uses an unsupported protocol version.")
+    if evaluation.get("generation_sha256") != generation_sha256:
+        raise RunStoreError("Completed evaluation does not match saved generation.")
+    path = evaluation_artifact_path(directory)
+    if not path.is_file() or _sha256(path) != evaluation.get("artifact_sha256"):
+        raise RunStoreError("Completed evaluation artifact is missing or has changed.")
+    if not isinstance(evaluation.get("summary"), dict):
+        raise RunStoreError("Completed evaluation summary is invalid.")
+    return True
 
 
 def save_model_metadata(
@@ -387,13 +527,17 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("generation_started_at_utc", None)
     record.pop("execution", None)
     record.pop("generation_settings", None)
+    record.pop("evaluation", None)
     record["completed_stages"] = [
-        stage for stage in record["completed_stages"] if stage != "generation"
+        stage
+        for stage in record["completed_stages"]
+        if stage not in ("generation", "evaluation")
     ]
     try:
         generation_artifact_path(directory).unlink(missing_ok=True)
+        evaluation_artifact_path(directory).unlink(missing_ok=True)
     except OSError as exc:
-        raise RunStoreError("Cannot remove the generation artifact.") from exc
+        raise RunStoreError("Cannot remove generation or evaluation artifacts.") from exc
     _save_run_record(directory, record)
     return pinned
 

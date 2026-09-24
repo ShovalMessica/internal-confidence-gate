@@ -13,6 +13,7 @@ from typing import Literal, Sequence, TextIO
 
 from src.config import ConfigurationError, TaskConfig, load_config
 from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
+from src.evaluation import EvaluationError, evaluate_answers
 from src.generation import GenerationError, generation_units
 from src.model import ModelLoadError, describe_model, load_model
 from src.run_store import (
@@ -21,7 +22,10 @@ from src.run_store import (
     append_generation_records,
     build_run_identity,
     complete_generation,
+    complete_evaluation,
+    evaluation_artifact_path,
     finalize_generation_records,
+    load_evaluation_records,
     load_generation_records,
     load_run_record,
     register_run,
@@ -29,6 +33,8 @@ from src.run_store import (
     reset_partial_direct_batches,
     save_model_metadata,
     validate_completed_generation,
+    validate_completed_evaluation,
+    write_evaluation_records,
 )
 
 
@@ -239,6 +245,70 @@ def _generate(
     )
 
 
+def _format_rate(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1%}"
+
+
+def _print_evaluation(summary: dict, *, reused: bool) -> None:
+    print(f"Evaluation artifact: {'reused' if reused else 'created'}")
+    for split in ("train", "validation", "test"):
+        metrics = summary["by_split"][split]
+        print(
+            f"  {split}: correct {metrics['correct']}, "
+            f"incorrect {metrics['incorrect']}, "
+            f"abstained {metrics['abstained']}, invalid {metrics['invalid']} | "
+            f"accuracy {_format_rate(metrics['usable_accuracy'])}, "
+            f"abstention {_format_rate(metrics['abstention_rate'])}, "
+            f"invalid {_format_rate(metrics['invalid_rate'])}"
+        )
+    limit_count = summary["overall"]["answer_token_limit"]
+    print(f"Answers reaching token limit: {limit_count}")
+
+
+def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
+    print("Probe-readiness requirements are not met:", file=stream)
+    for shortage in shortages:
+        print(
+            f"  {shortage['split']} needs {shortage['required']} "
+            f"{shortage['outcome']} predictions; found {shortage['actual']} "
+            f"(missing {shortage['missing']}).",
+            file=stream,
+        )
+
+
+def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
+    directory = registered.directory
+    examples = prepared.dataset.examples
+    run_record = load_run_record(directory)
+    if not validate_completed_generation(directory, run_record):
+        raise RunStoreError("Evaluation requires completed generation.")
+    generation_hash = run_record["generation"]["artifact_sha256"]
+
+    if validate_completed_evaluation(directory, run_record, generation_hash):
+        load_evaluation_records(directory, examples)
+        summary = run_record["evaluation"]["summary"]
+        _print_evaluation(summary, reused=True)
+        return summary
+
+    generations, _ = load_generation_records(directory, examples)
+    result = evaluate_answers(
+        examples,
+        generations,
+        allow_abstention=prepared.config.allow_abstention,
+    )
+    if evaluation_artifact_path(directory).exists():
+        existing = load_evaluation_records(directory, examples)
+        ordered = [existing[example["id"]] for example in examples]
+        if ordered != list(result.records):
+            raise RunStoreError(
+                "Unregistered evaluation artifact conflicts with computed results."
+            )
+    artifact_hash = write_evaluation_records(directory, list(result.records))
+    complete_evaluation(directory, artifact_hash, generation_hash, result.summary)
+    _print_evaluation(result.summary, reused=False)
+    return result.summary
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare and run an Internal Confidence Gate task."
@@ -280,6 +350,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Preparation complete. No model was run.")
         else:
             _generate(prepared, registered, args.config.resolve(), args.force_recompute)
+            summary = _evaluate(prepared, registered)
+            if not summary["probe_ready"]:
+                _print_shortages(summary["shortages"], sys.stderr)
+                return 1
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1
@@ -292,6 +366,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except GenerationError as error:
         print(f"Generation error: {error}", file=sys.stderr)
+        return 1
+    except EvaluationError as error:
+        print(f"Evaluation error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)

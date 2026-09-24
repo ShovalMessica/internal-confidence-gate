@@ -1,6 +1,6 @@
 # Dataset format
 
-Provide a UTF-8 `.jsonl` file with one JSON object per line. Loading and validation are implemented; later pipeline steps remain under development. **TODO** marks unresolved details.
+Provide a UTF-8 `.jsonl` file with one JSON object per line. **TODO** marks unresolved later-stage details.
 
 ```text
 Example
@@ -73,9 +73,9 @@ result = assign_splits(result, config.split_ratios, config.split_seed)
 
 Splitting requires at least 700 valid examples. Each resulting split must contain at least 200 train, 100 validation, and 100 test examples. User-supplied splits are preserved but must meet the same requirements.
 
-These are pre-generation checks. After generation, the toolkit will require at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid and `UNKNOWN` predictions do not count. This later check is not implemented yet.
+After generation, the toolkit requires at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid and `UNKNOWN` predictions do not count. Evaluation results are saved before a shortage stops the runner.
 
-These functions do not run a model, print messages, or save files. The runner displays their results and writes only the matching run’s small `run.json` record; saving model outputs and reports remains a later stage.
+These loading functions do not run a model, print messages, or save files. The runner coordinates generation and evaluation separately.
 
 ## Example
 
@@ -83,4 +83,4 @@ These functions do not run a model, print messages, or save files. The runner di
 {"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
 ```
 
-**TODO:** Token alignment, multi-token captures, exact layer conventions, post-generation minimum enforcement, and task-specific answer matching.
+**TODO:** Token alignment, multi-token captures, exact layer conventions, and optional task-specific answer matching.

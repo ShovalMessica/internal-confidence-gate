@@ -51,7 +51,15 @@ V1 requires a standard Transformers text-only, decoder-only causal language mode
 
 Sampling uses the model’s defaults, without user overrides. Effective settings are recorded.
 
-Context-length and prompt-rendering failures are saved per example while generation continues. Unexpected model or runtime failures stop the run. Answer validation occurs in the next pipeline stage.
+Context-length and prompt-rendering failures are saved per example while generation continues. Unexpected model or runtime failures stop the run.
+
+## Answer evaluation
+
+After generation, the runner compares each saved answer with its dataset target. Matching ignores case, surrounding whitespace, and repeated internal whitespace. It does not remove punctuation or apply task-specific rules.
+
+Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
+
+Evaluation is saved to `evaluations.jsonl` and summarized by split in `run.json`. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
 
 ## Automatic splitting
 
@@ -113,7 +121,7 @@ Model revision, device, dtype, generation seed, and active generation settings a
 
 When `model_revision` is omitted, the model loader resolves one exact Hub commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoint paths are treated as immutable for now; stronger local-checkpoint identity remains **TODO**.
 
-Generation progress is appended after each reasoning example or completed direct batch. A complete, hash-validated artifact is reused without loading the model. Use `--force-recompute` to restart generation while keeping the recorded model revision.
+Generation progress is appended after each reasoning example or completed direct batch. Complete, hash-validated generation and evaluation artifacts are reused without loading the model. Use `--force-recompute` to restart generation while keeping the recorded model revision; its downstream evaluation is cleared as well.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 

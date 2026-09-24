@@ -1,6 +1,7 @@
 """Offline checks for preparation and generation orchestration."""
 
 from contextlib import redirect_stderr, redirect_stdout
+from collections import Counter
 import io
 import json
 import os
@@ -69,7 +70,7 @@ class RunTests(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     @staticmethod
-    def generation_record(example):
+    def generation_record(example, answer="A"):
         return {
             "schema_version": GENERATION_RECORD_SCHEMA_VERSION,
             "protocol_version": GENERATION_PROTOCOL_VERSION,
@@ -81,13 +82,24 @@ class RunTests(unittest.TestCase):
             "reasoning": None,
             "final_control": {"token_ids": [2]},
             "answer": {
-                "text": "A",
+                "text": answer,
                 "token_ids": [3],
                 "token_logprobs": [-0.1],
                 "tokens": 1,
                 "stop_reason": "eos",
             },
         }
+
+    @classmethod
+    def probe_ready_generation_records(cls, examples):
+        positions = Counter()
+        records = []
+        for example in examples:
+            split = example["split"]
+            answer = "Positive" if positions[split] % 2 == 0 else "Negative"
+            positions[split] += 1
+            records.append(cls.generation_record(example, answer))
+        return tuple(records)
 
     def test_automatic_splits_create_minimal_run_record(self):
         self.write_dataset(self.record(index) for index in range(700))
@@ -298,9 +310,7 @@ class RunTests(unittest.TestCase):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
         prepared = prepare_run(self.config)
-        records = tuple(
-            self.generation_record(example) for example in prepared.dataset.examples
-        )
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
         loaded = object()
         metadata = {
             "resolved_revision": "resolved-commit",
@@ -323,30 +333,35 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation complete: 700 succeeded, 0 failed.", stdout)
+        self.assertIn("Evaluation artifact: created", stdout)
         load_model.assert_called_once_with(prepared.config, pinned_revision=None)
 
         with patch("src.run.load_model") as load_model:
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation artifact: reused (model not loaded).", stdout)
+        self.assertIn("Evaluation artifact: reused", stdout)
         load_model.assert_not_called()
 
         run_directory = next((self.root / "outputs").iterdir())
         record = json.loads((run_directory / "run.json").read_text(encoding="utf-8"))
-        self.assertIn("generation", record["completed_stages"])
+        self.assertEqual(
+            record["completed_stages"], ["preparation", "generation", "evaluation"]
+        )
         self.assertEqual(record["model"]["resolved_revision"], "resolved-commit")
         self.assertEqual(record["generation"]["successful"], 700)
         self.assertEqual(
             len((run_directory / "generations.jsonl").read_text().splitlines()), 700
+        )
+        self.assertEqual(
+            len((run_directory / "evaluations.jsonl").read_text().splitlines()), 700
         )
 
     def test_force_recompute_uses_recorded_revision(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
         prepared = prepare_run(self.config)
-        records = tuple(
-            self.generation_record(example) for example in prepared.dataset.examples
-        )
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
         metadata = {
             "resolved_revision": "resolved-commit",
             "model_class": "Model",
@@ -381,6 +396,44 @@ class RunTests(unittest.TestCase):
         load_model.assert_called_once_with(
             prepared.config, pinned_revision="resolved-commit"
         )
+
+    def test_evaluation_shortages_are_saved_before_runner_fails(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = tuple(
+            self.generation_record(example, "Wrong")
+            for example in prepared.dataset.examples
+        )
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full()
+
+        self.assertEqual(code, 1)
+        self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("train needs 100 correct predictions", stderr)
+        run_directory = next((self.root / "outputs").iterdir())
+        run_record = json.loads(
+            (run_directory / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("evaluation", run_record["completed_stages"])
+        self.assertFalse(run_record["evaluation"]["summary"]["probe_ready"])
 
     def test_split_settings_are_inactive_when_dataset_supplies_splits(self):
         splits = ["train"] * 500 + ["validation"] * 100 + ["test"] * 100

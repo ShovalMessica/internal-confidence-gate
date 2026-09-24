@@ -83,7 +83,7 @@ The toolkit supplies both the output instruction and the `FINAL:` marker. The mo
 
 In direct-answer mode, the toolkit supplies the marker before generation. In reasoning mode, it first lets the model reason, closes reasoning if needed, then inserts the answer instruction and marker before resuming generation. Reasoning and answer generation have separate token limits.
 
-See [Generation](docs/configuration.md#generation) for the exact injected instructions and token flow. Answer extraction and correctness evaluation are the next pipeline stage.
+See [Generation](docs/configuration.md#generation) for the exact injected instructions and token flow. The evaluation stage checks each saved answer against its dataset target.
 
 The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called **abstention** and is enabled by default:
 
@@ -98,20 +98,21 @@ When abstention is enabled, UNKNOWN predictions are reported separately and excl
 ## Pipeline overview
 
 1. **Prepare data:** provide complete task prompts and target answers in the required dataset format. Optionally assign splits and annotate additional semantic positions.
-2. **Run forward passes and capture:** generate responses while collecting selected activations and relevant output-token probabilities.
-3. **Evaluate predictions:** validate response formatting, extract answers, and compare them with target answers after normalization.
-4. **Train:** fit probes using training activations and prediction correctness.
-5. **Validate:** select probe settings and an acceptance threshold using validation data.
-6. **Test:** evaluate the frozen probe and threshold on test data and compare performance with output-probability confidence.
+2. **Generate:** run the model and save its responses, exact token sequence, and answer-token probabilities.
+3. **Evaluate predictions:** validate response formatting and compare answers with target answers after normalization.
+4. **Capture activations:** replay the saved token sequence at the selected positions.
+5. **Train:** fit probes using training activations and prediction correctness.
+6. **Validate:** select probe settings and an acceptance threshold using validation data.
+7. **Test:** evaluate the frozen probe and threshold on test data and compare performance with output-probability confidence.
 
-Answer normalization includes case and surrounding whitespace normalization.
+Answer normalization ignores case, trims surrounding whitespace, and collapses repeated internal whitespace.
 
 For eligible predictions:
 
 - **Gate TPR:** accepted correct predictions divided by all correct predictions.
 - **Gate FPR:** accepted incorrect predictions divided by all incorrect predictions.
 
-**TODO:** Finalize normalization, output-probability scoring, probe configuration, selection procedures, and the evaluation report.
+**TODO:** Finalize output-probability scoring, probe configuration, selection procedures, and the final probe report.
 
 ## Requirements and limitations
 
@@ -137,7 +138,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-Preparation, model loading, and generation are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
+Preparation, model loading, generation, and answer evaluation are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -161,7 +162,7 @@ The toolkit adds the output instruction and generates responses itself. Users do
 
 ### Configure and run
 
-Fill in [configs/task.yaml](configs/task.yaml), then run preparation and generation:
+Fill in [configs/task.yaml](configs/task.yaml), then run preparation, generation, and answer evaluation:
 
 ```sh
 python -m src.run configs/task.yaml
@@ -178,17 +179,18 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 ```text
 <output_dir>/<run_id>/run.json
 <output_dir>/<run_id>/generations.jsonl
+<output_dir>/<run_id>/evaluations.jsonl
 ```
 
-The run ID represents the effective configuration and exact dataset contents. `run.json` stores provenance and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures in dataset order.
+The run ID represents the effective configuration and exact dataset contents. `run.json` stores provenance, evaluation summaries, and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures. `evaluations.jsonl` stores correctness outcomes in dataset order.
 
-Interrupted generation resumes from saved work. A completed artifact is reused without loading the model. To discard saved generations and rerun with the same pinned model revision:
+Interrupted generation resumes from saved work. Completed generation and evaluation artifacts are reused without loading the model. To discard generation and downstream evaluation results and rerun with the same pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute
 ```
 
-Answer evaluation and activation capture are not implemented yet.
+If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits with a clear shortage report. Activation capture is not implemented yet.
 
 Developers can run the tests without a model:
 
