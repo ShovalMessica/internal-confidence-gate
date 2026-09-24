@@ -16,6 +16,8 @@ dtype: auto                # auto, float16, bfloat16, or float32
 reasoning_max_new_tokens: 1024  # Used only in reasoning mode
 answer_max_new_tokens: 64
 allow_abstention: true
+generation_seed: 42
+direct_batch_size: 8       # Used only in direct mode
 
 # Used only when the dataset omits split assignments.
 split_ratios:

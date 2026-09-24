@@ -76,7 +76,9 @@ def _resolved_dtype(model: Any, requested: str) -> str:
     return str(model_dtype).removeprefix("torch.")
 
 
-def load_model(config: TaskConfig) -> LoadedModel:
+def load_model(
+    config: TaskConfig, *, pinned_revision: str | None = None
+) -> LoadedModel:
     """Load and validate a supported model and its tokenizer.
 
     This function performs no generation and does not update run records.
@@ -85,7 +87,7 @@ def load_model(config: TaskConfig) -> LoadedModel:
     _validate_device(torch, config.device)
 
     source = config.model_name_or_path
-    requested_revision = config.model_revision
+    requested_revision = pinned_revision or config.model_revision
     revision_kwargs = {"revision": requested_revision} if requested_revision else {}
     common = {"trust_remote_code": False, **revision_kwargs}
 
@@ -111,6 +113,11 @@ def load_model(config: TaskConfig) -> LoadedModel:
         raise ModelLoadError(
             f"Could not resolve an exact Hub revision for '{source}'."
         )
+    if pinned_revision is not None and resolved_revision != pinned_revision:
+        raise ModelLoadError(
+            f"Loaded revision '{resolved_revision}' does not match the pinned "
+            f"revision '{pinned_revision}'."
+        )
     load_common = {"trust_remote_code": False}
     if resolved_revision:
         load_common["revision"] = resolved_revision
@@ -122,6 +129,13 @@ def load_model(config: TaskConfig) -> LoadedModel:
         raise
     except Exception as exc:
         raise ModelLoadError(f"Could not load tokenizer for '{source}': {exc}") from exc
+
+    if tokenizer.eos_token_id is None:
+        raise ModelLoadError("The tokenizer has no EOS token; generation is unsupported.")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
 
     dtype = "auto" if config.dtype == "auto" else getattr(torch, config.dtype)
     try:
@@ -147,3 +161,31 @@ def load_model(config: TaskConfig) -> LoadedModel:
         resolved_dtype=_resolved_dtype(model, config.dtype),
         resolved_revision=resolved_revision,
     )
+
+
+def describe_model(loaded: LoadedModel) -> dict:
+    """Return JSON-compatible model and runtime provenance."""
+    try:
+        import torch
+        import transformers
+    except ImportError as exc:
+        raise ModelLoadError(
+            "Model dependencies are unavailable; install requirements.txt."
+        ) from exc
+
+    generation_config = getattr(loaded.model, "generation_config", None)
+    serialized_generation = (
+        generation_config.to_dict()
+        if generation_config is not None and hasattr(generation_config, "to_dict")
+        else {}
+    )
+    return {
+        "resolved_revision": loaded.resolved_revision,
+        "model_class": type(loaded.model).__name__,
+        "tokenizer_class": type(loaded.tokenizer).__name__,
+        "dtype": loaded.resolved_dtype,
+        "device": loaded.resolved_device,
+        "torch_version": torch.__version__,
+        "transformers_version": transformers.__version__,
+        "generation_config": serialized_generation,
+    }

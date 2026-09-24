@@ -22,6 +22,11 @@ class _Cuda:
 
 
 class _Tokenizer:
+    eos_token_id = 2
+    eos_token = "</s>"
+    pad_token_id = None
+    pad_token = None
+
     def get_chat_template(self):
         return "{{ messages }}"
 
@@ -100,6 +105,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.resolved_device, {"": "cuda:0"})
         self.assertEqual(loaded.resolved_dtype, "float16")
         self.assertTrue(loaded.model.eval_called)
+        self.assertEqual(loaded.tokenizer.pad_token, "</s>")
 
     def test_forwards_requested_revision_and_explicit_loading_settings(self):
         config = self.config(
@@ -117,6 +123,33 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(auto_model.from_pretrained.call_args.kwargs["device_map"], "cuda:1")
         self.assertEqual(loaded.resolved_revision, "resolved-commit")
+
+    def test_pinned_revision_overrides_a_moving_requested_tag(self):
+        dependencies = self.dependencies()
+        with patch("src.model._dependencies", return_value=dependencies):
+            loaded = load_model(
+                self.config(model_revision="main"),
+                pinned_revision="resolved-commit",
+            )
+        dependencies[1].from_pretrained.assert_called_once_with(
+            "organization/model",
+            trust_remote_code=False,
+            revision="resolved-commit",
+        )
+        self.assertEqual(loaded.resolved_revision, "resolved-commit")
+
+    def test_rejects_a_pinned_revision_that_does_not_resolve_exactly(self):
+        dependencies = self.dependencies(
+            model_config=SimpleNamespace(
+                is_encoder_decoder=False,
+                vision_config=None,
+                _commit_hash="different-commit",
+            )
+        )
+        with patch("src.model._dependencies", return_value=dependencies):
+            with self.assertRaisesRegex(ModelLoadError, "does not match the pinned"):
+                load_model(self.config(), pinned_revision="resolved-commit")
+        dependencies[3].from_pretrained.assert_not_called()
 
     def test_rejects_unsupported_architectures_before_loading_weights(self):
         cases = (
@@ -147,6 +180,14 @@ class ModelTests(unittest.TestCase):
         tokenizer.get_chat_template.side_effect = ValueError("missing")
         dependencies = self.dependencies(tokenizer=tokenizer)
         with self.assertRaisesRegex(ModelLoadError, "chat template"):
+            self.load(dependencies=dependencies)
+        dependencies[2].from_pretrained.assert_not_called()
+
+    def test_rejects_missing_eos_token_before_loading_weights(self):
+        tokenizer = _Tokenizer()
+        tokenizer.eos_token_id = None
+        dependencies = self.dependencies(tokenizer=tokenizer)
+        with self.assertRaisesRegex(ModelLoadError, "no EOS token"):
             self.load(dependencies=dependencies)
         dependencies[2].from_pretrained.assert_not_called()
 

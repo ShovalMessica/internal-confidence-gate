@@ -19,7 +19,7 @@ Example
 
 - **`id`** — Unique integer identifier. Boolean values are not accepted as integers.
 
-- **`input`** — The full prompt as a nonempty string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The planned generation stage adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
+- **`input`** — The full prompt as a nonempty string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The generation stage adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 

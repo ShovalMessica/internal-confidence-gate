@@ -44,6 +44,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.reasoning_max_new_tokens, 1024)
         self.assertEqual(config.answer_max_new_tokens, 64)
         self.assertTrue(config.allow_abstention)
+        self.assertEqual(config.generation_seed, 42)
+        self.assertEqual(config.direct_batch_size, 8)
         self.assertEqual(config.split_seed, 42)
         self.assertEqual((config.split_ratios.train, config.split_ratios.validation, config.split_ratios.test), (0.7, 0.15, 0.15))
         self.assertFalse(config.output_dir.exists())
@@ -57,7 +59,8 @@ class ConfigTests(unittest.TestCase):
         output = self.root / "custom-results"
         values = dict(self.required, model_name_or_path=str(checkpoint), output_dir=str(output),
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
-                      answer_max_new_tokens=16, allow_abstention=False, split_seed=0,
+                      answer_max_new_tokens=16, allow_abstention=False,
+                      generation_seed=7, direct_batch_size=4, split_seed=0,
                       device="cuda:1", dtype="bfloat16",
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
         config = load_config(self.write(values))
@@ -68,6 +71,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.dtype, "bfloat16")
         self.assertEqual((config.reasoning_max_new_tokens, config.answer_max_new_tokens), (256, 16))
         self.assertFalse(config.allow_abstention)
+        self.assertEqual((config.generation_seed, config.direct_batch_size), (7, 4))
         self.assertEqual(config.split_seed, 0)
         self.assertEqual(config.split_ratios.train, 0.8)
         self.assertFalse(output.exists())
@@ -92,6 +96,8 @@ class ConfigTests(unittest.TestCase):
             "reasoning_mode": [None, "thinking", True, []],
             "reasoning_max_new_tokens": [None, 0, -1, True, 1.5, "1024"],
             "answer_max_new_tokens": [None, 0, False, "64"],
+            "generation_seed": [None, -1, True, 1.5, "42"],
+            "direct_batch_size": [None, 0, -1, True, 1.5, "8"],
             "split_seed": [None, -1, True, 1.5],
             "allow_abstention": [None, 1, "true"],
             "model_revision": [None, "", "  ", 1, False],

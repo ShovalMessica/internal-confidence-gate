@@ -4,7 +4,7 @@ Design and refine the task prompt you supply so the model reliably answers in th
 
 Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined.
 
-The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the [planned generation behavior](configuration.md#generation), which is not implemented yet.
+The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the implemented [generation behavior](configuration.md#generation).
 
 ## Named-entity correction — no reasoning
 

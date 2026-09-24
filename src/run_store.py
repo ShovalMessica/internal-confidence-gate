@@ -11,11 +11,16 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import TaskConfig
+from src.generation import (
+    GENERATION_PROTOCOL_VERSION,
+    GENERATION_RECORD_SCHEMA_VERSION,
+)
 
 
-IDENTITY_SCHEMA_VERSION = 2
+IDENTITY_SCHEMA_VERSION = 3
 _RUN_ID_LENGTH = 12
 _RUN_RECORD = "run.json"
+_GENERATION_ARTIFACT = "generations.jsonl"
 
 
 class RunStoreError(ValueError):
@@ -51,11 +56,15 @@ def build_run_identity(
         "reasoning_mode": config.reasoning_mode,
         "answer_max_new_tokens": config.answer_max_new_tokens,
         "allow_abstention": config.allow_abstention,
+        "generation_seed": config.generation_seed,
+        "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
     }
     if config.model_revision is not None:
         effective["model_revision"] = config.model_revision
     if config.reasoning_mode == "reasoning":
         effective["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
+    else:
+        effective["direct_batch_size"] = config.direct_batch_size
     if split_source == "automatic":
         effective["split_ratios"] = {
             "train": config.split_ratios.train,
@@ -144,6 +153,249 @@ def _write_record(path: Path, record: dict) -> None:
         except OSError:
             pass
         raise RunStoreError(f"Cannot write run record: {path}") from exc
+
+
+def load_run_record(directory: Path) -> dict:
+    """Load an already registered run record."""
+    path = directory / _RUN_RECORD
+    if not path.is_file():
+        raise RunStoreError(f"Run record is missing: {path}")
+    return _load_record(path)
+
+
+def _save_run_record(directory: Path, record: dict) -> None:
+    _write_record(directory / _RUN_RECORD, record)
+
+
+def generation_artifact_path(directory: Path) -> Path:
+    return directory / _GENERATION_ARTIFACT
+
+
+def _write_generation_records(path: Path, records: list[dict]) -> None:
+    temporary = path.with_suffix(".jsonl.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as output:
+            for record in records:
+                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise RunStoreError(f"Cannot write generation artifact: {path}") from exc
+
+
+def _validate_generation_record(record: object, expected: dict, line: int) -> dict:
+    if not isinstance(record, dict):
+        raise RunStoreError(f"Generation record at line {line} must be an object.")
+    if record.get("schema_version") != GENERATION_RECORD_SCHEMA_VERSION:
+        raise RunStoreError(
+            f"Generation record at line {line} has an unsupported schema version."
+        )
+    if record.get("protocol_version") != GENERATION_PROTOCOL_VERSION:
+        raise RunStoreError(
+            f"Generation record at line {line} has an unsupported protocol version."
+        )
+    example_id = record.get("id")
+    if type(example_id) is not int or example_id not in expected:
+        raise RunStoreError(
+            f"Generation record at line {line} has an unexpected example ID."
+        )
+    if record.get("split") != expected[example_id]["split"]:
+        raise RunStoreError(
+            f"Generation record at line {line} has the wrong split for ID {example_id}."
+        )
+    if record.get("status") not in ("success", "failed"):
+        raise RunStoreError(
+            f"Generation record at line {line} has an invalid status."
+        )
+    if record["status"] == "success" and not all(
+        name in record
+        for name in ("formatted_prompt_token_ids", "final_control", "answer")
+    ):
+        raise RunStoreError(
+            f"Successful generation record at line {line} is incomplete."
+        )
+    if record["status"] == "failed" and "failure" not in record:
+        raise RunStoreError(
+            f"Failed generation record at line {line} has no failure reason."
+        )
+    return record
+
+
+def load_generation_records(
+    directory: Path, examples: list[dict]
+) -> tuple[dict[int, dict], bool]:
+    """Load resumable records and recover only a truncated final line."""
+    path = generation_artifact_path(directory)
+    if not path.exists():
+        return {}, False
+    if not path.is_file():
+        raise RunStoreError(f"Generation artifact is not a file: {path}")
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise RunStoreError(f"Cannot read generation artifact: {path}") from exc
+
+    recovered = bool(content and not content.endswith(b"\n"))
+    if recovered:
+        content = content[: content.rfind(b"\n") + 1] if b"\n" in content else b""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeError as exc:
+        raise RunStoreError(f"Generation artifact is not valid UTF-8: {path}") from exc
+
+    expected = {example["id"]: example for example in examples}
+    records: dict[int, dict] = {}
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RunStoreError(
+                f"Invalid generation JSON at line {line_number}: {path}"
+            ) from exc
+        record = _validate_generation_record(raw, expected, line_number)
+        example_id = record["id"]
+        if example_id in records:
+            raise RunStoreError(
+                f"Duplicate generation record for ID {example_id}: {path}"
+            )
+        records[example_id] = record
+
+    if recovered:
+        _write_generation_records(path, list(records.values()))
+    return records, recovered
+
+
+def reset_partial_direct_batches(
+    directory: Path,
+    records: dict[int, dict],
+    examples: list[dict],
+    batch_size: int,
+) -> tuple[dict[int, dict], int]:
+    """Drop incomplete fixed batches so resumed sampling uses the same grouping."""
+    retained = dict(records)
+    removed = 0
+    for start in range(0, len(examples), batch_size):
+        ids = [example["id"] for example in examples[start : start + batch_size]]
+        present = [example_id in retained for example_id in ids]
+        if any(present) and not all(present):
+            for example_id in ids:
+                removed += int(retained.pop(example_id, None) is not None)
+    if removed:
+        ordered = [retained[example["id"]] for example in examples if example["id"] in retained]
+        _write_generation_records(generation_artifact_path(directory), ordered)
+    return retained, removed
+
+
+def append_generation_records(directory: Path, records: list[dict]) -> None:
+    path = generation_artifact_path(directory)
+    try:
+        with path.open("a", encoding="utf-8", newline="\n") as output:
+            for record in records:
+                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError as exc:
+        raise RunStoreError(f"Cannot append generation artifact: {path}") from exc
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise RunStoreError(f"Cannot hash artifact: {path}") from exc
+    return digest.hexdigest()
+
+
+def finalize_generation_records(
+    directory: Path, records: dict[int, dict], examples: list[dict]
+) -> tuple[str, dict[str, int]]:
+    if set(records) != {example["id"] for example in examples}:
+        raise RunStoreError("Cannot finalize generation before every example is recorded.")
+    ordered = [records[example["id"]] for example in examples]
+    path = generation_artifact_path(directory)
+    _write_generation_records(path, ordered)
+    counts = {
+        "total": len(ordered),
+        "successful": sum(record["status"] == "success" for record in ordered),
+        "failed": sum(record["status"] == "failed" for record in ordered),
+    }
+    return _sha256(path), counts
+
+
+def save_model_metadata(
+    directory: Path, metadata: dict, provenance: dict, generation_settings: dict
+) -> None:
+    record = load_run_record(directory)
+    existing = record.get("model")
+    if existing is not None and existing != metadata:
+        raise RunStoreError(
+            "Loaded model metadata differs from the interrupted run; use "
+            "--force-recompute to restart generation."
+        )
+    if existing is None:
+        record["model"] = metadata
+        record["generation_settings"] = generation_settings
+        record["generation_started_at_utc"] = datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        record["execution"] = provenance
+        _save_run_record(directory, record)
+
+
+def complete_generation(
+    directory: Path, artifact_sha256: str, counts: dict[str, int]
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "generation" not in stages:
+        stages.append("generation")
+    record["generation"] = {
+        **counts,
+        "artifact": _GENERATION_ARTIFACT,
+        "artifact_sha256": artifact_sha256,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    _save_run_record(directory, record)
+
+
+def validate_completed_generation(directory: Path, record: dict) -> bool:
+    if "generation" not in record.get("completed_stages", []):
+        return False
+    generation = record.get("generation")
+    if not isinstance(generation, dict):
+        raise RunStoreError("Completed generation has no valid run summary.")
+    path = generation_artifact_path(directory)
+    if not path.is_file() or _sha256(path) != generation.get("artifact_sha256"):
+        raise RunStoreError("Completed generation artifact is missing or has changed.")
+    return True
+
+
+def reset_generation(directory: Path) -> str | None:
+    """Remove generation state while returning its pinned Hub revision."""
+    record = load_run_record(directory)
+    model = record.pop("model", None)
+    pinned = model.get("resolved_revision") if isinstance(model, dict) else None
+    record.pop("generation", None)
+    record.pop("generation_started_at_utc", None)
+    record.pop("execution", None)
+    record.pop("generation_settings", None)
+    record["completed_stages"] = [
+        stage for stage in record["completed_stages"] if stage != "generation"
+    ]
+    try:
+        generation_artifact_path(directory).unlink(missing_ok=True)
+    except OSError as exc:
+        raise RunStoreError("Cannot remove the generation artifact.") from exc
+    _save_run_record(directory, record)
+    return pinned
 
 
 def register_run(

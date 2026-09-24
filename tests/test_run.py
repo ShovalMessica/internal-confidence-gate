@@ -1,4 +1,4 @@
-"""Offline checks for the validation runner."""
+"""Offline checks for preparation and generation orchestration."""
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
@@ -13,6 +13,11 @@ from unittest.mock import patch
 import yaml
 
 from src.run import main, prepare_run
+from src.generation import (
+    GENERATION_PROTOCOL_VERSION,
+    GENERATION_RECORD_SCHEMA_VERSION,
+    GenerationUnit,
+)
 from src.run_store import build_run_identity
 
 
@@ -51,11 +56,38 @@ class RunTests(unittest.TestCase):
         path.write_text(yaml.safe_dump(values), encoding="utf-8")
         return path
 
-    def invoke(self, path=None):
+    def invoke(self, path=None, *options):
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
-            code = main([str(path or self.config)])
+            code = main([str(path or self.config), "--prepare-only", *options])
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def invoke_full(self, path=None, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main([str(path or self.config), *options])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    @staticmethod
+    def generation_record(example):
+        return {
+            "schema_version": GENERATION_RECORD_SCHEMA_VERSION,
+            "protocol_version": GENERATION_PROTOCOL_VERSION,
+            "id": example["id"],
+            "split": example["split"],
+            "status": "success",
+            "formatted_prompt_token_ids": [1],
+            "formatted_prompt_tokens": 1,
+            "reasoning": None,
+            "final_control": {"token_ids": [2]},
+            "answer": {
+                "text": "A",
+                "token_ids": [3],
+                "token_logprobs": [-0.1],
+                "tokens": 1,
+                "stop_reason": "eos",
+            },
+        }
 
     def test_automatic_splits_create_minimal_run_record(self):
         self.write_dataset(self.record(index) for index in range(700))
@@ -71,7 +103,7 @@ class RunTests(unittest.TestCase):
             "Excluded examples: 0", "Split source: automatic",
             "train: 490", "validation: 105", "test: 105",
             "Run record: created",
-            "Validation complete. No model was run.",
+            "Preparation complete. No model was run.",
         ):
             self.assertIn(text, stdout)
 
@@ -224,13 +256,131 @@ class RunTests(unittest.TestCase):
             ).run_id)
         self.assertEqual(len(set(identities)), len(identities))
 
+    def test_only_active_generation_settings_define_identity(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        identities = []
+        for changes in (
+            {},
+            {"generation_seed": 7},
+            {"direct_batch_size": 4},
+        ):
+            self.write_config(**changes)
+            prepared = prepare_run(self.config)
+            identities.append(build_run_identity(
+                prepared.config,
+                prepared.dataset.content_sha256,
+                prepared.split_source,
+            ).run_id)
+        self.assertEqual(len(set(identities)), 3)
+
+        self.write_config(reasoning_mode="reasoning", direct_batch_size=2)
+        first = prepare_run(self.config)
+        self.write_config(reasoning_mode="reasoning", direct_batch_size=99)
+        second = prepare_run(self.config)
+        self.assertEqual(
+            build_run_identity(
+                first.config, first.dataset.content_sha256, first.split_source
+            ).run_id,
+            build_run_identity(
+                second.config, second.dataset.content_sha256, second.split_source
+            ).run_id,
+        )
+
     def test_runner_does_not_load_model(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
-        with patch("src.model.load_model") as load_model:
+        with patch("src.run.load_model") as load_model:
             code, _, _ = self.invoke()
         self.assertEqual(code, 0)
         load_model.assert_not_called()
+
+    def test_full_run_saves_and_reuses_generation_without_reloading_model(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = tuple(
+            self.generation_record(example) for example in prepared.dataset.examples
+        )
+        loaded = object()
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=loaded) as load_model,
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation complete: 700 succeeded, 0 failed.", stdout)
+        load_model.assert_called_once_with(prepared.config, pinned_revision=None)
+
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation artifact: reused (model not loaded).", stdout)
+        load_model.assert_not_called()
+
+        run_directory = next((self.root / "outputs").iterdir())
+        record = json.loads((run_directory / "run.json").read_text(encoding="utf-8"))
+        self.assertIn("generation", record["completed_stages"])
+        self.assertEqual(record["model"]["resolved_revision"], "resolved-commit")
+        self.assertEqual(record["generation"]["successful"], 700)
+        self.assertEqual(
+            len((run_directory / "generations.jsonl").read_text().splitlines()), 700
+        )
+
+    def test_force_recompute_uses_recorded_revision(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = tuple(
+            self.generation_record(example) for example in prepared.dataset.examples
+        )
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        patches = (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        )
+        with patches[0], patches[1], patches[2]:
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        with (
+            patch("src.run.load_model", return_value=object()) as load_model,
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, _, stderr = self.invoke_full(None, "--force-recompute")
+        self.assertEqual((code, stderr), (0, ""))
+        load_model.assert_called_once_with(
+            prepared.config, pinned_revision="resolved-commit"
+        )
 
     def test_split_settings_are_inactive_when_dataset_supplies_splits(self):
         splits = ["train"] * 500 + ["validation"] * 100 + ["test"] * 100

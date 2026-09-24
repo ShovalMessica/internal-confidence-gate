@@ -79,11 +79,11 @@ Both reasoning and direct-answer generation use:
 FINAL: <answer>
 ```
 
-The planned protocol has the toolkit supply both the output instruction and the `FINAL:` marker. The model generates the answer after the marker. Users do not need to add either to their dataset prompts.
+The toolkit supplies both the output instruction and the `FINAL:` marker. The model generates the answer after the marker. Users do not add either to their dataset prompts.
 
 In direct-answer mode, the toolkit supplies the marker before generation. In reasoning mode, it first lets the model reason, closes reasoning if needed, then inserts the answer instruction and marker before resuming generation. Reasoning and answer generation have separate token limits.
 
-See [Generation](docs/configuration.md#generation) for exact injected instructions, answer extraction, validation, and remaining implementation TODOs. The injected boundary is known; answer-format failures are reported rather than repaired or silently dropped.
+See [Generation](docs/configuration.md#generation) for the exact injected instructions and token flow. Answer extraction and correctness evaluation are the next pipeline stage.
 
 The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called **abstention** and is enabled by default:
 
@@ -137,7 +137,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-The validation runner and reusable model loader are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
+Preparation, model loading, and generation are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -161,19 +161,34 @@ The toolkit adds the output instruction and generates responses itself. Users do
 
 ### Configure and run
 
-Fill in [configs/task.yaml](configs/task.yaml), then validate its settings, dataset, and splits:
+Fill in [configs/task.yaml](configs/task.yaml), then run preparation and generation:
 
 ```sh
 python -m src.run configs/task.yaml
 ```
 
-The command reports valid and excluded examples and the final split sizes. After successful validation, it creates or reuses:
+To validate and register the run without loading a model:
+
+```sh
+python -m src.run configs/task.yaml --prepare-only
+```
+
+The runner reports valid and excluded examples and the final split sizes. It creates or reuses:
 
 ```text
 <output_dir>/<run_id>/run.json
+<output_dir>/<run_id>/generations.jsonl
 ```
 
-The run ID represents the effective configuration and exact dataset contents. The small record tracks completed stages; no dataset or model outputs are copied. The command does not load a model or run inference yet; model loading will be connected with generation in the next pipeline stage.
+The run ID represents the effective configuration and exact dataset contents. `run.json` stores provenance and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures in dataset order.
+
+Interrupted generation resumes from saved work. A completed artifact is reused without loading the model. To discard saved generations and rerun with the same pinned model revision:
+
+```sh
+python -m src.run configs/task.yaml --force-recompute
+```
+
+Answer evaluation and activation capture are not implemented yet.
 
 Developers can run the tests without a model:
 

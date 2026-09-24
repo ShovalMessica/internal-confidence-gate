@@ -38,6 +38,8 @@ class TaskConfig:
     reasoning_max_new_tokens: int = 1024
     answer_max_new_tokens: int = 64
     allow_abstention: bool = True
+    generation_seed: int = 42
+    direct_batch_size: int = 8
     split_ratios: SplitRatios = SplitRatios()
     split_seed: int = 42
 
@@ -210,6 +212,8 @@ def load_config(path: str | Path) -> TaskConfig:
     integer_fields = (
         ("reasoning_max_new_tokens", 1),
         ("answer_max_new_tokens", 1),
+        ("generation_seed", 0),
+        ("direct_batch_size", 1),
         ("split_seed", 0),
     )
     for name, minimum in integer_fields:
