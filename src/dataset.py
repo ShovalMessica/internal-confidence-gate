@@ -144,7 +144,10 @@ def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetR
                         if type(record.get("id")) is int:
                             record_id = record["id"]
                             if record_id in seen_ids:
-                                reasons.append(f"Duplicate id {record_id}; the first occurrence reserves it.")
+                                reasons.append(
+                                    f"Duplicate id {record_id}; the first occurrence "
+                                    "reserves it."
+                                )
                             seen_ids.add(record_id)
                         example = _validate_record(record, reasons, allow_abstention)
                         if not reasons:
@@ -169,7 +172,8 @@ def load_dataset(path: str | Path, *, allow_abstention: bool = True) -> DatasetR
             if actual != expected:
                 errors.append(
                     f"Semantic-span keys differ at line {line_number} (id {example['id']}): "
-                    f"expected {sorted(expected)} from line {example_lines[0]}, got {sorted(actual)}."
+                    f"expected {sorted(expected)} from line {example_lines[0]}, "
+                    f"got {sorted(actual)}."
                 )
     if errors:
         raise DatasetError(errors, excluded)
@@ -192,7 +196,10 @@ def _check_split_sizes(total: int, sizes: dict[str, int], excluded: list[dict]) 
     errors = []
     if total < _MIN_EXAMPLES:
         noun = "example" if total == 1 else "examples"
-        errors.append(f"Dataset has {total} valid {noun}; at least {_MIN_EXAMPLES} are required.")
+        errors.append(
+            f"Dataset has {total} valid {noun}; at least {_MIN_EXAMPLES} are "
+            "required."
+        )
     for name in _SPLIT_NAMES:
         minimum = _MIN_SPLIT_SIZES[name]
         actual = sizes.get(name, 0)

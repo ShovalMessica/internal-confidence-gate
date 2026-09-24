@@ -94,7 +94,7 @@ class ConfigTests(unittest.TestCase):
             "answer_max_new_tokens": [None, 0, False, "64"],
             "split_seed": [None, -1, True, 1.5],
             "allow_abstention": [None, 1, "true"],
-            "model_revision": ["", "  ", 1, False],
+            "model_revision": [None, "", "  ", 1, False],
             "device": [None, "", "gpu", "cuda:-1", "cuda:one", 0],
             "dtype": [None, "fp16", "int8", 16],
             "model_name_or_path": [None, "", "  ", 123, "./checkpoint", "a/b/c", "a\\b"],

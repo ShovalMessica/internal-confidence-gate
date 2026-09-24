@@ -9,6 +9,11 @@ from typing import Any
 from src.config import TaskConfig
 
 
+_CHAT_TEMPLATE_ERROR = (
+    "The tokenizer has no usable chat template; v1 requires an instruction/chat model."
+)
+
+
 class ModelLoadError(RuntimeError):
     """The configured model cannot be loaded by the toolkit."""
 
@@ -42,22 +47,18 @@ def _validate_device(torch: Any, device: str) -> None:
         index = int(device.split(":", 1)[1])
         if index >= torch.cuda.device_count():
             raise ModelLoadError(
-                f"Requested device '{device}', but only {torch.cuda.device_count()} CUDA device(s) are available."
+                f"Requested device '{device}', but only {torch.cuda.device_count()} "
+                "CUDA device(s) are available."
             )
 
 
-def _chat_template(tokenizer: Any) -> str:
+def _validate_chat_template(tokenizer: Any) -> None:
     try:
         template = tokenizer.get_chat_template()
     except (AttributeError, ValueError) as exc:
-        raise ModelLoadError(
-            "The tokenizer has no usable chat template; v1 requires an instruction/chat model."
-        ) from exc
+        raise ModelLoadError(_CHAT_TEMPLATE_ERROR) from exc
     if not isinstance(template, str) or not template.strip():
-        raise ModelLoadError(
-            "The tokenizer has no usable chat template; v1 requires an instruction/chat model."
-        )
-    return template
+        raise ModelLoadError(_CHAT_TEMPLATE_ERROR)
 
 
 def _resolved_device(model: Any, requested: str) -> str | dict[str, str]:
@@ -96,20 +97,27 @@ def load_model(config: TaskConfig) -> LoadedModel:
         ) from exc
 
     if getattr(model_config, "is_encoder_decoder", False):
-        raise ModelLoadError("The model is encoder-decoder; v1 requires a decoder-only model.")
+        raise ModelLoadError(
+            "The model is encoder-decoder; v1 requires a decoder-only model."
+        )
     if getattr(model_config, "vision_config", None) is not None:
         raise ModelLoadError("The model is multimodal; v1 supports text-only models.")
 
     is_local = Path(source).is_absolute()
     resolved_revision = None if is_local else getattr(model_config, "_commit_hash", None)
-    load_revision = resolved_revision or requested_revision
+    if not is_local and (
+        not isinstance(resolved_revision, str) or not resolved_revision.strip()
+    ):
+        raise ModelLoadError(
+            f"Could not resolve an exact Hub revision for '{source}'."
+        )
     load_common = {"trust_remote_code": False}
-    if load_revision:
-        load_common["revision"] = load_revision
+    if resolved_revision:
+        load_common["revision"] = resolved_revision
 
     try:
         tokenizer = auto_tokenizer.from_pretrained(source, **load_common)
-        _chat_template(tokenizer)
+        _validate_chat_template(tokenizer)
     except ModelLoadError:
         raise
     except Exception as exc:
@@ -137,5 +145,5 @@ def load_model(config: TaskConfig) -> LoadedModel:
         tokenizer=tokenizer,
         resolved_device=_resolved_device(model, config.device),
         resolved_dtype=_resolved_dtype(model, config.dtype),
-        resolved_revision=resolved_revision or requested_revision,
+        resolved_revision=resolved_revision,
     )

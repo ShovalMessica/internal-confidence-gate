@@ -43,7 +43,11 @@ class TaskConfig:
 
 
 _FIELDS = {field.name for field in fields(TaskConfig)}
-_DEFAULTS = {field.name: field.default for field in fields(TaskConfig) if field.default is not MISSING}
+_DEFAULTS = {
+    field.name: field.default
+    for field in fields(TaskConfig)
+    if field.default is not MISSING
+}
 _SPLIT_NAMES = tuple(field.name for field in fields(SplitRatios))
 _MODEL_ID = re.compile(r"[\w][\w.-]*(?:/[\w][\w.-]*)?", re.ASCII)
 _DEVICE = re.compile(r"(?:auto|cpu|cuda(?::\d+)?)", re.ASCII)
@@ -88,7 +92,9 @@ def _integer(value: object, field: str, minimum: int, errors: list[str]) -> None
 
 def _split_ratios(value: object, errors: list[str]) -> SplitRatios | None:
     if not isinstance(value, dict):
-        errors.append("split_ratios must contain train, validation, and test fractions.")
+        errors.append(
+            "split_ratios must contain train, validation, and test fractions."
+        )
         return None
     if set(value) != set(_SPLIT_NAMES):
         errors.append("split_ratios must contain exactly train, validation, and test.")
@@ -97,7 +103,10 @@ def _split_ratios(value: object, errors: list[str]) -> SplitRatios | None:
         fraction = value.get(name)
         # This range check also rejects NaN, infinities, and oversized integers.
         if type(fraction) not in (int, float) or not 0 < fraction < 1:
-            errors.append(f"split_ratios.{name} must be a finite number between 0 and 1, exclusive.")
+            errors.append(
+                f"split_ratios.{name} must be a finite number between 0 and 1, "
+                "exclusive."
+            )
         else:
             fractions[name] = float(fraction)
     if len(fractions) != 3:
@@ -113,15 +122,21 @@ def _read_yaml(path: str | Path) -> tuple[Path, dict]:
         source = Path(path).resolve()
         text = source.read_text(encoding="utf-8")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise ConfigurationError([f"Cannot read the YAML configuration ({type(exc).__name__})."]) from exc
+        raise ConfigurationError(
+            [f"Cannot read the YAML configuration ({type(exc).__name__})."]
+        ) from exc
     try:
         raw = yaml.load(text, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-        raise ConfigurationError([f"Invalid YAML{location}; check indentation and syntax."]) from exc
+        raise ConfigurationError(
+            [f"Invalid YAML{location}; check indentation and syntax."]
+        ) from exc
     if not isinstance(raw, dict):
-        raise ConfigurationError(["The YAML configuration must be a mapping of field names to values."])
+        raise ConfigurationError(
+            ["The YAML configuration must be a mapping of field names to values."]
+        )
     return source, raw
 
 
@@ -138,17 +153,30 @@ def load_config(path: str | Path) -> TaskConfig:
 
     model = raw.get("model_name_or_path")
     if not isinstance(model, str) or not model.strip():
-        errors.append("model_name_or_path is required: supply a Hugging Face ID or absolute checkpoint path.")
+        errors.append(
+            "model_name_or_path is required: supply a Hugging Face ID or "
+            "absolute checkpoint path."
+        )
     elif "\0" in model:
         errors.append("model_name_or_path contains a null character.")
     elif Path(model).is_absolute():
         if not Path(model).is_dir():
             errors.append("model_name_or_path must point to an existing checkpoint directory.")
-    elif not _MODEL_ID.fullmatch(model) or ".." in model or "--" in model or model.endswith((".", "-")):
-        errors.append("model_name_or_path must be a model ID (name or owner/name) or an absolute checkpoint path.")
+    elif (
+        not _MODEL_ID.fullmatch(model)
+        or ".." in model
+        or "--" in model
+        or model.endswith((".", "-"))
+    ):
+        errors.append(
+            "model_name_or_path must be a model ID (name or owner/name) or an "
+            "absolute checkpoint path."
+        )
 
     revision = values["model_revision"]
-    if revision is not None and (not isinstance(revision, str) or not revision.strip()):
+    if "model_revision" in raw and (
+        not isinstance(revision, str) or not revision.strip()
+    ):
         errors.append("model_revision must be a nonempty string when supplied.")
     if isinstance(model, str) and Path(model).is_absolute() and revision is not None:
         errors.append("model_revision cannot be used with a local checkpoint path.")
@@ -179,7 +207,12 @@ def load_config(path: str | Path) -> TaskConfig:
         errors.append("output_dir points to a file; supply a directory path instead.")
     values["output_dir"] = output
 
-    for name, minimum in (("reasoning_max_new_tokens", 1), ("answer_max_new_tokens", 1), ("split_seed", 0)):
+    integer_fields = (
+        ("reasoning_max_new_tokens", 1),
+        ("answer_max_new_tokens", 1),
+        ("split_seed", 0),
+    )
+    for name, minimum in integer_fields:
         _integer(values[name], name, minimum, errors)
 
     if type(values["allow_abstention"]) is not bool:

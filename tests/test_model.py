@@ -130,6 +130,18 @@ class ModelTests(unittest.TestCase):
                     self.load(dependencies=dependencies)
                 dependencies[2].from_pretrained.assert_not_called()
 
+    def test_requires_an_exact_hub_revision(self):
+        model_config = SimpleNamespace(
+            is_encoder_decoder=False,
+            vision_config=None,
+            _commit_hash=None,
+        )
+        dependencies = self.dependencies(model_config=model_config)
+        with self.assertRaisesRegex(ModelLoadError, "exact Hub revision"):
+            self.load(dependencies=dependencies)
+        dependencies[3].from_pretrained.assert_not_called()
+        dependencies[2].from_pretrained.assert_not_called()
+
     def test_rejects_missing_chat_template_before_loading_weights(self):
         tokenizer = Mock()
         tokenizer.get_chat_template.side_effect = ValueError("missing")
