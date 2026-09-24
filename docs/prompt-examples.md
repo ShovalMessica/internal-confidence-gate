@@ -95,7 +95,7 @@ No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewri
 **Toolkit-added instruction:**
 
 ```text
-Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+Complete the FINAL: line with only the answer, without reasoning or explanation.
 If you cannot determine the answer, return UNKNOWN.
 ```
 
@@ -157,7 +157,7 @@ Reason about the task first. A separate final-answer instruction will follow.
 **Toolkit-added instruction after reasoning:**
 
 ```text
-Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+Complete the FINAL: line with only the answer, without reasoning or explanation.
 If you cannot determine the answer, return UNKNOWN.
 FINAL:
 ```

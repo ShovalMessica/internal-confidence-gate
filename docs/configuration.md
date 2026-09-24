@@ -30,7 +30,7 @@ V1 requires a standard Transformers text-only, decoder-only causal language mode
 
   **Answer instruction:**
 
-  > Return only the final answer on one line, without reasoning or explanation. The prefix FINAL: is already supplied; do not repeat it.
+  > Complete the FINAL: line with only the answer, without reasoning or explanation.
 
   **The toolkit supplies `FINAL:`; the model generates the answer after it.** Extraction uses this known boundary.
 
