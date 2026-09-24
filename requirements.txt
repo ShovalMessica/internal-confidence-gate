@@ -1,1 +1,4 @@
 PyYAML>=6.0,<7
+torch>=2.5,<3
+transformers>=4.51.3,<5
+accelerate>=0.32.1,<2

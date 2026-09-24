@@ -32,6 +32,9 @@ class TaskConfig:
     dataset_path: Path
     reasoning_mode: Literal["direct", "reasoning"]
     output_dir: Path
+    model_revision: str | None = None
+    device: str = "auto"
+    dtype: Literal["auto", "float16", "bfloat16", "float32"] = "auto"
     reasoning_max_new_tokens: int = 1024
     answer_max_new_tokens: int = 64
     allow_abstention: bool = True
@@ -43,6 +46,7 @@ _FIELDS = {field.name for field in fields(TaskConfig)}
 _DEFAULTS = {field.name: field.default for field in fields(TaskConfig) if field.default is not MISSING}
 _SPLIT_NAMES = tuple(field.name for field in fields(SplitRatios))
 _MODEL_ID = re.compile(r"[\w][\w.-]*(?:/[\w][\w.-]*)?", re.ASCII)
+_DEVICE = re.compile(r"(?:auto|cpu|cuda(?::\d+)?)", re.ASCII)
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -142,6 +146,19 @@ def load_config(path: str | Path) -> TaskConfig:
             errors.append("model_name_or_path must point to an existing checkpoint directory.")
     elif not _MODEL_ID.fullmatch(model) or ".." in model or "--" in model or model.endswith((".", "-")):
         errors.append("model_name_or_path must be a model ID (name or owner/name) or an absolute checkpoint path.")
+
+    revision = values["model_revision"]
+    if revision is not None and (not isinstance(revision, str) or not revision.strip()):
+        errors.append("model_revision must be a nonempty string when supplied.")
+    if isinstance(model, str) and Path(model).is_absolute() and revision is not None:
+        errors.append("model_revision cannot be used with a local checkpoint path.")
+
+    device = values["device"]
+    if not isinstance(device, str) or not _DEVICE.fullmatch(device):
+        errors.append("device must be 'auto', 'cpu', 'cuda', or 'cuda:N'.")
+
+    if values["dtype"] not in ("auto", "float16", "bfloat16", "float32"):
+        errors.append("dtype must be 'auto', 'float16', 'bfloat16', or 'float32'.")
 
     dataset = _absolute_path(raw.get("dataset_path"), "dataset_path", errors)
     values["dataset_path"] = dataset

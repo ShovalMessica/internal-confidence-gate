@@ -13,7 +13,7 @@ from typing import Literal
 from src.config import TaskConfig
 
 
-IDENTITY_SCHEMA_VERSION = 1
+IDENTITY_SCHEMA_VERSION = 2
 _RUN_ID_LENGTH = 12
 _RUN_RECORD = "run.json"
 
@@ -46,10 +46,14 @@ def build_run_identity(
         raise RunStoreError("Dataset content hash is unavailable.")
     effective = {
         "model_name_or_path": config.model_name_or_path,
+        "device": config.device,
+        "dtype": config.dtype,
         "reasoning_mode": config.reasoning_mode,
         "answer_max_new_tokens": config.answer_max_new_tokens,
         "allow_abstention": config.allow_abstention,
     }
+    if config.model_revision is not None:
+        effective["model_revision"] = config.model_revision
     if config.reasoning_mode == "reasoning":
         effective["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     if split_source == "automatic":

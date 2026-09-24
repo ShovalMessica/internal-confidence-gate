@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -204,6 +205,32 @@ class RunTests(unittest.TestCase):
         self.assertEqual(first_id, inactive_id)
         self.assertNotEqual(first_id, active_id)
         self.assertNotEqual(active_id, data_id)
+
+    def test_model_loading_settings_define_identity(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        identities = []
+        for changes in (
+            {},
+            {"model_revision": "abc123"},
+            {"device": "cpu"},
+            {"dtype": "float32"},
+        ):
+            self.write_config(**changes)
+            prepared = prepare_run(self.config)
+            identities.append(build_run_identity(
+                prepared.config,
+                prepared.dataset.content_sha256,
+                prepared.split_source,
+            ).run_id)
+        self.assertEqual(len(set(identities)), len(identities))
+
+    def test_runner_does_not_load_model(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        with patch("src.model.load_model") as load_model:
+            code, _, _ = self.invoke()
+        self.assertEqual(code, 0)
+        load_model.assert_not_called()
 
     def test_split_settings_are_inactive_when_dataset_supplies_splits(self):
         splits = ["train"] * 500 + ["validation"] * 100 + ["test"] * 100

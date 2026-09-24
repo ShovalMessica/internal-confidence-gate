@@ -38,6 +38,9 @@ class ConfigTests(unittest.TestCase):
             config = load_config(self.source)
         self.assertEqual(config.dataset_path, self.dataset)
         self.assertEqual(config.output_dir, self.root / "outputs")
+        self.assertIsNone(config.model_revision)
+        self.assertEqual(config.device, "auto")
+        self.assertEqual(config.dtype, "auto")
         self.assertEqual(config.reasoning_max_new_tokens, 1024)
         self.assertEqual(config.answer_max_new_tokens, 64)
         self.assertTrue(config.allow_abstention)
@@ -55,11 +58,14 @@ class ConfigTests(unittest.TestCase):
         values = dict(self.required, model_name_or_path=str(checkpoint), output_dir=str(output),
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
                       answer_max_new_tokens=16, allow_abstention=False, split_seed=0,
+                      device="cuda:1", dtype="bfloat16",
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
         config = load_config(self.write(values))
         self.assertEqual(config.model_name_or_path, str(checkpoint))
         self.assertEqual(config.reasoning_mode, "reasoning")
         self.assertEqual(config.output_dir, output)
+        self.assertEqual(config.device, "cuda:1")
+        self.assertEqual(config.dtype, "bfloat16")
         self.assertEqual((config.reasoning_max_new_tokens, config.answer_max_new_tokens), (256, 16))
         self.assertFalse(config.allow_abstention)
         self.assertEqual(config.split_seed, 0)
@@ -88,6 +94,9 @@ class ConfigTests(unittest.TestCase):
             "answer_max_new_tokens": [None, 0, False, "64"],
             "split_seed": [None, -1, True, 1.5],
             "allow_abstention": [None, 1, "true"],
+            "model_revision": ["", "  ", 1, False],
+            "device": [None, "", "gpu", "cuda:-1", "cuda:one", 0],
+            "dtype": [None, "fp16", "int8", 16],
             "model_name_or_path": [None, "", "  ", 123, "./checkpoint", "a/b/c", "a\\b"],
         }
         for field, values in cases.items():
@@ -96,6 +105,19 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(ConfigurationError) as caught:
                         load_config(self.write(dict(self.required, **{field: value})))
                     self.assertIn(field, str(caught.exception))
+
+    def test_hub_revision_is_optional_but_local_revision_is_rejected(self):
+        config = load_config(self.write(dict(self.required, model_revision="abc123")))
+        self.assertEqual(config.model_revision, "abc123")
+
+        checkpoint = self.root / "checkpoint"
+        checkpoint.mkdir()
+        with self.assertRaisesRegex(ConfigurationError, "model_revision"):
+            load_config(self.write(dict(
+                self.required,
+                model_name_or_path=str(checkpoint),
+                model_revision="abc123",
+            )))
 
     def test_unknown_fields_and_other_errors_are_combined(self):
         values = dict(self.required, answer_max_new_token=99, temperature=0.8, split_seed=-1)

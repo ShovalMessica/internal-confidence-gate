@@ -137,13 +137,13 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-The validation runner is implemented. Use Python 3.10 or newer and, from the repository root, install its dependency:
+The validation runner and reusable model loader are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
 ```
 
-**TODO:** Model/runtime and hardware requirements for later pipeline stages.
+Model loading currently supports standard Hugging Face Transformers text-only, decoder-only chat models through `AutoModelForCausalLM`. Models requiring custom remote code are outside V1 support. CUDA is optional; model size determines the required CPU/GPU memory.
 
 ### Prepare your dataset
 
@@ -173,7 +173,7 @@ The command reports valid and excluded examples and the final split sizes. After
 <output_dir>/<run_id>/run.json
 ```
 
-The run ID represents the effective configuration and exact dataset contents. The small record tracks completed stages; no dataset or model outputs are copied. The command does not load a model or run inference yet.
+The run ID represents the effective configuration and exact dataset contents. The small record tracks completed stages; no dataset or model outputs are copied. The command does not load a model or run inference yet; model loading will be connected with generation in the next pipeline stage.
 
 Developers can run the tests without a model:
 
