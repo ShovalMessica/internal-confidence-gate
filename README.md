@@ -180,16 +180,17 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 
 ```text
 <output_dir>/.cache/generations/<context_id>/...
-<output_dir>/.cache/activations/<context_id>/...
 <output_dir>/<run_id>/run.json
 <output_dir>/<run_id>/generation-manifest.jsonl
 <output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
-<output_dir>/<run_id>/activations/<capture_id>.jsonl
+<output_dir>/<run_id>/activations.h5
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, and completed stages. The manifests reference shared per-example generations and activation tensors; evaluation files store correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
 
-Interrupted generation and activation capture resume from saved work. If a dataset is extended, unchanged examples reuse their cached generations and activations; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
+`activations.h5` is one HDF5 file containing every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, and `answer_tokens` tensors across the embedding output and all returned model layers.
+
+Interrupted generation and activation capture resume from saved work. If a dataset is extended, unchanged examples reuse cached generations and copy compatible activations from the earlier run without model work; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute

@@ -459,9 +459,12 @@ class RunTests(unittest.TestCase):
             (run_directory / "run.json").read_text(encoding="utf-8")
         )
         self.assertIn("activation_capture", run_record["completed_stages"])
-        capture_entry = next(iter(run_record["activation_captures"].values()))
-        manifest = run_directory / capture_entry["artifact"]
-        self.assertEqual(len(manifest.read_text(encoding="utf-8").splitlines()), 700)
+        capture_entry = run_record["activation_capture"]
+        activation_file = run_directory / capture_entry["artifact"]
+        import h5py
+
+        with h5py.File(activation_file, "r") as source:
+            self.assertEqual(len(source["examples"]), 700)
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with (

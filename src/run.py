@@ -13,13 +13,15 @@ import time
 from typing import Literal, Sequence, TextIO
 
 from src.activation import ActivationError, build_replay_plan, capture_hidden_states
-from src.activation_cache import (
-    ActivationCacheError,
-    CachedActivation,
+from src.activation_store import (
+    ActivationStoreError,
+    StoredActivation,
+    append_activation_record,
     build_activation_context,
     build_activation_identity,
-    save_context,
-    store_activation,
+    finalize_activation_file,
+    load_activation_records,
+    reuse_activation_records,
 )
 from src.config import ConfigurationError, TaskConfig, load_config
 from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
@@ -42,22 +44,18 @@ from src.model import LoadedModel, ModelLoadError, describe_model, load_model
 from src.run_store import (
     RegisteredRun,
     RunStoreError,
-    append_activation_record,
     append_generation_records,
     build_run_identity,
     complete_generation,
     complete_evaluation,
     complete_activation_capture,
     evaluation_artifact_path,
-    finalize_activation_records,
     finalize_generation_records,
     load_evaluation_records,
-    load_activation_records,
     load_generation_records,
     load_run_record,
     register_run,
     reset_generation,
-    reuse_cached_activation_records,
     reuse_cached_generation_records,
     save_model_metadata,
     validate_completed_generation,
@@ -405,7 +403,7 @@ def _activation_progress(done: int, total: int, started: float, starting_done: i
     )
 
 
-def _activation_summary(records: dict[int, CachedActivation]) -> dict:
+def _activation_summary(records: dict[int, StoredActivation]) -> dict:
     state_labels = None
     hidden_size = None
     max_difference = 0.0
@@ -416,8 +414,8 @@ def _activation_summary(records: dict[int, CachedActivation]) -> dict:
         if state_labels is None:
             state_labels, hidden_size = labels, size
         elif labels != state_labels or size != hidden_size:
-            raise ActivationCacheError(
-                "Cached activations use inconsistent hidden-state dimensions."
+            raise ActivationStoreError(
+                "Stored activations use inconsistent hidden-state dimensions."
             )
         max_difference = max(
             max_difference, float(metadata["max_logprob_difference"])
@@ -473,32 +471,36 @@ def _capture_activations(
         prepared.config, generation_context, model_metadata
     )
     identity = build_activation_identity(context, generation["artifact_sha256"])
-    save_context(context)
     records, recovered = load_activation_records(
         directory, identity, context, expected
     )
     if recovered:
-        print("Recovered a truncated final activation-manifest record.")
+        print("Recovered an incomplete activation write.")
 
     if validate_completed_activation_capture(directory, run_record, identity):
         if set(records) != set(expected):
             raise RunStoreError(
-                "Completed activation manifest does not contain every eligible example."
+                "Completed activation file does not contain every eligible example."
             )
         print(f"Activation capture ID: {identity.capture_id}")
         print("Activation artifact: reused (model not loaded).")
         return
 
     if not force_recompute:
-        reused = reuse_cached_activation_records(
-            directory, identity, context, expected, set(records)
+        reused = reuse_activation_records(
+            prepared.config.output_dir,
+            directory,
+            identity,
+            context,
+            expected,
+            set(records),
         )
         records.update(reused)
         if reused:
-            print(f"Activation cache: {len(reused)} reused.")
+            print(f"Prior-run activations: {len(reused)} reused.")
 
     if set(records) == set(expected):
-        artifact_hash = finalize_activation_records(
+        artifact_hash = finalize_activation_file(
             directory, identity, context, expected, records
         )
         complete_activation_capture(
@@ -525,19 +527,22 @@ def _capture_activations(
         if example_id in records:
             continue
         result = capture_hidden_states(loaded, plan)
-        cached = store_activation(
-            context, example_id, generation_sha256, plan, result
+        stored = append_activation_record(
+            directory,
+            identity,
+            context,
+            example,
+            generation_sha256,
+            plan,
+            result,
         )
-        append_activation_record(
-            directory, identity, example, generation_sha256, cached
-        )
-        records[example_id] = cached
+        records[example_id] = stored
         new_count = len(records) - starting_done
         progress_interval = max(1, total // 100)
         if new_count == 1 or len(records) == total or new_count % progress_interval == 0:
             _activation_progress(len(records), total, started, starting_done)
 
-    artifact_hash = finalize_activation_records(
+    artifact_hash = finalize_activation_file(
         directory, identity, context, expected, records
     )
     complete_activation_capture(
@@ -622,8 +627,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ActivationError as error:
         print(f"Activation capture error: {error}", file=sys.stderr)
         return 1
-    except ActivationCacheError as error:
-        print(f"Activation cache error: {error}", file=sys.stderr)
+    except ActivationStoreError as error:
+        print(f"Activation storage error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)

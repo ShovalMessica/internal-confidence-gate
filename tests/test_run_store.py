@@ -200,9 +200,8 @@ class RunStoreTests(unittest.TestCase):
         path.parent.mkdir()
         path.write_text("{}\n", encoding="utf-8")
         (self.directory / "evaluations.jsonl").write_text("{}\n", encoding="utf-8")
-        activation_path = self.directory / "activations" / "capture.jsonl"
-        activation_path.parent.mkdir()
-        activation_path.write_text("{}\n", encoding="utf-8")
+        activation_path = self.directory / "activations.h5"
+        activation_path.write_bytes(b"saved activations")
         generation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
         (self.directory / "run.json").write_text(
             json.dumps(
@@ -217,7 +216,7 @@ class RunStoreTests(unittest.TestCase):
                     "generation": {},
                     "evaluation": {},
                     "evaluations": {evaluation_id: {}},
-                    "activation_captures": {"capture": {}},
+                    "activation_capture": {},
                 }
             ),
             encoding="utf-8",
@@ -228,12 +227,11 @@ class RunStoreTests(unittest.TestCase):
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertNotIn("evaluation", record)
         self.assertNotIn("evaluations", record)
-        self.assertNotIn("activation_captures", record)
+        self.assertNotIn("activation_capture", record)
         self.assertFalse(path.exists())
         self.assertFalse((self.directory / "evaluations").exists())
         self.assertFalse((self.directory / "evaluations.jsonl").exists())
         self.assertFalse(activation_path.exists())
-        self.assertFalse((self.directory / "activations").exists())
 
 
 if __name__ == "__main__":

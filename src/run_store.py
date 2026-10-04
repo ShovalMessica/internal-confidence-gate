@@ -14,15 +14,12 @@ from src.activation import (
     ACTIVATION_PROTOCOL_VERSION,
     CAPTURE_BACKEND,
     POSITION_PROTOCOL,
-    ReplayPlan,
     STORAGE_DTYPE,
 )
-from src.activation_cache import (
-    ACTIVATION_MANIFEST_SCHEMA_VERSION,
-    ActivationContext,
+from src.activation_store import (
+    ACTIVATION_FILE,
     ActivationIdentity,
-    CachedActivation,
-    load_activation,
+    activation_file_path,
 )
 from src.config import TaskConfig
 from src.evaluation import (
@@ -446,188 +443,6 @@ def finalize_generation_records(
     return _sha256(path), counts
 
 
-def activation_manifest_path(directory: Path, capture_id: str) -> Path:
-    return directory / "activations" / f"{capture_id}.jsonl"
-
-
-def _activation_entry(
-    identity: ActivationIdentity,
-    example: dict,
-    generation_sha256: str,
-    cached: CachedActivation,
-) -> dict:
-    return {
-        "schema_version": ACTIVATION_MANIFEST_SCHEMA_VERSION,
-        "capture_id": identity.capture_id,
-        "fingerprint": identity.fingerprint,
-        "id": example["id"],
-        "split": example["split"],
-        "generation_sha256": generation_sha256,
-        "example_key": cached.example_key,
-        "artifact_sha256": cached.artifact_sha256,
-    }
-
-
-def _validate_activation_entry(
-    raw: object,
-    identity: ActivationIdentity,
-    context: ActivationContext,
-    expected: dict[int, tuple[dict, str, ReplayPlan]],
-    line: int,
-) -> tuple[dict, CachedActivation]:
-    if not isinstance(raw, dict):
-        raise RunStoreError(f"Activation manifest line {line} must be an object.")
-    example_id = raw.get("id")
-    item = expected.get(example_id) if type(example_id) is int else None
-    if item is None:
-        raise RunStoreError(f"Activation manifest line {line} has an unexpected ID.")
-    example, generation_sha256, plan = item
-    artifact_sha256 = raw.get("artifact_sha256")
-    if (
-        raw.get("schema_version") != ACTIVATION_MANIFEST_SCHEMA_VERSION
-        or raw.get("capture_id") != identity.capture_id
-        or raw.get("fingerprint") != identity.fingerprint
-        or raw.get("split") != example["split"]
-        or raw.get("generation_sha256") != generation_sha256
-        or not isinstance(artifact_sha256, str)
-        or len(artifact_sha256) != 64
-    ):
-        raise RunStoreError(f"Activation manifest line {line} is invalid.")
-    try:
-        cached = load_activation(
-            context,
-            example_id,
-            generation_sha256,
-            plan,
-            artifact_sha256,
-        )
-    except ValueError as exc:
-        raise RunStoreError(str(exc)) from exc
-    if cached is None or raw.get("example_key") != cached.example_key:
-        raise RunStoreError(f"Cached activation is missing for ID {example_id}.")
-    return raw, cached
-
-
-def load_activation_records(
-    directory: Path,
-    identity: ActivationIdentity,
-    context: ActivationContext,
-    expected: dict[int, tuple[dict, str, ReplayPlan]],
-) -> tuple[dict[int, CachedActivation], bool]:
-    """Resolve a run manifest into cached activation records."""
-    if context.context_id != identity.context_id:
-        raise RunStoreError("Activation identity does not match its cache context.")
-    path = activation_manifest_path(directory, identity.capture_id)
-    if not path.exists():
-        return {}, False
-    if not path.is_file():
-        raise RunStoreError(f"Activation manifest is not a file: {path}")
-    try:
-        content = path.read_bytes()
-    except OSError as exc:
-        raise RunStoreError(f"Cannot read activation manifest: {path}") from exc
-    recovered = bool(content and not content.endswith(b"\n"))
-    if recovered:
-        content = content[: content.rfind(b"\n") + 1] if b"\n" in content else b""
-    try:
-        lines = content.decode("utf-8").splitlines()
-    except UnicodeError as exc:
-        raise RunStoreError(f"Activation manifest is not UTF-8: {path}") from exc
-
-    records = {}
-    entries = []
-    for line_number, line in enumerate(lines, start=1):
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise RunStoreError(
-                f"Invalid activation JSON at line {line_number}: {path}"
-            ) from exc
-        entry, cached = _validate_activation_entry(
-            raw, identity, context, expected, line_number
-        )
-        example_id = entry["id"]
-        if example_id in records:
-            raise RunStoreError(f"Duplicate activation for ID {example_id}: {path}")
-        records[example_id] = cached
-        entries.append(entry)
-    if recovered:
-        _write_jsonl_records(path, entries)
-    return records, recovered
-
-
-def append_activation_record(
-    directory: Path,
-    identity: ActivationIdentity,
-    example: dict,
-    generation_sha256: str,
-    cached: CachedActivation,
-) -> None:
-    path = activation_manifest_path(directory, identity.capture_id)
-    try:
-        path.parent.mkdir(exist_ok=True)
-    except OSError as exc:
-        raise RunStoreError(f"Cannot create activation directory: {path.parent}") from exc
-    _append_jsonl_records(
-        path, [_activation_entry(identity, example, generation_sha256, cached)]
-    )
-
-
-def reuse_cached_activation_records(
-    directory: Path,
-    identity: ActivationIdentity,
-    context: ActivationContext,
-    expected: dict[int, tuple[dict, str, ReplayPlan]],
-    completed_ids: set[int],
-) -> dict[int, CachedActivation]:
-    reused = {}
-    for example_id, (example, generation_sha256, plan) in expected.items():
-        if example_id in completed_ids:
-            continue
-        try:
-            cached = load_activation(context, example_id, generation_sha256, plan)
-        except ValueError as exc:
-            raise RunStoreError(str(exc)) from exc
-        if cached is not None:
-            append_activation_record(
-                directory, identity, example, generation_sha256, cached
-            )
-            reused[example_id] = cached
-    return reused
-
-
-def finalize_activation_records(
-    directory: Path,
-    identity: ActivationIdentity,
-    context: ActivationContext,
-    expected: dict[int, tuple[dict, str, ReplayPlan]],
-    records: dict[int, CachedActivation],
-) -> str:
-    if set(records) != set(expected):
-        raise RunStoreError(
-            "Cannot finalize activations before every example is captured."
-        )
-    entries = []
-    for example_id, (example, generation_sha256, plan) in expected.items():
-        try:
-            cached = load_activation(
-                context,
-                example_id,
-                generation_sha256,
-                plan,
-                records[example_id].artifact_sha256,
-            )
-        except ValueError as exc:
-            raise RunStoreError(str(exc)) from exc
-        if cached is None:
-            raise RunStoreError(f"Cached activation is missing for ID {example_id}.")
-        entries.append(_activation_entry(identity, example, generation_sha256, cached))
-    path = activation_manifest_path(directory, identity.capture_id)
-    path.parent.mkdir(exist_ok=True)
-    _write_jsonl_records(path, entries)
-    return _sha256(path)
-
-
 def _validate_evaluation_record(record: object, expected: dict, line: int) -> dict:
     if not isinstance(record, dict):
         raise RunStoreError(f"Evaluation record at line {line} must be an object.")
@@ -805,62 +620,54 @@ def complete_activation_capture(
     stages = record["completed_stages"]
     if "activation_capture" not in stages:
         stages.append("activation_capture")
-    captures = record.setdefault("activation_captures", {})
-    if not isinstance(captures, dict):
-        raise RunStoreError("Run record has an invalid activation registry.")
-    relative_artifact = f"activations/{identity.capture_id}.jsonl"
     entry = {
         "capture_id": identity.capture_id,
         "fingerprint": identity.fingerprint,
         "context_id": identity.context_id,
+        "context_fingerprint": identity.context_fingerprint,
         "protocol_version": ACTIVATION_PROTOCOL_VERSION,
         "backend": CAPTURE_BACKEND,
         "position_protocol": POSITION_PROTOCOL,
         "storage_dtype": STORAGE_DTYPE,
         "generation_sha256": identity.generation_sha256,
-        "artifact": relative_artifact,
+        "artifact": ACTIVATION_FILE,
         "artifact_sha256": artifact_sha256,
         "summary": summary,
         "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    existing = captures.get(identity.capture_id)
+    existing = record.get("activation_capture")
     if existing is not None and existing != entry:
         raise RunStoreError("Activation capture ID collision or conflicting run record.")
-    captures[identity.capture_id] = entry
+    record["activation_capture"] = entry
     _save_run_record(directory, record)
 
 
 def validate_completed_activation_capture(
     directory: Path, record: dict, identity: ActivationIdentity
 ) -> bool:
-    captures = record.get("activation_captures")
-    if captures is None:
-        return False
-    if not isinstance(captures, dict):
-        raise RunStoreError("Run record has an invalid activation registry.")
-    capture = captures.get(identity.capture_id)
+    capture = record.get("activation_capture")
     if capture is None:
         return False
     if "activation_capture" not in record.get("completed_stages", []):
         raise RunStoreError("Saved activations are missing their completed stage.")
-    expected_artifact = f"activations/{identity.capture_id}.jsonl"
     if (
         not isinstance(capture, dict)
         or capture.get("capture_id") != identity.capture_id
         or capture.get("fingerprint") != identity.fingerprint
         or capture.get("context_id") != identity.context_id
+        or capture.get("context_fingerprint") != identity.context_fingerprint
         or capture.get("protocol_version") != ACTIVATION_PROTOCOL_VERSION
         or capture.get("backend") != CAPTURE_BACKEND
         or capture.get("position_protocol") != POSITION_PROTOCOL
         or capture.get("storage_dtype") != STORAGE_DTYPE
         or capture.get("generation_sha256") != identity.generation_sha256
-        or capture.get("artifact") != expected_artifact
+        or capture.get("artifact") != ACTIVATION_FILE
         or not isinstance(capture.get("summary"), dict)
     ):
         raise RunStoreError("Completed activation capture is invalid.")
-    path = activation_manifest_path(directory, identity.capture_id)
+    path = activation_file_path(directory)
     if not path.is_file() or _sha256(path) != capture.get("artifact_sha256"):
-        raise RunStoreError("Completed activation manifest is missing or has changed.")
+        raise RunStoreError("Completed activation file is missing or has changed.")
     return True
 
 
@@ -931,6 +738,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("generation_settings", None)
     record.pop("evaluation", None)
     record.pop("evaluations", None)
+    record.pop("activation_capture", None)
     record.pop("activation_captures", None)
     record["completed_stages"] = [
         stage
@@ -939,6 +747,7 @@ def reset_generation(directory: Path) -> str | None:
     ]
     try:
         generation_artifact_path(directory).unlink(missing_ok=True)
+        activation_file_path(directory).unlink(missing_ok=True)
         (directory / _LEGACY_EVALUATION_ARTIFACT).unlink(missing_ok=True)
         evaluations = directory / _EVALUATIONS_DIR
         if evaluations.exists():

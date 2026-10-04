@@ -91,7 +91,7 @@ These loading functions do not run a model, print messages, or save files. The r
 
 ## Adding examples later
 
-Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse their saved generations and default activations. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
+Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse saved generations and copy compatible default activations into the new run's single activation file. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
 
 Automatic splitting is recalculated for the new dataset. Supply explicit splits on every record when existing split assignments must remain fixed.
 

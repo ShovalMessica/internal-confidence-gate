@@ -1,6 +1,7 @@
 """Offline checks for exact replay and default hidden-state capture."""
 
 from math import exp, log
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -13,22 +14,18 @@ from src.activation import (
     build_replay_plan,
     capture_hidden_states,
 )
-from src.activation_cache import (
+from src.activation_store import (
+    activation_file_path,
+    append_activation_record,
     build_activation_context,
     build_activation_identity,
-    load_activation,
-    save_context,
-    store_activation,
+    finalize_activation_file,
+    load_activation_records,
+    reuse_activation_records,
 )
 from src.config import TaskConfig
 from src.generation_cache import build_generation_context
 from src.model import LoadedModel
-from src.run_store import (
-    append_activation_record,
-    finalize_activation_records,
-    load_activation_records,
-    reuse_cached_activation_records,
-)
 
 
 VOCAB_SIZE = 16
@@ -137,14 +134,18 @@ class ActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ActivationError, "final_marker_span"):
             build_replay_plan(record)
 
-    def test_safetensors_cache_manifest_reuse_and_corruption(self):
+    def test_one_hdf5_file_supports_resume_and_cross_run_reuse(self):
+        import h5py
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            output = root / "outputs"
+            output.mkdir()
             config = TaskConfig(
                 model_name_or_path="organization/model",
                 dataset_path=root / "dataset.jsonl",
                 reasoning_mode="direct",
-                output_dir=root / "outputs",
+                output_dir=output,
             )
             generation_context = build_generation_context(config)
             metadata = {
@@ -159,46 +160,99 @@ class ActivationTests(unittest.TestCase):
                 "transformers_version": "test",
             }
             context = build_activation_context(config, generation_context, metadata)
-            identity = build_activation_identity(context, "g" * 64)
-            save_context(context)
             plan = build_replay_plan(_generation())
             model = _ReplayModel(plan.positions["answer_tokens"], plan.answer_token_ids)
             result = capture_hidden_states(_loaded(model), plan)
-            cached = store_activation(context, 1, "a" * 64, plan, result)
             example = {"id": 1, "input": "task", "split": "train"}
-            expected = {1: (example, "a" * 64, plan)}
-            run = root / "run"
-            run.mkdir()
-            append_activation_record(run, identity, example, "a" * 64, cached)
-            manifest = run / "activations" / f"{identity.capture_id}.jsonl"
-            with manifest.open("a", encoding="utf-8") as output:
-                output.write('{"id": 2')
+            second_plan = build_replay_plan(
+                _generation(reasoning=True, answer_ids=(5, 6))
+            )
+            second_model = _ReplayModel(
+                second_plan.positions["answer_tokens"], second_plan.answer_token_ids
+            )
+            second_result = capture_hidden_states(_loaded(second_model), second_plan)
+            second_example = {"id": 2, "input": "task 2", "split": "test"}
+            expected = {
+                1: (example, "a" * 64, plan),
+                2: (second_example, "b" * 64, second_plan),
+            }
+
+            first_run = output / "first"
+            first_run.mkdir()
+            first_identity = build_activation_identity(context, "g" * 64)
+            stored = append_activation_record(
+                first_run,
+                first_identity,
+                context,
+                example,
+                "a" * 64,
+                plan,
+                result,
+            )
+            append_activation_record(
+                first_run,
+                first_identity,
+                context,
+                second_example,
+                "b" * 64,
+                second_plan,
+                second_result,
+            )
+            self.assertEqual(set(first_run.iterdir()), {activation_file_path(first_run)})
+            with h5py.File(activation_file_path(first_run), "a") as source:
+                source["_pending"].create_group("unfinished")
 
             records, recovered = load_activation_records(
-                run, identity, context, expected
+                first_run, first_identity, context, expected
             )
             self.assertTrue(recovered)
-            self.assertTrue(manifest.read_bytes().endswith(b"\n"))
-            self.assertEqual(records[1].artifact_sha256, cached.artifact_sha256)
-            manifest_hash = finalize_activation_records(
-                run, identity, context, expected, records
-            )
-            self.assertEqual(len(manifest_hash), 64)
+            self.assertEqual(records[1], stored)
+            with h5py.File(activation_file_path(first_run), "r") as source:
+                self.assertEqual(list(source["_pending"]), [])
+                self.assertEqual(
+                    source["examples/1/answer_tokens"].shape,
+                    (3, 1, 4),
+                )
+                self.assertEqual(source["examples/1/answer_tokens"].dtype.name, "float16")
+                self.assertEqual(
+                    source["examples/2/answer_tokens"].shape,
+                    (3, 2, 4),
+                )
 
-            second_run = root / "second"
+            artifact_hash = finalize_activation_file(
+                first_run, first_identity, context, expected, records
+            )
+            (first_run / "run.json").write_text(
+                json.dumps(
+                    {
+                        "completed_stages": ["activation_capture"],
+                        "activation_capture": {
+                            "context_fingerprint": context.fingerprint,
+                            "artifact": "activations.h5",
+                            "artifact_sha256": artifact_hash,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            second_run = output / "second"
             second_run.mkdir()
-            reused = reuse_cached_activation_records(
-                second_run, identity, context, expected, set()
+            second_identity = build_activation_identity(context, "h" * 64)
+            reused = reuse_activation_records(
+                output,
+                second_run,
+                second_identity,
+                context,
+                expected,
+                set(),
             )
-            self.assertEqual(set(reused), {1})
-            loaded = load_activation(
-                context, 1, "a" * 64, plan, cached.artifact_sha256
+            self.assertEqual(set(reused), {1, 2})
+            copied, _ = load_activation_records(
+                second_run, second_identity, context, expected
             )
-            self.assertIsNotNone(loaded)
-
-            cached.path.write_bytes(cached.path.read_bytes() + b"corrupt")
-            with self.assertRaisesRegex(Exception, "changed"):
-                load_activation(context, 1, "a" * 64, plan, cached.artifact_sha256)
+            self.assertEqual(set(copied), {1, 2})
+            self.assertEqual(set(second_run.iterdir()), {activation_file_path(second_run)})
 
 
 if __name__ == "__main__":
