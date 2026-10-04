@@ -11,8 +11,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import torch
 import yaml
 
+from src.activation import ActivationResult
 from src.run import main, prepare_run
 from src.generation import (
     GENERATION_PROTOCOL_VERSION,
@@ -65,8 +67,13 @@ class RunTests(unittest.TestCase):
 
     def invoke_full(self, path=None, *options):
         stdout, stderr = io.StringIO(), io.StringIO()
-        with redirect_stdout(stdout), redirect_stderr(stderr):
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            patch("src.run._capture_activations") as capture,
+        ):
             code = main([str(path or self.config), *options])
+        self.capture_mock = capture
         return code, stdout.getvalue(), stderr.getvalue()
 
     def run_directories(self):
@@ -84,7 +91,10 @@ class RunTests(unittest.TestCase):
             "formatted_prompt_token_ids": [1],
             "formatted_prompt_tokens": 1,
             "reasoning": None,
-            "final_control": {"token_ids": [2]},
+            "final_control": {
+                "token_ids": [2],
+                "final_marker_span": [0, 1],
+            },
             "answer": {
                 "text": answer,
                 "token_ids": [3],
@@ -369,6 +379,104 @@ class RunTests(unittest.TestCase):
             700,
         )
 
+    def test_probe_ready_run_continues_to_activation_with_loaded_model(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        loaded = object()
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            patch("src.run.load_model", return_value=loaded),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+            patch("src.run._capture_activations") as capture,
+        ):
+            code = main([str(self.config)])
+
+        self.assertEqual((code, stderr.getvalue()), (0, ""))
+        capture.assert_called_once()
+        self.assertIs(capture.call_args.args[2], loaded)
+
+    def test_completed_activation_capture_is_reused_without_model_loading(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        loaded = object()
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+
+        def captured(_loaded, plan):
+            tensors = {
+                name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
+                for name, positions in plan.positions.items()
+            }
+            return ActivationResult(tensors, ("embedding", "hidden_state_1"), 0.0)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            patch("src.run.load_model", return_value=loaded) as load_model,
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+            patch("src.run.capture_hidden_states", side_effect=captured) as capture,
+        ):
+            first_code = main([str(self.config)])
+
+        self.assertEqual((first_code, stderr.getvalue()), (0, ""))
+        self.assertEqual(capture.call_count, 700)
+        load_model.assert_called_once()
+        run_directory = self.run_directories()[0]
+        run_record = json.loads(
+            (run_directory / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("activation_capture", run_record["completed_stages"])
+        capture_entry = next(iter(run_record["activation_captures"].values()))
+        manifest = run_directory / capture_entry["artifact"]
+        self.assertEqual(len(manifest.read_text(encoding="utf-8").splitlines()), 700)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            patch("src.run.load_model") as load_model,
+            patch("src.run.capture_hidden_states") as capture,
+        ):
+            second_code = main([str(self.config)])
+
+        self.assertEqual((second_code, stderr.getvalue()), (0, ""))
+        self.assertIn("Activation artifact: reused (model not loaded).", stdout.getvalue())
+        load_model.assert_not_called()
+        capture.assert_not_called()
+
     def test_force_recompute_uses_recorded_revision(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
@@ -511,6 +619,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Evaluation artifact: created", stdout)
         self.assertIn("train needs 100 correct predictions", stderr)
+        self.capture_mock.assert_not_called()
         run_directory = self.run_directories()[0]
         run_record = json.loads(
             (run_directory / "run.json").read_text(encoding="utf-8")

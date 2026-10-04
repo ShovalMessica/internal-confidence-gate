@@ -194,21 +194,30 @@ class RunStoreTests(unittest.TestCase):
                 self.directory, identity.evaluation_id, examples
             )
 
-    def test_force_reset_removes_downstream_evaluation(self):
+    def test_force_reset_removes_downstream_artifacts(self):
         evaluation_id = "a" * 12
         path = evaluation_artifact_path(self.directory, evaluation_id)
         path.parent.mkdir()
         path.write_text("{}\n", encoding="utf-8")
         (self.directory / "evaluations.jsonl").write_text("{}\n", encoding="utf-8")
+        activation_path = self.directory / "activations" / "capture.jsonl"
+        activation_path.parent.mkdir()
+        activation_path.write_text("{}\n", encoding="utf-8")
         generation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
         (self.directory / "run.json").write_text(
             json.dumps(
                 {
-                    "completed_stages": ["preparation", "generation", "evaluation"],
+                    "completed_stages": [
+                        "preparation",
+                        "generation",
+                        "evaluation",
+                        "activation_capture",
+                    ],
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
                     "evaluation": {},
                     "evaluations": {evaluation_id: {}},
+                    "activation_captures": {"capture": {}},
                 }
             ),
             encoding="utf-8",
@@ -219,9 +228,12 @@ class RunStoreTests(unittest.TestCase):
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertNotIn("evaluation", record)
         self.assertNotIn("evaluations", record)
+        self.assertNotIn("activation_captures", record)
         self.assertFalse(path.exists())
         self.assertFalse((self.directory / "evaluations").exists())
         self.assertFalse((self.directory / "evaluations.jsonl").exists())
+        self.assertFalse(activation_path.exists())
+        self.assertFalse((self.directory / "activations").exists())
 
 
 if __name__ == "__main__":

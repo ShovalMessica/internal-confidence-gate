@@ -139,6 +139,11 @@ def _cache_record(record: dict) -> dict:
     return cached
 
 
+def generation_record_sha256(record: dict) -> str:
+    """Hash the split-independent bytes stored for one generation."""
+    return hashlib.sha256(_encoded(_cache_record(record))).hexdigest()
+
+
 def store_generation(
     context: GenerationContext, example: dict, record: dict
 ) -> CachedGeneration:
@@ -148,7 +153,7 @@ def store_generation(
     key = example_key(context, example)
     cached = _cache_record(record)
     content = _encoded(cached)
-    artifact_sha256 = hashlib.sha256(content).hexdigest()
+    artifact_sha256 = generation_record_sha256(record)
     directory = _artifact_directory(context, key)
     path = directory / f"{artifact_sha256}.json"
     temporary = path.with_suffix(".json.tmp")

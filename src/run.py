@@ -5,12 +5,22 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import subprocess
 import sys
 import time
 from typing import Literal, Sequence, TextIO
 
+from src.activation import ActivationError, build_replay_plan, capture_hidden_states
+from src.activation_cache import (
+    ActivationCacheError,
+    CachedActivation,
+    build_activation_context,
+    build_activation_identity,
+    save_context,
+    store_activation,
+)
 from src.config import ConfigurationError, TaskConfig, load_config
 from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
 from src.evaluation import (
@@ -24,28 +34,35 @@ from src.generation import GenerationError, generation_units
 from src.generation_cache import (
     GenerationCacheError,
     build_generation_context,
+    generation_record_sha256,
     load_context_model,
     save_context_model,
 )
-from src.model import ModelLoadError, describe_model, load_model
+from src.model import LoadedModel, ModelLoadError, describe_model, load_model
 from src.run_store import (
     RegisteredRun,
     RunStoreError,
+    append_activation_record,
     append_generation_records,
     build_run_identity,
     complete_generation,
     complete_evaluation,
+    complete_activation_capture,
     evaluation_artifact_path,
+    finalize_activation_records,
     finalize_generation_records,
     load_evaluation_records,
+    load_activation_records,
     load_generation_records,
     load_run_record,
     register_run,
     reset_generation,
+    reuse_cached_activation_records,
     reuse_cached_generation_records,
     save_model_metadata,
     validate_completed_generation,
     validate_completed_evaluation,
+    validate_completed_activation_capture,
     write_evaluation_records,
 )
 
@@ -186,12 +203,20 @@ def _progress(
     )
 
 
+def _model_metadata(config: TaskConfig, loaded: LoadedModel) -> dict:
+    return {
+        "identifier": config.model_name_or_path,
+        "requested_revision": config.model_revision,
+        **describe_model(loaded),
+    }
+
+
 def _generate(
     prepared: PreparedRun,
     registered: RegisteredRun,
     config_path: Path,
     force_recompute: bool,
-) -> None:
+) -> LoadedModel | None:
     directory = registered.directory
     examples = prepared.dataset.examples
     examples_by_id = {example["id"]: example for example in examples}
@@ -207,7 +232,7 @@ def _generate(
         if set(records) != {example["id"] for example in examples}:
             raise RunStoreError("Completed generation does not contain every example.")
         print("Generation artifact: reused (model not loaded).")
-        return
+        return None
 
     records, recovered = load_generation_records(directory, context, examples)
     if recovered:
@@ -243,16 +268,12 @@ def _generate(
         )
         complete_generation(directory, context, artifact_hash, counts)
         print("Generation complete from cached records; model not loaded.")
-        return
+        return None
     if pinned_revision is None and isinstance(stored_model, dict):
         pinned_revision = stored_model.get("resolved_revision")
 
     loaded = load_model(prepared.config, pinned_revision=pinned_revision)
-    metadata = {
-        "identifier": prepared.config.model_name_or_path,
-        "requested_revision": prepared.config.model_revision,
-        **describe_model(loaded),
-    }
+    metadata = _model_metadata(prepared.config, loaded)
     save_context_model(context, metadata)
     save_model_metadata(
         directory,
@@ -284,6 +305,7 @@ def _generate(
         f"{total - starting_done} generated; {counts['successful']} succeeded, "
         f"{counts['failed']} failed."
     )
+    return loaded
 
 
 def _format_rate(value: float | None) -> str:
@@ -371,6 +393,163 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     return result.summary
 
 
+def _activation_progress(done: int, total: int, started: float, starting_done: int) -> None:
+    elapsed = max(time.monotonic() - started, 1e-9)
+    rate = (done - starting_done) / elapsed
+    remaining = total - done
+    eta = f"{remaining / rate:.1f}s" if rate else "unknown"
+    print(
+        f"Activation capture: {done}/{total} ({100 * done / total:.1f}%) | "
+        f"elapsed {elapsed:.1f}s | {rate:.2f} examples/s | ETA {eta}",
+        flush=True,
+    )
+
+
+def _activation_summary(records: dict[int, CachedActivation]) -> dict:
+    state_labels = None
+    hidden_size = None
+    max_difference = 0.0
+    for cached in records.values():
+        metadata = cached.metadata
+        labels = json.loads(metadata["state_labels"])
+        size = int(metadata["hidden_size"])
+        if state_labels is None:
+            state_labels, hidden_size = labels, size
+        elif labels != state_labels or size != hidden_size:
+            raise ActivationCacheError(
+                "Cached activations use inconsistent hidden-state dimensions."
+            )
+        max_difference = max(
+            max_difference, float(metadata["max_logprob_difference"])
+        )
+    return {
+        "examples": len(records),
+        "positions": ["prompt_end", "final_prompt_end", "answer_tokens"],
+        "state_labels": state_labels,
+        "hidden_size": hidden_size,
+        "storage_dtype": "float16",
+        "max_logprob_difference": max_difference,
+    }
+
+
+def _capture_activations(
+    prepared: PreparedRun,
+    registered: RegisteredRun,
+    loaded: LoadedModel | None,
+    force_recompute: bool,
+) -> None:
+    directory = registered.directory
+    examples = prepared.dataset.examples
+    generation_context = build_generation_context(prepared.config)
+    run_record = load_run_record(directory)
+    generation = run_record.get("generation")
+    model_metadata = run_record.get("model")
+    if not isinstance(generation, dict) or not isinstance(model_metadata, dict):
+        raise RunStoreError("Activation capture requires generation model provenance.")
+
+    evaluation_identity = build_evaluation_identity(
+        generation["artifact_sha256"], prepared.answer_matcher
+    )
+    evaluations = load_evaluation_records(
+        directory, evaluation_identity.evaluation_id, examples
+    )
+    generations, _ = load_generation_records(directory, generation_context, examples)
+    expected = {}
+    for example in examples:
+        example_id = example["id"]
+        if evaluations[example_id]["outcome"] not in ("correct", "incorrect"):
+            continue
+        record = generations[example_id]
+        plan = build_replay_plan(record)
+        expected[example_id] = (
+            example,
+            generation_record_sha256(record),
+            plan,
+        )
+    if not expected:
+        raise ActivationError("No correct or incorrect predictions are available to capture.")
+
+    context = build_activation_context(
+        prepared.config, generation_context, model_metadata
+    )
+    identity = build_activation_identity(context, generation["artifact_sha256"])
+    save_context(context)
+    records, recovered = load_activation_records(
+        directory, identity, context, expected
+    )
+    if recovered:
+        print("Recovered a truncated final activation-manifest record.")
+
+    if validate_completed_activation_capture(directory, run_record, identity):
+        if set(records) != set(expected):
+            raise RunStoreError(
+                "Completed activation manifest does not contain every eligible example."
+            )
+        print(f"Activation capture ID: {identity.capture_id}")
+        print("Activation artifact: reused (model not loaded).")
+        return
+
+    if not force_recompute:
+        reused = reuse_cached_activation_records(
+            directory, identity, context, expected, set(records)
+        )
+        records.update(reused)
+        if reused:
+            print(f"Activation cache: {len(reused)} reused.")
+
+    if set(records) == set(expected):
+        artifact_hash = finalize_activation_records(
+            directory, identity, context, expected, records
+        )
+        complete_activation_capture(
+            directory, identity, artifact_hash, _activation_summary(records)
+        )
+        print(f"Activation capture ID: {identity.capture_id}")
+        print("Activation capture complete from cached records; model not loaded.")
+        return
+
+    if loaded is None:
+        pinned_revision = model_metadata.get("resolved_revision")
+        loaded = load_model(prepared.config, pinned_revision=pinned_revision)
+        if _model_metadata(prepared.config, loaded) != model_metadata:
+            raise RunStoreError(
+                "Loaded model metadata differs from the generation model."
+            )
+
+    total = len(expected)
+    starting_done = len(records)
+    started = time.monotonic()
+    if records:
+        print(f"Resuming activation capture with {len(records)}/{total} complete.")
+    for example_id, (example, generation_sha256, plan) in expected.items():
+        if example_id in records:
+            continue
+        result = capture_hidden_states(loaded, plan)
+        cached = store_activation(
+            context, example_id, generation_sha256, plan, result
+        )
+        append_activation_record(
+            directory, identity, example, generation_sha256, cached
+        )
+        records[example_id] = cached
+        new_count = len(records) - starting_done
+        progress_interval = max(1, total // 100)
+        if new_count == 1 or len(records) == total or new_count % progress_interval == 0:
+            _activation_progress(len(records), total, started, starting_done)
+
+    artifact_hash = finalize_activation_records(
+        directory, identity, context, expected, records
+    )
+    complete_activation_capture(
+        directory, identity, artifact_hash, _activation_summary(records)
+    )
+    print(f"Activation capture ID: {identity.capture_id}")
+    print(
+        f"Activation capture complete: {starting_done} reused, "
+        f"{total - starting_done} captured."
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare and run an Internal Confidence Gate task."
@@ -411,11 +590,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.prepare_only:
             print("Preparation complete. No model was run.")
         else:
-            _generate(prepared, registered, args.config.resolve(), args.force_recompute)
+            loaded = _generate(
+                prepared, registered, args.config.resolve(), args.force_recompute
+            )
             summary = _evaluate(prepared, registered)
             if not summary["probe_ready"]:
                 _print_shortages(summary["shortages"], sys.stderr)
                 return 1
+            _capture_activations(
+                prepared, registered, loaded, args.force_recompute
+            )
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1
@@ -434,6 +618,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except EvaluationError as error:
         print(f"Evaluation error: {error}", file=sys.stderr)
+        return 1
+    except ActivationError as error:
+        print(f"Activation capture error: {error}", file=sys.stderr)
+        return 1
+    except ActivationCacheError as error:
+        print(f"Activation cache error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)

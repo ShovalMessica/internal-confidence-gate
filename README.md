@@ -37,7 +37,7 @@ Examples of suitable tasks include:
 
 As a model processes a prompt and generates a response, it computes internal numerical representations called **activations**. These occur at different layers and token positions. A token is a unit of text processed by the model; one word may contain several tokens.
 
-The toolkit collects activations while the model answers examples with known target answers. Comparing each model answer with its target answer determines whether the prediction is correct.
+The toolkit first generates answers for examples with known target answers, then replays eligible saved predictions to collect activations. Comparing each model answer with its target answer determines whether the prediction is correct.
 
 A small classifier, called a **probe**, learns to estimate prediction reliability from those activations.
 
@@ -47,17 +47,17 @@ A small classifier, called a **probe**, learns to estimate prediction reliabilit
 
 A model produces activations across many layers and token positions. Collecting and comparing all of them can be expensive, so the toolkit focuses on locations with a meaningful relationship to the task or its final decision.
 
-The default captures use residual-stream activations—the representations carried between model layers—across all layers at:
+The default captures use the model hidden states returned across the embedding and layer stack at:
 
-- **Last prompt token:** the last token supplied before the first generation stage.
-- **Final-answer marker:** the token containing the colon in the final `FINAL:` marker.
-- **Answer:** the answer token following that marker.
+- **Prompt end (`prompt_end`):** the final token of the rendered chat prompt before generation begins.
+- **Final-prompt end (`final_prompt_end`):** the final token of the injected `FINAL:` marker.
+- **Answer tokens (`answer_tokens`):** every generated answer token.
 
-With reasoning, the last prompt token precedes the reasoning, while the final-answer marker occurs after it. In direct-answer mode, the supplied prompt ends with the injected `FINAL:` marker, so these two capture locations coincide. Answer-token activations reflect computation after answer generation has begun.
+With reasoning, `prompt_end` precedes the reasoning, while `final_prompt_end` follows the reasoning and final-answer instruction. In direct mode, the rendered prompt ends before the toolkit appends `FINAL:`, so these remain distinct positions. One-token and multi-token answers use the same capture structure.
+
+The first capture backend uses the hidden states returned by Hugging Face Transformers. It saves the embedding output and every returned layer state as float16 tensors. TransformerLens and finer component-level signals, such as individual attention heads, remain a later optional extension.
 
 These locations are candidates for informative signals, not guaranteed indicators of correctness. Training and validation determine which probes are useful; test data evaluates the frozen selection.
-
-**TODO:** Define selection for multi-token answers, whitespace and token-boundary handling, and exact layer conventions.
 
 ### Additional task-specific positions
 
@@ -67,9 +67,9 @@ For example, in a name-correction task, the name being checked may provide usefu
 
 A semantic position has a fixed **role**, not a fixed token index. Its text, location, and length may differ across examples.
 
-Users mark these locations with character spans in the original input. The toolkit maps them to tokens after prompt formatting and tokenization. If additional positions are supplied, the same span keys and semantic roles must be present across all examples.
+Users mark these locations with character spans in the original input. The planned custom-span stage will map them to tokens after prompt formatting and tokenization. If additional positions are supplied, the same span keys and semantic roles must be present across all examples.
 
-See the [dataset specification](docs/dataset-format.md#fields) for annotation fields, examples, and unresolved mapping details.
+See the [dataset specification](docs/dataset-format.md#fields) for annotation fields and examples. Mapping these custom spans to model tokens remains **TODO**.
 
 ### Response format and abstention
 
@@ -140,7 +140,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-Preparation, model loading, generation, and answer evaluation are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
+Preparation, model loading, generation, answer evaluation, and default activation capture are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -164,7 +164,7 @@ The toolkit adds the output instruction and generates responses itself. Users do
 
 ### Configure and run
 
-Fill in [configs/task.yaml](configs/task.yaml), then run preparation, generation, and answer evaluation:
+Fill in [configs/task.yaml](configs/task.yaml), then run the implemented pipeline stages:
 
 ```sh
 python -m src.run configs/task.yaml
@@ -180,20 +180,22 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 
 ```text
 <output_dir>/.cache/generations/<context_id>/...
+<output_dir>/.cache/activations/<context_id>/...
 <output_dir>/<run_id>/run.json
 <output_dir>/<run_id>/generation-manifest.jsonl
 <output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
+<output_dir>/<run_id>/activations/<capture_id>.jsonl
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, and completed stages. The manifest references shared per-example generations containing generated tokens, token log probabilities, and recoverable failures. Each evaluation file stores correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, and completed stages. The manifests reference shared per-example generations and activation tensors; evaluation files store correctness outcomes in dataset order.
 
-Interrupted generation resumes from saved work. If a dataset is extended, unchanged examples with the same ID and input reuse their cached generations; only new or modified inputs run through the model. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream evaluations and regenerate with the same pinned model revision:
+Interrupted generation and activation capture resume from saved work. If a dataset is extended, unchanged examples reuse their cached generations and activations; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute
 ```
 
-If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits with a clear shortage report. Activation capture is not implemented yet.
+If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner replays only correct and incorrect predictions, verifies their saved answer probabilities, and captures their default hidden-state positions. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again.
 
 Developers can run the tests without a model:
 

@@ -45,9 +45,15 @@ Example
 
 As explained in the [README](../README.md), probes use internal activations to estimate prediction reliability.
 
-Default captures use residual-stream activations across all layers at the last prompt token, the supplied `FINAL:` colon, and the answer position. In direct mode, the first two locations coincide.
+Default capture uses the Hugging Face hidden states at three locations:
 
-Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes.
+- `prompt_end`: the final token of the rendered chat prompt before generation.
+- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker.
+- `answer_tokens`: every generated answer token.
+
+The toolkit saves the embedding output and every returned layer state. The two prompt positions remain distinct in both generation modes, and one-token and multi-token answers use the same tensor structure.
+
+Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes. Mapping `semantic_spans` to tokens remains **TODO**.
 
 ## Validation
 
@@ -85,8 +91,8 @@ These loading functions do not run a model, print messages, or save files. The r
 
 ## Adding examples later
 
-Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse their saved generations. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
+Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse their saved generations and default activations. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
 
 Automatic splitting is recalculated for the new dataset. Supply explicit splits on every record when existing split assignments must remain fixed.
 
-**TODO:** Token alignment, multi-token captures, and exact layer conventions.
+**TODO:** Map user-provided semantic spans to formatted prompt tokens.

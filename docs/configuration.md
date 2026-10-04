@@ -45,7 +45,7 @@ V1 requires a standard Transformers text-only, decoder-only causal language mode
 
   Enabled UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-- **`generation_seed` (optional; default: `42`)** — Base seed used to derive a reproducible seed from each example ID.
+- **`generation_seed` (optional; default: `42`)** — Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 
 - **`direct_batch_size` (optional; default: `8`)** — Batch size in direct mode. Reasoning mode always processes one example at a time.
 
@@ -144,7 +144,9 @@ When `model_revision` is omitted, the model loader resolves one exact Hub commit
 
 Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
 
-Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; all downstream evaluations for that run are cleared.
+After evaluation meets the probe-readiness requirements, default activations are cached per eligible example under `<output_dir>/.cache/activations`. Each run stores an ordered manifest under `activations/<capture_id>.jsonl`. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, `final_prompt_end`, and every `answer_tokens` position. An unchanged example can reuse this work across extended datasets.
+
+Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations and activation manifests for that run are cleared.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 
