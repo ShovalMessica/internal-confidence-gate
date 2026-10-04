@@ -42,6 +42,7 @@ class TaskConfig:
     generation_seed: int = 42
     direct_batch_size: int = 8
     probe_seed: int = 42
+    target_tpr: float = 0.90
     split_ratios: SplitRatios = SplitRatios()
     split_seed: int = 42
 
@@ -221,6 +222,12 @@ def load_config(path: str | Path) -> TaskConfig:
     )
     for name, minimum in integer_fields:
         _integer(values[name], name, minimum, errors)
+
+    target_tpr = values["target_tpr"]
+    if type(target_tpr) not in (int, float) or not 0 < target_tpr <= 1:
+        errors.append("target_tpr must be a finite number greater than 0 and at most 1.")
+    else:
+        values["target_tpr"] = float(target_tpr)
 
     if type(values["allow_abstention"]) is not bool:
         errors.append("allow_abstention must be true or false.")

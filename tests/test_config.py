@@ -48,6 +48,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
         self.assertEqual(config.probe_seed, 42)
+        self.assertEqual(config.target_tpr, 0.90)
         self.assertEqual(config.split_seed, 42)
         self.assertEqual((config.split_ratios.train, config.split_ratios.validation, config.split_ratios.test), (0.7, 0.15, 0.15))
         self.assertFalse(config.output_dir.exists())
@@ -66,6 +67,7 @@ class ConfigTests(unittest.TestCase):
                       answer_max_new_tokens=16, allow_abstention=False,
                       answer_matcher_path=str(matcher),
                       generation_seed=7, direct_batch_size=4, probe_seed=11,
+                      target_tpr=0.95,
                       split_seed=0,
                       device="cuda:1", dtype="bfloat16",
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
@@ -80,6 +82,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.answer_matcher_path, matcher)
         self.assertEqual((config.generation_seed, config.direct_batch_size), (7, 4))
         self.assertEqual(config.probe_seed, 11)
+        self.assertEqual(config.target_tpr, 0.95)
         self.assertEqual(config.split_seed, 0)
         self.assertEqual(config.split_ratios.train, 0.8)
         self.assertFalse(output.exists())
@@ -107,6 +110,7 @@ class ConfigTests(unittest.TestCase):
             "generation_seed": [None, -1, True, 1.5, "42"],
             "direct_batch_size": [None, 0, -1, True, 1.5, "8"],
             "probe_seed": [None, -1, True, 1.5, "42"],
+            "target_tpr": [None, 0, -0.1, 1.01, True, "0.9", float("nan"), float("inf")],
             "split_seed": [None, -1, True, 1.5],
             "allow_abstention": [None, 1, "true"],
             "model_revision": [None, "", "  ", 1, False],

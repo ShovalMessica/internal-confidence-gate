@@ -116,7 +116,9 @@ For eligible predictions:
 
 Probe training uses mean-pooled hidden states, training-only standardization, and balanced L2 logistic regression. It saves `P(correct)` scores for train and validation while leaving test activations untouched.
 
-**TODO:** Finalize output-probability scoring, validation selection, threshold selection, and the final probe report.
+Validation then selects one probe and acceptance threshold. For each candidate, the toolkit chooses the strictest threshold that retains at least the configured fraction of correct validation predictions, then selects the candidate with the lowest validation FPR. AUROC is reported for context but does not determine the winner.
+
+**TODO:** Implement frozen test evaluation, output-probability comparison, and the final probe report.
 
 ## Requirements and limitations
 
@@ -142,7 +144,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-Preparation, model loading, generation, answer evaluation, activation capture, and linear probe training are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
+Preparation, model loading, generation, answer evaluation, activation capture, linear probe training, and validation selection are implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -189,11 +191,11 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 <output_dir>/<run_id>/probes.h5
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, probe-training summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, probe-training and selection summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
 
 `activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 
-`probes.h5` contains one candidate for every position and model state. Each probe group stores its scaler, linear model, and train/validation scores. Different answer matchers or probe seeds receive separate probe IDs inside the same file.
+`probes.h5` contains one candidate for every position and model state. Each training group stores its scaler, linear model, and train/validation scores. Validation-selection groups store every candidate's threshold, TPR, FPR, and AUROC. Different matchers, probe seeds, or target TPRs coexist inside the same file.
 
 Interrupted generation, activation capture, and probe training resume from saved work. If a dataset is extended, unchanged examples reuse cached generations and copy compatible activations from the earlier run without model work; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation and probe group from the saved generations and activations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
 
@@ -201,7 +203,7 @@ Interrupted generation, activation capture, and probe training resume from saved
 python -m src.run configs/task.yaml --force-recompute
 ```
 
-If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner captures the default and configured semantic positions, then trains every position-by-state probe. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again. The probe seed affects only probe training.
+If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner captures the default and configured semantic positions, trains every position-by-state probe, and selects one using validation data. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again. The probe seed affects only probe training, while `target_tpr` affects only validation selection.
 
 Developers can run the tests without a model:
 

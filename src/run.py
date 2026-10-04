@@ -54,7 +54,14 @@ from src.model import (
     load_model,
     load_tokenizer,
 )
-from src.probe import ProbeError, build_probe_identity, train_probes
+from src.probe import (
+    ProbeError,
+    ProbeIdentity,
+    build_probe_identity,
+    build_selection_identity,
+    select_probe,
+    train_probes,
+)
 from src.run_store import (
     RegisteredRun,
     RunStoreError,
@@ -63,6 +70,7 @@ from src.run_store import (
     complete_generation,
     complete_evaluation,
     complete_activation_capture,
+    complete_probe_selection,
     complete_probe_training,
     evaluation_artifact_path,
     finalize_generation_records,
@@ -76,6 +84,7 @@ from src.run_store import (
     validate_completed_generation,
     validate_completed_evaluation,
     validate_completed_activation_capture,
+    validate_completed_probe_selection,
     validate_completed_probe_training,
     write_evaluation_records,
 )
@@ -624,7 +633,9 @@ def _probe_progress(done: int, total: int, started: float, starting_done: int) -
     )
 
 
-def _train_probes(prepared: PreparedRun, registered: RegisteredRun) -> None:
+def _train_probes(
+    prepared: PreparedRun, registered: RegisteredRun
+) -> tuple[ProbeIdentity, str]:
     directory = registered.directory
     run_record = load_run_record(directory)
     capture = run_record.get("activation_capture")
@@ -652,7 +663,9 @@ def _train_probes(prepared: PreparedRun, registered: RegisteredRun) -> None:
     if validate_completed_probe_training(directory, run_record, identity):
         print(f"Probe training ID: {identity.probe_id}")
         print("Probe artifact: reused.")
-        return
+        return identity, run_record["probe_trainings"][identity.probe_id][
+            "content_sha256"
+        ]
 
     records = load_evaluation_records(
         directory, evaluation_identity.evaluation_id, prepared.dataset.examples
@@ -672,6 +685,49 @@ def _train_probes(prepared: PreparedRun, registered: RegisteredRun) -> None:
         )
     else:
         print("Probe training complete from stored candidates.")
+    return identity, result.content_sha256
+
+
+def _print_probe_selection(selection_id: str, summary: dict, reused: bool) -> None:
+    print(f"Probe selection ID: {selection_id}")
+    print(f"Probe selection: {'reused' if reused else 'created'}.")
+    print(
+        "Selected probe: "
+        f"{summary['position']} / {summary['state']} | "
+        f"threshold {summary['threshold']:.6f} | "
+        f"validation TPR {summary['tpr']:.4f} | "
+        f"validation FPR {summary['fpr']:.4f} | "
+        f"AUROC {summary['auroc']:.4f}"
+    )
+
+
+def _select_probe(
+    prepared: PreparedRun,
+    registered: RegisteredRun,
+    probe_identity: ProbeIdentity,
+    probe_sha256: str,
+) -> None:
+    identity = build_selection_identity(
+        probe_identity.probe_id,
+        probe_sha256,
+        prepared.config.target_tpr,
+    )
+    run_record = load_run_record(registered.directory)
+    if validate_completed_probe_selection(
+        registered.directory, run_record, probe_identity, identity
+    ):
+        summary = run_record["probe_selections"][identity.selection_id]["selected"]
+        _print_probe_selection(identity.selection_id, summary, True)
+        return
+
+    result = select_probe(registered.directory, probe_identity, identity)
+    complete_probe_selection(
+        registered.directory,
+        identity,
+        result.content_sha256,
+        result.summary,
+    )
+    _print_probe_selection(identity.selection_id, result.summary, not result.created)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -724,7 +780,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _capture_activations(
                 prepared, registered, loaded, args.force_recompute
             )
-            _train_probes(prepared, registered)
+            probe_identity, probe_sha256 = _train_probes(prepared, registered)
+            _select_probe(
+                prepared, registered, probe_identity, probe_sha256
+            )
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1
@@ -751,7 +810,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Activation storage error: {error}", file=sys.stderr)
         return 1
     except ProbeError as error:
-        print(f"Probe training error: {error}", file=sys.stderr)
+        print(f"Probe error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)

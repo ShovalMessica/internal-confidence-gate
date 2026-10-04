@@ -42,9 +42,12 @@ from src.generation_cache import (
 from src.probe import (
     PROBE_FILE,
     PROBE_PROTOCOL_VERSION,
+    SELECTION_PROTOCOL_VERSION,
     ProbeIdentity,
+    SelectionIdentity,
     probe_file_path,
     validate_probe_group,
+    validate_selection_group,
 )
 
 
@@ -749,6 +752,79 @@ def validate_completed_probe_training(
     return True
 
 
+def complete_probe_selection(
+    directory: Path,
+    identity: SelectionIdentity,
+    content_sha256: str,
+    summary: dict,
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "probe_selection" not in stages:
+        stages.append("probe_selection")
+    selections = record.setdefault("probe_selections", {})
+    if not isinstance(selections, dict):
+        raise RunStoreError("Run record has an invalid probe-selection registry.")
+    entry = {
+        "selection_id": identity.selection_id,
+        "fingerprint": identity.fingerprint,
+        "protocol_version": SELECTION_PROTOCOL_VERSION,
+        "probe_id": identity.probe_id,
+        "probe_sha256": identity.probe_sha256,
+        "target_tpr": identity.target_tpr,
+        "artifact": PROBE_FILE,
+        "group": f"selections/{identity.selection_id}",
+        "content_sha256": content_sha256,
+        "selected": summary,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    existing = selections.get(identity.selection_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Probe selection ID collision or conflicting run record.")
+    selections[identity.selection_id] = entry
+    _save_run_record(directory, record)
+
+
+def validate_completed_probe_selection(
+    directory: Path,
+    record: dict,
+    probe_identity: ProbeIdentity,
+    identity: SelectionIdentity,
+) -> bool:
+    selections = record.get("probe_selections")
+    if selections is None:
+        return False
+    if not isinstance(selections, dict):
+        raise RunStoreError("Run record has an invalid probe-selection registry.")
+    selection = selections.get(identity.selection_id)
+    if selection is None:
+        return False
+    if "probe_selection" not in record.get("completed_stages", []):
+        raise RunStoreError("Saved probe selection is missing its completed stage.")
+    if (
+        not isinstance(selection, dict)
+        or selection.get("selection_id") != identity.selection_id
+        or selection.get("fingerprint") != identity.fingerprint
+        or selection.get("protocol_version") != SELECTION_PROTOCOL_VERSION
+        or selection.get("probe_id") != identity.probe_id
+        or selection.get("probe_sha256") != identity.probe_sha256
+        or selection.get("target_tpr") != identity.target_tpr
+        or selection.get("artifact") != PROBE_FILE
+        or selection.get("group") != f"selections/{identity.selection_id}"
+        or not isinstance(selection.get("selected"), dict)
+    ):
+        raise RunStoreError("Completed probe selection is invalid.")
+    _, summary = validate_selection_group(
+        directory,
+        probe_identity,
+        identity,
+        selection.get("content_sha256"),
+    )
+    if summary != selection["selected"]:
+        raise RunStoreError("Completed probe-selection summary is invalid.")
+    return True
+
+
 def save_model_metadata(
     directory: Path, metadata: dict, provenance: dict, generation_settings: dict
 ) -> None:
@@ -820,6 +896,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("activation_captures", None)
     record.pop("probe_training", None)
     record.pop("probe_trainings", None)
+    record.pop("probe_selections", None)
     record["completed_stages"] = [
         stage
         for stage in record["completed_stages"]
@@ -828,6 +905,7 @@ def reset_generation(directory: Path) -> str | None:
             "evaluation",
             "activation_capture",
             "probe_training",
+            "probe_selection",
         )
     ]
     try:

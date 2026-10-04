@@ -77,10 +77,13 @@ class RunTests(unittest.TestCase):
             redirect_stderr(stderr),
             patch("src.run._capture_activations") as capture,
             patch("src.run._train_probes") as train_probes,
+            patch("src.run._select_probe") as select_probe,
         ):
+            train_probes.return_value = (object(), "probe-hash")
             code = main([str(path or self.config), *options])
         self.capture_mock = capture
         self.probe_mock = train_probes
+        self.selection_mock = select_probe
         return code, stdout.getvalue(), stderr.getvalue()
 
     def run_directories(self):
@@ -261,6 +264,14 @@ class RunTests(unittest.TestCase):
             probe_change.split_source,
         ).run_id
 
+        self.write_config(reasoning_max_new_tokens=999, target_tpr=0.8)
+        selection_change = prepare_run(self.config)
+        selection_id = build_run_identity(
+            selection_change.config,
+            selection_change.dataset.content_sha256,
+            selection_change.split_source,
+        ).run_id
+
         self.write_config(reasoning_max_new_tokens=999, answer_max_new_tokens=65)
         active_change = prepare_run(self.config)
         active_id = build_run_identity(
@@ -277,6 +288,7 @@ class RunTests(unittest.TestCase):
 
         self.assertEqual(first_id, inactive_id)
         self.assertEqual(first_id, probe_seed_id)
+        self.assertEqual(first_id, selection_id)
         self.assertNotEqual(first_id, active_id)
         self.assertNotEqual(active_id, data_id)
 
@@ -423,13 +435,16 @@ class RunTests(unittest.TestCase):
             ),
             patch("src.run._capture_activations") as capture,
             patch("src.run._train_probes") as train_probes,
+            patch("src.run._select_probe") as select_probe,
         ):
+            train_probes.return_value = (object(), "probe-hash")
             code = main([str(self.config)])
 
         self.assertEqual((code, stderr.getvalue()), (0, ""))
         capture.assert_called_once()
         self.assertIs(capture.call_args.args[2], loaded)
         train_probes.assert_called_once()
+        select_probe.assert_called_once()
 
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
@@ -604,7 +619,12 @@ class RunTests(unittest.TestCase):
         self.assertIn("span_1", run_record["activation_capture"]["summary"]["positions"])
         self.assertIn("span_2", run_record["activation_capture"]["summary"]["positions"])
         self.assertIn("probe_training", run_record["completed_stages"])
+        self.assertIn("probe_selection", run_record["completed_stages"])
         self.assertEqual(len(run_record["probe_trainings"]), 1)
+        self.assertEqual(len(run_record["probe_selections"]), 1)
+        selection = next(iter(run_record["probe_selections"].values()))
+        self.assertEqual(selection["target_tpr"], 0.9)
+        self.assertIn("Selected probe:", stdout.getvalue())
         self.assertEqual(next(iter(run_record["probe_trainings"].values()))["seed"], 42)
         self.assertTrue((run_directory / "probes.h5").is_file())
 

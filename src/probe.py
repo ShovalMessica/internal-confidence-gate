@@ -17,12 +17,21 @@ from src.activation_store import activation_file_path
 
 PROBE_PROTOCOL_VERSION = 1
 PROBE_STORE_SCHEMA_VERSION = 1
+SELECTION_PROTOCOL_VERSION = 1
 PROBE_FILE = "probes.h5"
 PROBE_SCORE = "probability_correct"
 TOKEN_POOLING = "mean"
 REGULARIZATION_C = 1.0
 MAX_ITERATIONS = 5_000
 SOLVER = "liblinear"
+SELECTION_METRICS = (
+    "thresholds",
+    "accepted_correct",
+    "accepted_incorrect",
+    "tpr",
+    "fpr",
+    "auroc",
+)
 
 
 class ProbeError(ValueError):
@@ -44,6 +53,22 @@ class ProbeTrainingResult:
     summary: dict
     starting_candidates: int
     trained_candidates: int
+
+
+@dataclass(frozen=True)
+class SelectionIdentity:
+    selection_id: str
+    fingerprint: str
+    probe_id: str
+    probe_sha256: str
+    target_tpr: float
+
+
+@dataclass(frozen=True)
+class ProbeSelectionResult:
+    content_sha256: str
+    summary: dict
+    created: bool
 
 
 @dataclass(frozen=True)
@@ -106,6 +131,22 @@ def build_probe_identity(
     fingerprint = hashlib.sha256(_encoded(payload)).hexdigest()
     return ProbeIdentity(
         fingerprint[:12], fingerprint, activation_sha256, evaluation_sha256, seed
+    )
+
+
+def build_selection_identity(
+    probe_id: str, probe_sha256: str, target_tpr: float
+) -> SelectionIdentity:
+    """Identify validation selection independently from probe training."""
+    payload = {
+        "protocol_version": SELECTION_PROTOCOL_VERSION,
+        "probe_id": probe_id,
+        "probe_sha256": probe_sha256,
+        "target_tpr": target_tpr,
+    }
+    fingerprint = hashlib.sha256(_encoded(payload)).hexdigest()
+    return SelectionIdentity(
+        fingerprint[:12], fingerprint, probe_id, probe_sha256, target_tpr
     )
 
 
@@ -247,6 +288,14 @@ def _root(source) -> object:
     ):
         raise ProbeError(f"Probe artifact has an invalid structure: {source.filename}")
     return source["trainings"]
+
+
+def _selections(source, *, create: bool = False):
+    if "selections" in source:
+        return source["selections"]
+    if create:
+        return source.create_group("selections")
+    return None
 
 
 def _create_training(group, identity: ProbeIdentity, data: _ProbeData) -> None:
@@ -599,6 +648,287 @@ def validate_probe_group(
         raise
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ProbeError(f"Probe artifact is invalid: {path}") from exc
+
+
+def _candidate_metrics(
+    scores: np.ndarray, labels: np.ndarray, target_tpr: float
+) -> tuple[float, int, int, float, float, float]:
+    if (
+        scores.ndim != 1
+        or scores.shape != labels.shape
+        or not np.isfinite(scores).all()
+        or np.any((scores < 0) | (scores > 1))
+        or set(labels.tolist()) != {0, 1}
+    ):
+        raise ProbeError("Validation probe scores or labels are invalid.")
+    correct = scores[labels == 1]
+    incorrect = scores[labels == 0]
+    threshold = next(
+        value
+        for value in np.unique(correct)[::-1]
+        if np.count_nonzero(correct >= value) / correct.size >= target_tpr
+    )
+    accepted_correct = int(np.count_nonzero(correct >= threshold))
+    accepted_incorrect = int(np.count_nonzero(incorrect >= threshold))
+    try:
+        from sklearn.metrics import roc_auc_score
+    except ImportError as exc:
+        raise ProbeError(
+            "Probe selection is unavailable; install requirements.txt."
+        ) from exc
+    return (
+        float(threshold),
+        accepted_correct,
+        accepted_incorrect,
+        accepted_correct / correct.size,
+        accepted_incorrect / incorrect.size,
+        float(roc_auc_score(labels, scores)),
+    )
+
+
+def _selection_summary(group) -> dict[str, object]:
+    return {
+        "target_tpr": float(group.attrs["target_tpr"]),
+        "position": str(group.attrs["selected_position"]),
+        "position_index": int(group.attrs["selected_position_index"]),
+        "state": str(group.attrs["selected_state"]),
+        "state_index": int(group.attrs["selected_state_index"]),
+        "threshold": float(group.attrs["selected_threshold"]),
+        "tpr": float(group.attrs["selected_tpr"]),
+        "fpr": float(group.attrs["selected_fpr"]),
+        "auroc": float(group.attrs["selected_auroc"]),
+        "accepted_correct": int(group.attrs["selected_accepted_correct"]),
+        "total_correct": int(group.attrs["total_correct"]),
+        "accepted_incorrect": int(group.attrs["selected_accepted_incorrect"]),
+        "total_incorrect": int(group.attrs["total_incorrect"]),
+    }
+
+
+def _selection_sha256(group) -> str:
+    if not bool(group.attrs.get("completed", False)):
+        raise ProbeError("Cannot hash incomplete probe selection.")
+    digest = hashlib.sha256()
+    metadata_names = (
+        "fingerprint",
+        "probe_id",
+        "probe_sha256",
+        "protocol_version",
+        "target_tpr",
+        "positions",
+        "state_labels",
+        "selected_position",
+        "selected_position_index",
+        "selected_state",
+        "selected_state_index",
+        "selected_threshold",
+        "selected_tpr",
+        "selected_fpr",
+        "selected_auroc",
+        "selected_accepted_correct",
+        "selected_accepted_incorrect",
+        "total_correct",
+        "total_incorrect",
+    )
+    metadata = {}
+    for name in metadata_names:
+        value = group.attrs[name]
+        metadata[name] = value.item() if isinstance(value, np.generic) else value
+    digest.update(_encoded(metadata))
+    for name in sorted(group.keys()):
+        values = np.asarray(group[name][...])
+        digest.update(name.encode("utf-8"))
+        digest.update(str(values.dtype).encode("ascii"))
+        digest.update(_encoded(values.shape))
+        digest.update(values.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _validate_selection_layout(group, identity: SelectionIdentity) -> None:
+    expected = {
+        "fingerprint": identity.fingerprint,
+        "probe_id": identity.probe_id,
+        "probe_sha256": identity.probe_sha256,
+        "protocol_version": SELECTION_PROTOCOL_VERSION,
+        "target_tpr": identity.target_tpr,
+    }
+    if any(group.attrs.get(name) != value for name, value in expected.items()):
+        raise ProbeError(f"Probe selection is incompatible: {identity.selection_id}")
+    positions = tuple(_json_attr(group, "positions"))
+    states = tuple(_json_attr(group, "state_labels"))
+    shape = (len(positions), len(states))
+    arrays = {
+        "thresholds": "float64",
+        "accepted_correct": "int64",
+        "accepted_incorrect": "int64",
+        "tpr": "float64",
+        "fpr": "float64",
+        "auroc": "float64",
+    }
+    if not positions or not states or set(group.keys()) != set(arrays):
+        raise ProbeError(f"Probe selection is incomplete: {identity.selection_id}")
+    for name, dtype in arrays.items():
+        if group[name].shape != shape or group[name].dtype.name != dtype:
+            raise ProbeError(
+                f"Probe selection has invalid '{name}': {identity.selection_id}"
+            )
+    for name in ("thresholds", "tpr", "fpr", "auroc"):
+        values = group[name][...]
+        if not np.isfinite(values).all() or np.any((values < 0) | (values > 1)):
+            raise ProbeError(
+                f"Probe selection has invalid '{name}': {identity.selection_id}"
+            )
+    position_index = int(group.attrs.get("selected_position_index", -1))
+    state_index = int(group.attrs.get("selected_state_index", -1))
+    if (
+        not bool(group.attrs.get("completed", False))
+        or not 0 <= position_index < len(positions)
+        or not 0 <= state_index < len(states)
+        or group.attrs.get("selected_position") != positions[position_index]
+        or group.attrs.get("selected_state") != states[state_index]
+    ):
+        raise ProbeError(f"Probe selection winner is invalid: {identity.selection_id}")
+    selected = (position_index, state_index)
+    expected_values = {
+        "selected_threshold": float(group["thresholds"][selected]),
+        "selected_accepted_correct": int(group["accepted_correct"][selected]),
+        "selected_accepted_incorrect": int(group["accepted_incorrect"][selected]),
+        "selected_tpr": float(group["tpr"][selected]),
+        "selected_fpr": float(group["fpr"][selected]),
+        "selected_auroc": float(group["auroc"][selected]),
+    }
+    if any(group.attrs.get(name) != value for name, value in expected_values.items()):
+        raise ProbeError(f"Probe selection summary is invalid: {identity.selection_id}")
+
+
+def validate_selection_group(
+    run_directory: Path,
+    probe_identity: ProbeIdentity,
+    identity: SelectionIdentity,
+    expected_sha256: str | None = None,
+) -> tuple[str, dict]:
+    """Validate a completed validation selection and its source probes."""
+    validate_probe_group(run_directory, probe_identity, identity.probe_sha256)
+    path = probe_file_path(run_directory)
+    try:
+        with _open(path, "r") as source:
+            selections = _selections(source)
+            if selections is None or identity.selection_id not in selections:
+                raise ProbeError(f"Probe selection is missing: {identity.selection_id}")
+            group = selections[identity.selection_id]
+            _validate_selection_layout(group, identity)
+            content_hash = _selection_sha256(group)
+            if expected_sha256 is not None and content_hash != expected_sha256:
+                raise ProbeError(
+                    f"Completed probe selection has changed: {identity.selection_id}"
+                )
+            return content_hash, _selection_summary(group)
+    except ProbeError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ProbeError(f"Probe artifact is invalid: {path}") from exc
+
+
+def select_probe(
+    run_directory: Path,
+    probe_identity: ProbeIdentity,
+    identity: SelectionIdentity,
+) -> ProbeSelectionResult:
+    """Select one candidate and threshold using validation scores only."""
+    validate_probe_group(run_directory, probe_identity, identity.probe_sha256)
+    path = probe_file_path(run_directory)
+    try:
+        with _open(path, "a") as output:
+            trainings = _root(output)
+            training = trainings[probe_identity.probe_id]
+            selections = _selections(output, create=True)
+            if identity.selection_id in selections:
+                group = selections[identity.selection_id]
+                _validate_selection_layout(group, identity)
+                return ProbeSelectionResult(
+                    _selection_sha256(group), _selection_summary(group), False
+                )
+
+            positions = tuple(_json_attr(training, "positions"))
+            states = tuple(_json_attr(training, "state_labels"))
+            labels = np.asarray(training["validation_labels"][...], dtype=np.int8)
+            shape = (len(positions), len(states))
+            metrics = {
+                "thresholds": np.empty(shape, dtype=np.float64),
+                "accepted_correct": np.empty(shape, dtype=np.int64),
+                "accepted_incorrect": np.empty(shape, dtype=np.int64),
+                "tpr": np.empty(shape, dtype=np.float64),
+                "fpr": np.empty(shape, dtype=np.float64),
+                "auroc": np.empty(shape, dtype=np.float64),
+            }
+            for position_index, position in enumerate(positions):
+                scores_by_state = training["position_models"][position][
+                    "validation_scores"
+                ]
+                for state_index in range(len(states)):
+                    values = _candidate_metrics(
+                        np.asarray(scores_by_state[state_index, :]),
+                        labels,
+                        identity.target_tpr,
+                    )
+                    for name, value in zip(SELECTION_METRICS, values):
+                        metrics[name][position_index, state_index] = value
+
+            winner = min(
+                (
+                    float(metrics["fpr"][position_index, state_index]),
+                    position,
+                    state_index,
+                    position_index,
+                )
+                for position_index, position in enumerate(positions)
+                for state_index in range(len(states))
+            )
+            _, position, state_index, position_index = winner
+            pending_name = f"_pending_{identity.selection_id}"
+            if pending_name in selections:
+                del selections[pending_name]
+            group = selections.create_group(pending_name)
+            group.attrs["fingerprint"] = identity.fingerprint
+            group.attrs["probe_id"] = identity.probe_id
+            group.attrs["probe_sha256"] = identity.probe_sha256
+            group.attrs["protocol_version"] = SELECTION_PROTOCOL_VERSION
+            group.attrs["target_tpr"] = identity.target_tpr
+            group.attrs["positions"] = json.dumps(positions)
+            group.attrs["state_labels"] = json.dumps(states)
+            group.attrs["selected_position"] = position
+            group.attrs["selected_position_index"] = position_index
+            group.attrs["selected_state"] = states[state_index]
+            group.attrs["selected_state_index"] = state_index
+            for name, values in metrics.items():
+                group.create_dataset(name, data=values)
+            group.attrs["selected_threshold"] = metrics["thresholds"][
+                position_index, state_index
+            ]
+            group.attrs["selected_tpr"] = metrics["tpr"][position_index, state_index]
+            group.attrs["selected_fpr"] = metrics["fpr"][position_index, state_index]
+            group.attrs["selected_auroc"] = metrics["auroc"][
+                position_index, state_index
+            ]
+            group.attrs["selected_accepted_correct"] = metrics[
+                "accepted_correct"
+            ][position_index, state_index]
+            group.attrs["selected_accepted_incorrect"] = metrics[
+                "accepted_incorrect"
+            ][position_index, state_index]
+            group.attrs["total_correct"] = int(np.count_nonzero(labels == 1))
+            group.attrs["total_incorrect"] = int(np.count_nonzero(labels == 0))
+            group.attrs["completed"] = True
+            output.flush()
+            selections.move(pending_name, identity.selection_id)
+            output.flush()
+            completed = selections[identity.selection_id]
+            return ProbeSelectionResult(
+                _selection_sha256(completed), _selection_summary(completed), True
+            )
+    except ProbeError:
+        raise
+    except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+        raise ProbeError(f"Cannot select or save probe: {path}") from exc
 
 
 def train_probes(

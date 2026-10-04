@@ -20,6 +20,7 @@ allow_abstention: true
 generation_seed: 42
 direct_batch_size: 8       # Used only in direct mode
 probe_seed: 42
+target_tpr: 0.90           # Retain at least this fraction of correct validation predictions
 
 # Used only when the dataset omits split assignments.
 split_ratios:
