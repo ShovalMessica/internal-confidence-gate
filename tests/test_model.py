@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.config import TaskConfig
-from src.model import ModelLoadError, load_model
+from src.model import ModelLoadError, load_model, load_tokenizer
 
 
 class _Cuda:
@@ -106,6 +106,22 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.resolved_dtype, "float16")
         self.assertTrue(loaded.model.eval_called)
         self.assertEqual(loaded.tokenizer.pad_token, "</s>")
+
+    def test_tokenizer_can_load_without_weights_and_be_reused(self):
+        dependencies = self.dependencies()
+        with patch("src.model._dependencies", return_value=dependencies):
+            tokenizer = load_tokenizer(
+                self.config(), pinned_revision="resolved-commit"
+            )
+            loaded = load_model(
+                self.config(),
+                pinned_revision="resolved-commit",
+                tokenizer=tokenizer,
+            )
+
+        self.assertIs(loaded.tokenizer, tokenizer)
+        dependencies[3].from_pretrained.assert_called_once()
+        dependencies[2].from_pretrained.assert_called_once()
 
     def test_forwards_requested_revision_and_explicit_loading_settings(self):
         config = self.config(

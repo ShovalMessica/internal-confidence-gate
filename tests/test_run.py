@@ -8,18 +8,23 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import torch
 import yaml
 
-from src.activation import ActivationResult
-from src.run import main, prepare_run
+from src.activation import ActivationError, ActivationResult
+from src.config import TaskConfig
+from src.run import _capture_activations, main, prepare_run
 from src.generation import (
+    ALLOW_ABSTENTION_INSTRUCTION,
+    ANSWER_INSTRUCTION,
     GENERATION_PROTOCOL_VERSION,
     GENERATION_RECORD_SCHEMA_VERSION,
     GenerationUnit,
+    render_initial_prompt,
 )
 from src.run_store import build_run_identity
 
@@ -479,6 +484,184 @@ class RunTests(unittest.TestCase):
         self.assertIn("Activation artifact: reused (model not loaded).", stdout.getvalue())
         load_model.assert_not_called()
         capture.assert_not_called()
+
+    def test_semantic_spans_are_captured_and_completed_run_skips_loading(self):
+        class FastTokenizer:
+            is_fast = True
+
+            @staticmethod
+            def _ids(text):
+                return [ord(character) + 10 for character in text]
+
+            def apply_chat_template(
+                self, messages, tokenize, add_generation_prompt, enable_thinking
+            ):
+                rendered = f"<user>{messages[0]['content']}</user><assistant>"
+                return self._ids(rendered) if tokenize else rendered
+
+            def __call__(self, text, add_special_tokens, return_offsets_mapping):
+                return {
+                    "input_ids": self._ids(text),
+                    "offset_mapping": [
+                        (index, index + 1) for index in range(len(text))
+                    ],
+                }
+
+        records = []
+        dataset = []
+        tokenizer = FastTokenizer()
+        instruction = f"{ANSWER_INSTRUCTION}\n{ALLOW_ABSTENTION_INSTRUCTION}"
+        for index in range(700):
+            record = self.record(index)
+            record["semantic_spans"] = {
+                "span_1": {
+                    "start_char": len("Classify example "),
+                    "end_char": len(record["input"]) - 1,
+                },
+                "span_2": {"start_char": 0, "end_char": len("Classify")},
+            }
+            dataset.append(record)
+        self.write_dataset(dataset)
+        self.write_config()
+        prepared = prepare_run(self.config)
+        for generation in self.probe_ready_generation_records(
+            prepared.dataset.examples
+        ):
+            example = prepared.dataset.examples[generation["id"]]
+            generation["formatted_prompt_token_ids"] = render_initial_prompt(
+                tokenizer,
+                example["input"],
+                instruction,
+                reasoning=False,
+            )
+            generation["formatted_prompt_tokens"] = len(
+                generation["formatted_prompt_token_ids"]
+            )
+            generation["final_control"]["answer_instruction"] = instruction
+            records.append(generation)
+
+        loaded = SimpleNamespace(tokenizer=tokenizer)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "FastTokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+
+        def captured(_loaded, plan):
+            tensors = {
+                name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
+                for name, positions in plan.positions.items()
+            }
+            return ActivationResult(
+                tensors, ("embedding", "hidden_state_1"), 0.0
+            )
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            patch("src.run.load_model", return_value=loaded) as load_model,
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(tuple(records)),)),
+            ),
+            patch("src.run.capture_hidden_states", side_effect=captured) as capture,
+        ):
+            first_code = main([str(self.config)])
+
+        self.assertEqual((first_code, stderr.getvalue()), (0, ""))
+        self.assertEqual(capture.call_count, 700)
+        load_model.assert_called_once()
+        run_directory = self.run_directories()[0]
+        import h5py
+
+        with h5py.File(run_directory / "activations.h5", "r") as source:
+            self.assertEqual(source["examples/0/span_1"].shape, (2, 1, 3))
+            self.assertEqual(source["examples/699/span_1"].shape, (2, 3, 3))
+            self.assertEqual(source["examples/0/span_2"].shape, (2, 8, 3))
+        run_record = json.loads(
+            (run_directory / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("span_1", run_record["activation_capture"]["summary"]["positions"])
+        self.assertIn("span_2", run_record["activation_capture"]["summary"]["positions"])
+
+        with (
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+            patch("src.run.load_model") as load_model,
+            patch("src.run.load_tokenizer") as load_tokenizer,
+            patch("src.run.capture_hidden_states") as capture,
+        ):
+            second_code = main([str(self.config)])
+        self.assertEqual(second_code, 0)
+        load_model.assert_not_called()
+        load_tokenizer.assert_not_called()
+        capture.assert_not_called()
+
+    def test_semantic_mapping_failure_precedes_activation_file_writes(self):
+        run_directory = self.root / "run"
+        run_directory.mkdir()
+        config = TaskConfig(
+            model_name_or_path="organization/model",
+            dataset_path=self.dataset,
+            reasoning_mode="direct",
+            output_dir=self.root,
+        )
+        example = {
+            "id": 1,
+            "input": "target",
+            "target_answer": "Positive",
+            "split": "train",
+            "semantic_spans": {
+                "span_1": {"start_char": 0, "end_char": 6},
+            },
+        }
+        prepared = SimpleNamespace(
+            config=config,
+            dataset=SimpleNamespace(examples=[example]),
+            answer_matcher=object(),
+        )
+        registered = SimpleNamespace(directory=run_directory)
+        generation = self.generation_record(example, "Positive")
+        generation["final_control"]["answer_instruction"] = "final instruction"
+        run_record = {
+            "generation": {"artifact_sha256": "g" * 64},
+            "model": {
+                "identifier": "organization/model",
+                "resolved_revision": "commit",
+            },
+        }
+        slow_tokenizer = SimpleNamespace(is_fast=False)
+
+        with (
+            patch("src.run.load_run_record", return_value=run_record),
+            patch(
+                "src.run.build_evaluation_identity",
+                return_value=SimpleNamespace(evaluation_id="evaluation"),
+            ),
+            patch(
+                "src.run.load_evaluation_records",
+                return_value={1: {"outcome": "correct"}},
+            ),
+            patch("src.run.validate_completed_activation_capture", return_value=False),
+            patch(
+                "src.run.load_generation_records",
+                return_value=({1: generation}, False),
+            ),
+            patch("src.run.load_tokenizer", return_value=slow_tokenizer),
+            patch("src.run.load_activation_records") as load_records,
+        ):
+            with self.assertRaisesRegex(ActivationError, "fast tokenizer"):
+                _capture_activations(prepared, registered, None, False)
+
+        load_records.assert_not_called()
+        self.assertFalse((run_directory / "activations.h5").exists())
 
     def test_force_recompute_uses_recorded_revision(self):
         self.write_dataset(self.record(index) for index in range(700))

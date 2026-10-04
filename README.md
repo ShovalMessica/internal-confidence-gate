@@ -67,9 +67,9 @@ For example, in a name-correction task, the name being checked may provide usefu
 
 A semantic position has a fixed **role**, not a fixed token index. Its text, location, and length may differ across examples.
 
-Users mark these locations with character spans in the original input. The planned custom-span stage will map them to tokens after prompt formatting and tokenization. If additional positions are supplied, the same span keys and semantic roles must be present across all examples.
+Users mark these locations with character spans in the original input. The toolkit maps each span to every overlapping token in the exact rendered prompt and captures those tokens across all hidden-state layers. This requires a fast Hugging Face tokenizer. If additional positions are supplied, the same span keys and semantic roles must be present across all examples.
 
-See the [dataset specification](docs/dataset-format.md#fields) for annotation fields and examples. Mapping these custom spans to model tokens remains **TODO**.
+See the [dataset specification](docs/dataset-format.md#fields) for annotation fields and examples.
 
 ### Response format and abstention
 
@@ -188,7 +188,7 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 
 The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
 
-`activations.h5` is one HDF5 file containing every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, and `answer_tokens` tensors across the embedding output and all returned model layers.
+`activations.h5` is one HDF5 file containing every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 
 Interrupted generation and activation capture resume from saved work. If a dataset is extended, unchanged examples reuse cached generations and copy compatible activations from the earlier run without model work; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
 
@@ -196,7 +196,7 @@ Interrupted generation and activation capture resume from saved work. If a datas
 python -m src.run configs/task.yaml --force-recompute
 ```
 
-If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner replays only correct and incorrect predictions, verifies their saved answer probabilities, and captures their default hidden-state positions. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again.
+If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner replays only correct and incorrect predictions, verifies their saved answer probabilities, and captures the default and configured semantic positions. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again.
 
 Developers can run the tests without a model:
 

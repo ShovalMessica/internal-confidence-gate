@@ -13,18 +13,21 @@ from src.activation import (
     ActivationError,
     build_replay_plan,
     capture_hidden_states,
+    map_semantic_spans,
 )
 from src.activation_store import (
     activation_file_path,
     append_activation_record,
     build_activation_context,
     build_activation_identity,
+    build_capture_request_fingerprint,
     finalize_activation_file,
     load_activation_records,
     reuse_activation_records,
 )
 from src.config import TaskConfig
 from src.generation_cache import build_generation_context
+from src.generation import REASONING_INSTRUCTION, render_initial_prompt
 from src.model import LoadedModel
 
 
@@ -88,7 +91,134 @@ def _loaded(model):
     return LoadedModel(model, object(), "cpu", "float32", "commit")
 
 
+class _SpanTokenizer:
+    is_fast = True
+
+    @staticmethod
+    def _tokens(text):
+        return [text[index:index + 2] for index in range(0, len(text), 2)]
+
+    @classmethod
+    def _ids(cls, text):
+        return [sum(map(ord, token)) for token in cls._tokens(text)]
+
+    def apply_chat_template(
+        self, messages, tokenize, add_generation_prompt, enable_thinking
+    ):
+        rendered = f"<user>{messages[0]['content']}</user><assistant>"
+        return self._ids(rendered) if tokenize else rendered
+
+    def __call__(self, text, add_special_tokens, return_offsets_mapping):
+        offsets = [
+            (index, min(index + 2, len(text)))
+            for index in range(0, len(text), 2)
+        ]
+        return {"input_ids": self._ids(text), "offset_mapping": offsets}
+
+
+class _NoOffsetTokenizer(_SpanTokenizer):
+    def __call__(self, text, add_special_tokens, return_offsets_mapping):
+        token_ids = self._ids(text)
+        return {
+            "input_ids": token_ids,
+            "offset_mapping": [(0, 0)] * len(token_ids),
+        }
+
+
+class _DuplicatingTokenizer(_SpanTokenizer):
+    def apply_chat_template(
+        self, messages, tokenize, add_generation_prompt, enable_thinking
+    ):
+        content = messages[0]["content"]
+        rendered = f"<user>{content}{content}</user><assistant>"
+        return self._ids(rendered) if tokenize else rendered
+
+
+def _generation_for_spans(tokenizer, task_input, *, reasoning=False):
+    record = _generation(reasoning=reasoning)
+    instruction = REASONING_INSTRUCTION if reasoning else "final instruction"
+    record["formatted_prompt_token_ids"] = render_initial_prompt(
+        tokenizer,
+        task_input,
+        instruction,
+        reasoning=reasoning,
+    )
+    record["final_control"]["answer_instruction"] = "final instruction"
+    return record
+
+
 class ActivationTests(unittest.TestCase):
+    def test_semantic_spans_map_unicode_and_overlapping_tokens(self):
+        tokenizer = _SpanTokenizer()
+        task_input = "Ask José now"
+        generation = _generation_for_spans(tokenizer, task_input)
+        example = {
+            "id": 7,
+            "input": task_input,
+            "semantic_spans": {
+                "span_1": {"start_char": 4, "end_char": 8},
+                "span_2": {"start_char": 5, "end_char": 6},
+            },
+        }
+
+        mapped = map_semantic_spans(tokenizer, example, generation)
+        plan = build_replay_plan(generation, mapped)
+
+        self.assertGreaterEqual(len(mapped["span_1"]), 2)
+        self.assertEqual(len(mapped["span_2"]), 1)
+        self.assertIn(mapped["span_2"][0], mapped["span_1"])
+        self.assertEqual(plan.positions["span_1"], mapped["span_1"])
+
+    def test_reasoning_semantic_span_uses_initial_reasoning_prompt(self):
+        tokenizer = _SpanTokenizer()
+        task_input = "Use evidence here"
+        generation = _generation_for_spans(tokenizer, task_input, reasoning=True)
+        example = {
+            "id": 8,
+            "input": task_input,
+            "semantic_spans": {
+                "span_1": {"start_char": 4, "end_char": 12},
+            },
+        }
+
+        mapped = map_semantic_spans(tokenizer, example, generation)
+
+        self.assertTrue(mapped["span_1"])
+
+    def test_semantic_span_mapping_rejects_unsupported_or_changed_prompts(self):
+        tokenizer = _SpanTokenizer()
+        example = {
+            "id": 9,
+            "input": "target",
+            "semantic_spans": {
+                "span_1": {"start_char": 0, "end_char": 6},
+            },
+        }
+        generation = _generation_for_spans(tokenizer, example["input"])
+
+        tokenizer.is_fast = False
+        with self.assertRaisesRegex(ActivationError, "fast tokenizer"):
+            map_semantic_spans(tokenizer, example, generation)
+        tokenizer.is_fast = True
+
+        generation["formatted_prompt_token_ids"] = [999]
+        with self.assertRaisesRegex(ActivationError, "does not match"):
+            map_semantic_spans(tokenizer, example, generation)
+
+        tokenizer = _DuplicatingTokenizer()
+        generation = _generation_for_spans(tokenizer, example["input"])
+        with self.assertRaisesRegex(ActivationError, "exactly once"):
+            map_semantic_spans(tokenizer, example, generation)
+
+        tokenizer = _NoOffsetTokenizer()
+        generation = _generation_for_spans(tokenizer, example["input"])
+        example["semantic_spans"]["span_1"] = {
+            "start_char": 0,
+            "end_char": 1,
+        }
+        with self.assertRaisesRegex(ActivationError, "maps to no prompt tokens"):
+            map_semantic_spans(tokenizer, example, generation)
+
     def test_direct_replay_positions_and_single_token_shape(self):
         plan = build_replay_plan(_generation())
         self.assertEqual(plan.token_ids, (1, 2, 3, 4, 5))
@@ -160,12 +290,13 @@ class ActivationTests(unittest.TestCase):
                 "transformers_version": "test",
             }
             context = build_activation_context(config, generation_context, metadata)
-            plan = build_replay_plan(_generation())
+            plan = build_replay_plan(_generation(), {"span_1": (0,)})
             model = _ReplayModel(plan.positions["answer_tokens"], plan.answer_token_ids)
             result = capture_hidden_states(_loaded(model), plan)
             example = {"id": 1, "input": "task", "split": "train"}
             second_plan = build_replay_plan(
-                _generation(reasoning=True, answer_ids=(5, 6))
+                _generation(reasoning=True, answer_ids=(5, 6)),
+                {"span_1": (0,)},
             )
             second_model = _ReplayModel(
                 second_plan.positions["answer_tokens"], second_plan.answer_token_ids
@@ -179,7 +310,12 @@ class ActivationTests(unittest.TestCase):
 
             first_run = output / "first"
             first_run.mkdir()
-            first_identity = build_activation_identity(context, "g" * 64)
+            request_fingerprint = build_capture_request_fingerprint(
+                [example, second_example]
+            )
+            first_identity = build_activation_identity(
+                context, "g" * 64, request_fingerprint
+            )
             stored = append_activation_record(
                 first_run,
                 first_identity,
@@ -218,6 +354,7 @@ class ActivationTests(unittest.TestCase):
                     source["examples/2/answer_tokens"].shape,
                     (3, 2, 4),
                 )
+                self.assertEqual(source["examples/1/span_1"].shape, (3, 1, 4))
 
             artifact_hash = finalize_activation_file(
                 first_run, first_identity, context, expected, records
@@ -238,7 +375,9 @@ class ActivationTests(unittest.TestCase):
 
             second_run = output / "second"
             second_run.mkdir()
-            second_identity = build_activation_identity(context, "h" * 64)
+            second_identity = build_activation_identity(
+                context, "h" * 64, request_fingerprint
+            )
             reused = reuse_activation_records(
                 output,
                 second_run,
@@ -253,6 +392,26 @@ class ActivationTests(unittest.TestCase):
             )
             self.assertEqual(set(copied), {1, 2})
             self.assertEqual(set(second_run.iterdir()), {activation_file_path(second_run)})
+
+            changed_run = output / "changed"
+            changed_run.mkdir()
+            changed_plan = build_replay_plan(_generation(), {"span_1": (1,)})
+            changed_expected = {
+                1: (example, "a" * 64, changed_plan),
+                2: (second_example, "b" * 64, second_plan),
+            }
+            changed_identity = build_activation_identity(
+                context, "i" * 64, "changed-request"
+            )
+            reused = reuse_activation_records(
+                output,
+                changed_run,
+                changed_identity,
+                context,
+                changed_expected,
+                set(),
+            )
+            self.assertEqual(set(reused), {2})
 
 
 if __name__ == "__main__":

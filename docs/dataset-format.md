@@ -53,7 +53,11 @@ Default capture uses the Hugging Face hidden states at three locations:
 
 The toolkit saves the embedding output and every returned layer state. The two prompt positions remain distinct in both generation modes, and one-token and multi-token answers use the same tensor structure.
 
-Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes. Mapping `semantic_spans` to tokens remains **TODO**.
+Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes.
+
+For each correct or incorrect prediction, the toolkit renders the exact initial chat prompt and maps each character span to every overlapping prompt token. One-token spans retain a token dimension of one; multi-token spans preserve every token. Toolkit instructions and special tokens cannot belong to these spans because their offsets are outside the original `input`.
+
+Semantic spans require a fast Hugging Face tokenizer with character-offset support. Before writing activations, the toolkit verifies that rendering reproduces the saved prompt tokens and that every span maps to at least one token. A mapping failure stops activation capture and reports the example ID and span name.
 
 ## Validation
 
@@ -91,8 +95,6 @@ These loading functions do not run a model, print messages, or save files. The r
 
 ## Adding examples later
 
-Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse saved generations and copy compatible default activations into the new run's single activation file. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
+Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse saved generations and copy compatible activations into the new run's single activation file. Changing only semantic-span offsets reuses generation but recaptures the affected activations. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
 
 Automatic splitting is recalculated for the new dataset. Supply explicit splits on every record when existing split assignments must remain fixed.
-
-**TODO:** Map user-provided semantic spans to formatted prompt tokens.

@@ -8,13 +8,18 @@ import json
 import math
 from typing import Any, Mapping, Sequence
 
+from src.generation import (
+    REASONING_INSTRUCTION,
+    initial_prompt_content,
+    render_initial_prompt,
+)
 from src.model import LoadedModel
 
 
-ACTIVATION_PROTOCOL_VERSION = 1
+ACTIVATION_PROTOCOL_VERSION = 2
 ACTIVATION_SCHEMA_VERSION = 1
 CAPTURE_BACKEND = "transformers_hidden_states"
-POSITION_PROTOCOL = "default_positions_v1"
+POSITION_PROTOCOL = "semantic_spans_v1"
 STORAGE_DTYPE = "float16"
 REPLAY_ATOL = 0.01
 REPLAY_RTOL = 0.002
@@ -53,7 +58,10 @@ def _sequence_hash(token_ids: Sequence[int]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def build_replay_plan(generation: Mapping[str, object]) -> ReplayPlan:
+def build_replay_plan(
+    generation: Mapping[str, object],
+    semantic_positions: Mapping[str, Sequence[int]] | None = None,
+) -> ReplayPlan:
     """Build exact replay tokens and default capture positions without retokenizing."""
     if generation.get("status") != "success":
         raise ActivationError("Activation capture requires a successful generation.")
@@ -113,6 +121,17 @@ def build_replay_plan(generation: Mapping[str, object]) -> ReplayPlan:
         "final_prompt_end": (marker_end,),
         "answer_tokens": tuple(range(answer_start, answer_start + len(answer_ids))),
     }
+    for name, raw_positions in (semantic_positions or {}).items():
+        selected = tuple(raw_positions)
+        if (
+            name in positions
+            or not selected
+            or any(type(position) is not int or not 0 <= position < len(prompt)
+                   for position in selected)
+            or tuple(sorted(set(selected))) != selected
+        ):
+            raise ActivationError(f"Semantic token positions for '{name}' are invalid.")
+        positions[name] = selected
     return ReplayPlan(
         token_ids=token_ids,
         positions=positions,
@@ -120,6 +139,116 @@ def build_replay_plan(generation: Mapping[str, object]) -> ReplayPlan:
         answer_token_logprobs=answer_logprobs,
         replay_sha256=_sequence_hash(token_ids),
     )
+
+
+def map_semantic_spans(
+    tokenizer: Any,
+    example: Mapping[str, object],
+    generation: Mapping[str, object],
+) -> dict[str, tuple[int, ...]]:
+    """Map input character spans to exact positions in the saved initial prompt."""
+    spans = example.get("semantic_spans", {})
+    if not spans:
+        return {}
+    example_id = example.get("id")
+    if not bool(getattr(tokenizer, "is_fast", False)):
+        raise ActivationError(
+            f"Example ID {example_id}: semantic spans require a fast tokenizer."
+        )
+    task_input = example.get("input")
+    control = generation.get("final_control")
+    if not isinstance(task_input, str) or not isinstance(control, dict):
+        raise ActivationError(
+            f"Example ID {example_id}: semantic span mapping inputs are invalid."
+        )
+    reasoning = generation.get("reasoning") is not None
+    instruction = (
+        REASONING_INSTRUCTION if reasoning else control.get("answer_instruction")
+    )
+    if not isinstance(instruction, str):
+        raise ActivationError(
+            f"Example ID {example_id}: initial prompt instruction is unavailable."
+        )
+    content = initial_prompt_content(task_input, instruction)
+    try:
+        rendered = render_initial_prompt(
+            tokenizer,
+            task_input,
+            instruction,
+            reasoning=reasoning,
+            tokenize=False,
+        )
+    except ValueError as exc:
+        raise ActivationError(f"Example ID {example_id}: {exc}") from exc
+    if rendered.count(content) != 1:
+        raise ActivationError(
+            f"Example ID {example_id}: the chat template must preserve the input "
+            "exactly once for semantic span mapping."
+        )
+    try:
+        encoded = tokenizer(
+            rendered,
+            add_special_tokens=False,
+            return_offsets_mapping=True,
+        )
+        token_ids = encoded["input_ids"]
+        offsets = encoded["offset_mapping"]
+        if hasattr(token_ids, "tolist"):
+            token_ids = token_ids.tolist()
+        if hasattr(offsets, "tolist"):
+            offsets = offsets.tolist()
+    except Exception as exc:
+        raise ActivationError(
+            f"Example ID {example_id}: tokenizer offset mapping failed: {exc}"
+        ) from exc
+    expected_ids = generation.get("formatted_prompt_token_ids")
+    if token_ids != expected_ids:
+        raise ActivationError(
+            f"Example ID {example_id}: offset tokenization does not match the "
+            "saved generation prompt."
+        )
+    if (
+        not isinstance(offsets, list)
+        or len(offsets) != len(token_ids)
+        or not all(
+            isinstance(offset, (list, tuple))
+            and len(offset) == 2
+            and all(type(value) is int for value in offset)
+            for offset in offsets
+        )
+    ):
+        raise ActivationError(
+            f"Example ID {example_id}: tokenizer returned invalid character offsets."
+        )
+
+    input_start = rendered.index(content)
+    input_end = input_start + len(task_input)
+    input_offsets = []
+    for start, end in offsets:
+        overlap_start = max(start, input_start)
+        overlap_end = min(end, input_end)
+        input_offsets.append(
+            (overlap_start - input_start, overlap_end - input_start)
+            if overlap_start < overlap_end
+            else None
+        )
+
+    mapped = {}
+    for name in sorted(spans, key=lambda value: int(value.removeprefix("span_"))):
+        span = spans[name]
+        start, end = span["start_char"], span["end_char"]
+        positions = tuple(
+            index
+            for index, offset in enumerate(input_offsets)
+            if offset is not None and offset[0] < end and start < offset[1]
+        )
+        if not positions:
+            raise ActivationError(
+                f"Example ID {example_id}, semantic span '{name}': character "
+                "range maps to no prompt tokens."
+            )
+        mapped[name] = positions
+    return mapped
 
 
 def _runtime():

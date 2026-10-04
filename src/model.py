@@ -76,16 +76,9 @@ def _resolved_dtype(model: Any, requested: str) -> str:
     return str(model_dtype).removeprefix("torch.")
 
 
-def load_model(
-    config: TaskConfig, *, pinned_revision: str | None = None
-) -> LoadedModel:
-    """Load and validate a supported model and its tokenizer.
-
-    This function performs no generation and does not update run records.
-    """
-    torch, auto_config, auto_model, auto_tokenizer = _dependencies()
-    _validate_device(torch, config.device)
-
+def _resolve_model(
+    config: TaskConfig, pinned_revision: str | None, auto_config: Any
+) -> tuple[Any, str | None, dict[str, object]]:
     source = config.model_name_or_path
     requested_revision = pinned_revision or config.model_revision
     revision_kwargs = {"revision": requested_revision} if requested_revision else {}
@@ -118,24 +111,63 @@ def load_model(
             f"Loaded revision '{resolved_revision}' does not match the pinned "
             f"revision '{pinned_revision}'."
         )
-    load_common = {"trust_remote_code": False}
+    load_common: dict[str, object] = {"trust_remote_code": False}
     if resolved_revision:
         load_common["revision"] = resolved_revision
+    return model_config, resolved_revision, load_common
 
-    try:
-        tokenizer = auto_tokenizer.from_pretrained(source, **load_common)
-        _validate_chat_template(tokenizer)
-    except ModelLoadError:
-        raise
-    except Exception as exc:
-        raise ModelLoadError(f"Could not load tokenizer for '{source}': {exc}") from exc
 
+def _prepare_tokenizer(tokenizer: Any) -> Any:
+    _validate_chat_template(tokenizer)
     if tokenizer.eos_token_id is None:
         raise ModelLoadError("The tokenizer has no EOS token; generation is unsupported.")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
+    return tokenizer
+
+
+def _load_tokenizer(source: str, load_common: dict[str, object], factory: Any) -> Any:
+    try:
+        return _prepare_tokenizer(factory.from_pretrained(source, **load_common))
+    except ModelLoadError:
+        raise
+    except Exception as exc:
+        raise ModelLoadError(f"Could not load tokenizer for '{source}': {exc}") from exc
+
+
+def load_tokenizer(
+    config: TaskConfig, *, pinned_revision: str | None = None
+) -> Any:
+    """Load only the exact tokenizer needed for prompt-to-token mapping."""
+    _, auto_config, _, auto_tokenizer = _dependencies()
+    _, _, load_common = _resolve_model(config, pinned_revision, auto_config)
+    return _load_tokenizer(config.model_name_or_path, load_common, auto_tokenizer)
+
+
+def load_model(
+    config: TaskConfig,
+    *,
+    pinned_revision: str | None = None,
+    tokenizer: Any | None = None,
+) -> LoadedModel:
+    """Load and validate a supported model and its tokenizer.
+
+    This function performs no generation and does not update run records.
+    """
+    torch, auto_config, auto_model, auto_tokenizer = _dependencies()
+    _validate_device(torch, config.device)
+    model_config, resolved_revision, load_common = _resolve_model(
+        config, pinned_revision, auto_config
+    )
+
+    source = config.model_name_or_path
+    tokenizer = (
+        _load_tokenizer(source, load_common, auto_tokenizer)
+        if tokenizer is None
+        else _prepare_tokenizer(tokenizer)
+    )
 
     dtype = "auto" if config.dtype == "auto" else getattr(torch, config.dtype)
     try:

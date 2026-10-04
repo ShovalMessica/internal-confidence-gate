@@ -85,6 +85,8 @@ def build_run_identity(
         "allow_abstention": config.allow_abstention,
         "generation_seed": config.generation_seed,
         "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
+        "activation_protocol_version": ACTIVATION_PROTOCOL_VERSION,
+        "position_protocol": POSITION_PROTOCOL,
     }
     if config.model_revision is not None:
         effective["model_revision"] = config.model_revision
@@ -630,6 +632,7 @@ def complete_activation_capture(
         "position_protocol": POSITION_PROTOCOL,
         "storage_dtype": STORAGE_DTYPE,
         "generation_sha256": identity.generation_sha256,
+        "request_fingerprint": identity.request_fingerprint,
         "artifact": ACTIVATION_FILE,
         "artifact_sha256": artifact_sha256,
         "summary": summary,
@@ -661,6 +664,7 @@ def validate_completed_activation_capture(
         or capture.get("position_protocol") != POSITION_PROTOCOL
         or capture.get("storage_dtype") != STORAGE_DTYPE
         or capture.get("generation_sha256") != identity.generation_sha256
+        or capture.get("request_fingerprint") != identity.request_fingerprint
         or capture.get("artifact") != ACTIVATION_FILE
         or not isinstance(capture.get("summary"), dict)
     ):

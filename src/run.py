@@ -12,13 +12,20 @@ import sys
 import time
 from typing import Literal, Sequence, TextIO
 
-from src.activation import ActivationError, build_replay_plan, capture_hidden_states
+from src.activation import (
+    ActivationError,
+    ReplayPlan,
+    build_replay_plan,
+    capture_hidden_states,
+    map_semantic_spans,
+)
 from src.activation_store import (
     ActivationStoreError,
     StoredActivation,
     append_activation_record,
     build_activation_context,
     build_activation_identity,
+    build_capture_request_fingerprint,
     finalize_activation_file,
     load_activation_records,
     reuse_activation_records,
@@ -40,7 +47,13 @@ from src.generation_cache import (
     load_context_model,
     save_context_model,
 )
-from src.model import LoadedModel, ModelLoadError, describe_model, load_model
+from src.model import (
+    LoadedModel,
+    ModelLoadError,
+    describe_model,
+    load_model,
+    load_tokenizer,
+)
 from src.run_store import (
     RegisteredRun,
     RunStoreError,
@@ -403,26 +416,35 @@ def _activation_progress(done: int, total: int, started: float, starting_done: i
     )
 
 
-def _activation_summary(records: dict[int, StoredActivation]) -> dict:
+def _activation_summary(
+    records: dict[int, StoredActivation],
+    expected: dict[int, tuple[dict, str, ReplayPlan]],
+) -> dict:
     state_labels = None
     hidden_size = None
+    position_names = None
     max_difference = 0.0
-    for cached in records.values():
+    for example_id, cached in records.items():
         metadata = cached.metadata
         labels = json.loads(metadata["state_labels"])
         size = int(metadata["hidden_size"])
+        names = list(expected[example_id][2].positions)
         if state_labels is None:
-            state_labels, hidden_size = labels, size
-        elif labels != state_labels or size != hidden_size:
+            state_labels, hidden_size, position_names = labels, size, names
+        elif (
+            labels != state_labels
+            or size != hidden_size
+            or names != position_names
+        ):
             raise ActivationStoreError(
-                "Stored activations use inconsistent hidden-state dimensions."
+                "Stored activations use inconsistent positions or hidden-state dimensions."
             )
         max_difference = max(
             max_difference, float(metadata["max_logprob_difference"])
         )
     return {
         "examples": len(records),
-        "positions": ["prompt_end", "final_prompt_end", "answer_tokens"],
+        "positions": position_names,
         "state_labels": state_labels,
         "hidden_size": hidden_size,
         "storage_dtype": "float16",
@@ -451,40 +473,62 @@ def _capture_activations(
     evaluations = load_evaluation_records(
         directory, evaluation_identity.evaluation_id, examples
     )
-    generations, _ = load_generation_records(directory, generation_context, examples)
-    expected = {}
-    for example in examples:
-        example_id = example["id"]
-        if evaluations[example_id]["outcome"] not in ("correct", "incorrect"):
-            continue
-        record = generations[example_id]
-        plan = build_replay_plan(record)
-        expected[example_id] = (
-            example,
-            generation_record_sha256(record),
-            plan,
-        )
-    if not expected:
+    eligible = [
+        example
+        for example in examples
+        if evaluations[example["id"]]["outcome"] in ("correct", "incorrect")
+    ]
+    if not eligible:
         raise ActivationError("No correct or incorrect predictions are available to capture.")
 
     context = build_activation_context(
         prepared.config, generation_context, model_metadata
     )
-    identity = build_activation_identity(context, generation["artifact_sha256"])
+    request_fingerprint = build_capture_request_fingerprint(eligible)
+    identity = build_activation_identity(
+        context,
+        generation["artifact_sha256"],
+        request_fingerprint,
+    )
+
+    if validate_completed_activation_capture(directory, run_record, identity):
+        print(f"Activation capture ID: {identity.capture_id}")
+        print("Activation artifact: reused (model not loaded).")
+        return
+
+    generations, _ = load_generation_records(directory, generation_context, examples)
+    has_semantic_spans = bool(eligible[0].get("semantic_spans", {}))
+    tokenizer = None
+    if has_semantic_spans:
+        tokenizer = (
+            loaded.tokenizer
+            if loaded is not None
+            else load_tokenizer(
+                prepared.config,
+                pinned_revision=model_metadata.get("resolved_revision"),
+            )
+        )
+    expected = {}
+    for example in eligible:
+        example_id = example["id"]
+        record = generations[example_id]
+        semantic_positions = (
+            map_semantic_spans(tokenizer, example, record)
+            if tokenizer is not None
+            else None
+        )
+        plan = build_replay_plan(record, semantic_positions)
+        expected[example_id] = (
+            example,
+            generation_record_sha256(record),
+            plan,
+        )
+
     records, recovered = load_activation_records(
         directory, identity, context, expected
     )
     if recovered:
         print("Recovered an incomplete activation write.")
-
-    if validate_completed_activation_capture(directory, run_record, identity):
-        if set(records) != set(expected):
-            raise RunStoreError(
-                "Completed activation file does not contain every eligible example."
-            )
-        print(f"Activation capture ID: {identity.capture_id}")
-        print("Activation artifact: reused (model not loaded).")
-        return
 
     if not force_recompute:
         reused = reuse_activation_records(
@@ -504,7 +548,10 @@ def _capture_activations(
             directory, identity, context, expected, records
         )
         complete_activation_capture(
-            directory, identity, artifact_hash, _activation_summary(records)
+            directory,
+            identity,
+            artifact_hash,
+            _activation_summary(records, expected),
         )
         print(f"Activation capture ID: {identity.capture_id}")
         print("Activation capture complete from cached records; model not loaded.")
@@ -512,7 +559,11 @@ def _capture_activations(
 
     if loaded is None:
         pinned_revision = model_metadata.get("resolved_revision")
-        loaded = load_model(prepared.config, pinned_revision=pinned_revision)
+        loaded = load_model(
+            prepared.config,
+            pinned_revision=pinned_revision,
+            tokenizer=tokenizer,
+        )
         if _model_metadata(prepared.config, loaded) != model_metadata:
             raise RunStoreError(
                 "Loaded model metadata differs from the generation model."
@@ -546,7 +597,10 @@ def _capture_activations(
         directory, identity, context, expected, records
     )
     complete_activation_capture(
-        directory, identity, artifact_hash, _activation_summary(records)
+        directory,
+        identity,
+        artifact_hash,
+        _activation_summary(records, expected),
     )
     print(f"Activation capture ID: {identity.capture_id}")
     print(

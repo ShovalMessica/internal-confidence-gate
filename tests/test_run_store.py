@@ -134,6 +134,21 @@ class RunStoreTests(unittest.TestCase):
         )
         self.assertEqual(loaded, reused)
 
+        changed_spans = [{
+            **changed_split[0],
+            "semantic_spans": {
+                "span_1": {"start_char": 0, "end_char": 4},
+            },
+        }]
+        span_run = self.directory / "spans"
+        span_run.mkdir()
+        self.assertEqual(
+            set(reuse_cached_generation_records(
+                span_run, self.context, changed_spans, set()
+            )),
+            {1},
+        )
+
         changed_input = [{**changed_split[0], "input": "Changed"}]
         third_run = self.directory / "third"
         third_run.mkdir()

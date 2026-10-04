@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from src.activation import (
     ACTIVATION_PROTOCOL_VERSION,
@@ -42,6 +42,7 @@ class ActivationIdentity:
     context_id: str
     context_fingerprint: str
     generation_sha256: str
+    request_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -118,8 +119,22 @@ def build_activation_context(
     return ActivationContext(fingerprint[:12], fingerprint, settings)
 
 
+def build_capture_request_fingerprint(examples: Sequence[Mapping[str, object]]) -> str:
+    """Identify the eligible examples and semantic annotations to capture."""
+    request = [
+        {
+            "id": example["id"],
+            "semantic_spans": example.get("semantic_spans", {}),
+        }
+        for example in examples
+    ]
+    return hashlib.sha256(_encoded(request)).hexdigest()
+
+
 def build_activation_identity(
-    context: ActivationContext, generation_sha256: str
+    context: ActivationContext,
+    generation_sha256: str,
+    request_fingerprint: str,
 ) -> ActivationIdentity:
     fingerprint = hashlib.sha256(
         _encoded(
@@ -127,6 +142,7 @@ def build_activation_identity(
                 "schema_version": ACTIVATION_STORE_SCHEMA_VERSION,
                 "context_fingerprint": context.fingerprint,
                 "generation_sha256": generation_sha256,
+                "request_fingerprint": request_fingerprint,
             }
         )
     ).hexdigest()
@@ -136,6 +152,7 @@ def build_activation_identity(
         context.context_id,
         context.fingerprint,
         generation_sha256,
+        request_fingerprint,
     )
 
 
@@ -153,6 +170,7 @@ def _root_metadata(
             context.settings, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ),
         "generation_sha256": identity.generation_sha256,
+        "request_fingerprint": identity.request_fingerprint,
         "backend": CAPTURE_BACKEND,
         "position_protocol": POSITION_PROTOCOL,
         "storage_dtype": STORAGE_DTYPE,
@@ -363,7 +381,10 @@ def append_activation_record(
                     len(positions),
                     int(tensor.shape[2]),
                 )
-                if tuple(tensor.shape) != expected_shape or str(tensor.dtype) != "torch.float16":
+                if (
+                    tuple(tensor.shape) != expected_shape
+                    or str(tensor.dtype) != "torch.float16"
+                ):
                     raise ActivationStoreError(
                         f"Captured activation tensor '{name}' has an invalid shape or dtype."
                     )
@@ -436,9 +457,15 @@ def reuse_activation_records(
                     key = str(example_id)
                     if key not in source["examples"]:
                         continue
-                    _validate_example(
-                        source, key, expected[example_id], require_split=False
-                    )
+                    try:
+                        _validate_example(
+                            source,
+                            key,
+                            expected[example_id],
+                            require_split=False,
+                        )
+                    except ActivationStoreError:
+                        continue
                     source.copy(source["examples"][key], target["_pending"], name=key)
                     target["_pending"][key].attrs["split"] = expected[example_id][0]["split"]
                     target.move(f"_pending/{key}", f"examples/{key}")

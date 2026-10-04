@@ -87,20 +87,34 @@ def _decode(tokenizer: Any, token_ids: Sequence[int]) -> str:
         return tokenizer.decode(list(token_ids), skip_special_tokens=True)
 
 
-def _render_prompt(
-    tokenizer: Any, task_input: str, instruction: str, *, reasoning: bool
-) -> list[int]:
-    content = f"{task_input}\n\n{instruction}"
+def initial_prompt_content(task_input: str, instruction: str) -> str:
+    return f"{task_input}\n\n{instruction}"
+
+
+def render_initial_prompt(
+    tokenizer: Any,
+    task_input: str,
+    instruction: str,
+    *,
+    reasoning: bool,
+    tokenize: bool = True,
+) -> list[int] | str:
+    """Render the exact initial chat prompt used for generation or span mapping."""
+    content = initial_prompt_content(task_input, instruction)
     try:
         rendered = tokenizer.apply_chat_template(
             [{"role": "user", "content": content}],
-            tokenize=True,
+            tokenize=tokenize,
             add_generation_prompt=True,
             enable_thinking=reasoning,
         )
     except Exception as exc:
         raise ValueError(f"Could not render prompt: {exc}") from exc
-    return _token_list(rendered)
+    if tokenize:
+        return _token_list(rendered)
+    if not isinstance(rendered, str):
+        raise ValueError("Chat template did not return rendered prompt text.")
+    return rendered
 
 
 def _context_limit(model: Any, tokenizer: Any) -> int | None:
@@ -308,7 +322,7 @@ def _direct_unit(
 
     for position, example in indexed_examples:
         try:
-            chat_ids = _render_prompt(
+            chat_ids = render_initial_prompt(
                 tokenizer, example["input"], instruction, reasoning=False
             )
         except ValueError as exc:
@@ -368,7 +382,7 @@ def _reasoning_unit(
     marker_ids = _encode(tokenizer, FINAL_MARKER)
 
     try:
-        initial_ids = _render_prompt(
+        initial_ids = render_initial_prompt(
             tokenizer,
             example["input"],
             REASONING_INSTRUCTION,
