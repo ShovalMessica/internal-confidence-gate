@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 from typing import Callable, Mapping, Sequence
@@ -138,6 +139,13 @@ def build_selection_identity(
     probe_id: str, probe_sha256: str, target_tpr: float
 ) -> SelectionIdentity:
     """Identify validation selection independently from probe training."""
+    if (
+        type(target_tpr) not in (int, float)
+        or not math.isfinite(target_tpr)
+        or not 0 < target_tpr <= 1
+    ):
+        raise ProbeError("target_tpr must be greater than 0 and at most 1.")
+    target_tpr = float(target_tpr)
     payload = {
         "protocol_version": SELECTION_PROTOCOL_VERSION,
         "probe_id": probe_id,
@@ -663,11 +671,8 @@ def _candidate_metrics(
         raise ProbeError("Validation probe scores or labels are invalid.")
     correct = scores[labels == 1]
     incorrect = scores[labels == 0]
-    threshold = next(
-        value
-        for value in np.unique(correct)[::-1]
-        if np.count_nonzero(correct >= value) / correct.size >= target_tpr
-    )
+    required_correct = math.ceil(target_tpr * correct.size)
+    threshold = np.sort(correct)[-required_correct]
     accepted_correct = int(np.count_nonzero(correct >= threshold))
     accepted_incorrect = int(np.count_nonzero(incorrect >= threshold))
     try:

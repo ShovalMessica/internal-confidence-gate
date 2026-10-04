@@ -271,6 +271,12 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(len(source["trainings"]), 1)
             self.assertEqual(len(source["selections"]), 2)
 
+    def test_selection_identity_rejects_invalid_targets(self):
+        for target in (0, -0.1, 1.1, True, float("nan"), float("inf")):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(ProbeError, "target_tpr"):
+                    build_selection_identity("probe", "a" * 64, target)
+
     def test_auroc_does_not_break_equal_fpr_ties(self):
         probe = self.identity()
         train_probes(self.directory, probe, self.evaluations)
