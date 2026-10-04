@@ -1,8 +1,16 @@
 """Offline tests for task-independent answer evaluation."""
 
 import unittest
+from pathlib import Path
+import tempfile
 
-from src.evaluation import EvaluationError, evaluate_answers, normalize_answer
+from src.evaluation import (
+    EvaluationError,
+    build_evaluation_identity,
+    evaluate_answers,
+    load_answer_matcher,
+    normalize_answer,
+)
 
 
 def _example(example_id, target="answer", split="train"):
@@ -23,6 +31,11 @@ def _generation(example, text, stop_reason="eos"):
 
 
 class EvaluationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
     def test_normalization_and_complete_answer_matching(self):
         examples = [
             _example(1, "  STRASSE   NAME "),
@@ -95,6 +108,91 @@ class EvaluationTests(unittest.TestCase):
         )
         self.assertEqual(result.records[0]["outcome"], "correct")
         self.assertEqual(result.summary["overall"]["answer_token_limit"], 1)
+        self.assertEqual(result.summary["overall"]["token_limit_rate"], 1.0)
+
+    def test_model_behavior_rates_use_every_example(self):
+        examples = [_example(index) for index in range(4)]
+        generations = {
+            0: _generation(examples[0], "answer"),
+            1: _generation(examples[1], "wrong", stop_reason="token_limit"),
+            2: _generation(examples[2], "UNKNOWN"),
+            3: {
+                "id": 3,
+                "split": "train",
+                "status": "failed",
+                "failure": {"reason": "context_length"},
+            },
+        }
+        metrics = evaluate_answers(
+            examples, generations, allow_abstention=True
+        ).summary["overall"]
+
+        self.assertEqual(
+            [
+                metrics["correct_prediction_rate"],
+                metrics["wrong_prediction_rate"],
+                metrics["missed_prediction_rate"],
+                metrics["invalid_output_rate"],
+                metrics["token_limit_rate"],
+            ],
+            [0.25, 0.25, 0.25, 0.25, 0.25],
+        )
+
+    def test_custom_matcher_controls_correctness(self):
+        path = self.root / "matcher.py"
+        path.write_text(
+            "def answer_match(prediction, target_answer):\n"
+            "    return prediction.rstrip('.').casefold() == target_answer.casefold()\n",
+            encoding="utf-8",
+        )
+        matcher = load_answer_matcher(path)
+        example = _example(1, target="London")
+        result = evaluate_answers(
+            [example],
+            {1: _generation(example, "LONDON.")},
+            allow_abstention=True,
+            matcher=matcher,
+        )
+
+        self.assertEqual(result.records[0]["outcome"], "correct")
+        self.assertEqual(matcher.source_path, path)
+        self.assertEqual(
+            build_evaluation_identity("generation", matcher).matcher_sha256,
+            matcher.sha256,
+        )
+
+    def test_invalid_custom_matchers_fail_clearly(self):
+        cases = {
+            "missing": "value = 1\n",
+            "signature": "def answer_match(prediction):\n    return True\n",
+            "syntax": "def answer_match(:\n",
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name):
+                path = self.root / f"{name}.py"
+                path.write_text(source, encoding="utf-8")
+                with self.assertRaises(EvaluationError):
+                    load_answer_matcher(path)
+
+        example = _example(1)
+        for name, body, message in (
+            ("return", "return 1", "return true or false"),
+            ("raise", "raise RuntimeError('broken')", "RuntimeError"),
+        ):
+            with self.subTest(name=name):
+                path = self.root / f"runtime_{name}.py"
+                path.write_text(
+                    "def answer_match(prediction, target_answer):\n"
+                    f"    {body}\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(EvaluationError, message):
+                    evaluate_answers(
+                        [example],
+                        {1: _generation(example, "answer")},
+                        allow_abstention=True,
+                        matcher=load_answer_matcher(path),
+                    )
 
     def test_exact_probe_minimums_pass_and_shortages_are_explicit(self):
         examples = []

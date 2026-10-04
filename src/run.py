@@ -13,7 +13,13 @@ from typing import Literal, Sequence, TextIO
 
 from src.config import ConfigurationError, TaskConfig, load_config
 from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
-from src.evaluation import EvaluationError, evaluate_answers
+from src.evaluation import (
+    AnswerMatcher,
+    EvaluationError,
+    build_evaluation_identity,
+    evaluate_answers,
+    load_answer_matcher,
+)
 from src.generation import GenerationError, generation_units
 from src.model import ModelLoadError, describe_model, load_model
 from src.run_store import (
@@ -43,17 +49,19 @@ class PreparedRun:
     config: TaskConfig
     dataset: DatasetResult
     split_source: Literal["dataset", "automatic"]
+    answer_matcher: AnswerMatcher
 
 
 def prepare_run(config_path: str | Path) -> PreparedRun:
     """Load configuration and return validated, split-assigned examples."""
     config = load_config(config_path)
+    matcher = load_answer_matcher(config.answer_matcher_path)
     dataset = load_dataset(
         config.dataset_path, allow_abstention=config.allow_abstention
     )
     split_source = "dataset" if "split" in dataset.examples[0] else "automatic"
     dataset = assign_splits(dataset, config.split_ratios, config.split_seed)
-    return PreparedRun(config, dataset, split_source)
+    return PreparedRun(config, dataset, split_source, matcher)
 
 
 def _print_exclusions(excluded: list[dict], stream: TextIO) -> None:
@@ -87,6 +95,9 @@ def _print_preparation(
     print("Configuration valid.", file=stream)
     print(f"Model: {config.model_name_or_path}", file=stream)
     print(f"Reasoning mode: {config.reasoning_mode}", file=stream)
+    matcher = prepared.answer_matcher
+    matcher_name = str(matcher.source_path) if matcher.source_path else "built-in"
+    print(f"Answer matcher: {matcher_name}", file=stream)
     print(f"Dataset: {config.dataset_path}", file=stream)
     print(f"Run ID: {registered.directory.name}", file=stream)
     print(f"Run directory: {registered.directory}", file=stream)
@@ -251,18 +262,23 @@ def _format_rate(value: float | None) -> str:
 
 def _print_evaluation(summary: dict, *, reused: bool) -> None:
     print(f"Evaluation artifact: {'reused' if reused else 'created'}")
-    for split in ("train", "validation", "test"):
-        metrics = summary["by_split"][split]
-        print(
-            f"  {split}: correct {metrics['correct']}, "
-            f"incorrect {metrics['incorrect']}, "
-            f"abstained {metrics['abstained']}, invalid {metrics['invalid']} | "
-            f"accuracy {_format_rate(metrics['usable_accuracy'])}, "
-            f"abstention {_format_rate(metrics['abstention_rate'])}, "
-            f"invalid {_format_rate(metrics['invalid_rate'])}"
-        )
-    limit_count = summary["overall"]["answer_token_limit"]
-    print(f"Answers reaching token limit: {limit_count}")
+    columns = (
+        ("Correct prediction", "correct", "correct_prediction_rate"),
+        ("Wrong prediction", "incorrect", "wrong_prediction_rate"),
+        ("Missed prediction", "abstained", "missed_prediction_rate"),
+        ("Invalid output", "invalid", "invalid_output_rate"),
+        ("Token-limit output", "answer_token_limit", "token_limit_rate"),
+    )
+    print("Model Behavior:")
+    print(f"  {'Scope':<12}{'Outcome':<22}{'Count':>8}{'Rate':>10}")
+    scopes = [("overall", summary["overall"]), *summary["by_split"].items()]
+    for scope, metrics in scopes:
+        for index, (label, count_key, rate_key) in enumerate(columns):
+            scope_label = scope if index == 0 else ""
+            print(
+                f"  {scope_label:<12}{label:<22}{metrics[count_key]:>8}"
+                f"{_format_rate(metrics[rate_key]):>10}"
+            )
 
 
 def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
@@ -283,10 +299,14 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     if not validate_completed_generation(directory, run_record):
         raise RunStoreError("Evaluation requires completed generation.")
     generation_hash = run_record["generation"]["artifact_sha256"]
+    identity = build_evaluation_identity(
+        generation_hash, prepared.answer_matcher
+    )
 
-    if validate_completed_evaluation(directory, run_record, generation_hash):
-        load_evaluation_records(directory, examples)
-        summary = run_record["evaluation"]["summary"]
+    if validate_completed_evaluation(directory, run_record, identity):
+        load_evaluation_records(directory, identity.evaluation_id, examples)
+        summary = run_record["evaluations"][identity.evaluation_id]["summary"]
+        print(f"Evaluation ID: {identity.evaluation_id}")
         _print_evaluation(summary, reused=True)
         return summary
 
@@ -295,16 +315,27 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         examples,
         generations,
         allow_abstention=prepared.config.allow_abstention,
+        matcher=prepared.answer_matcher,
     )
-    if evaluation_artifact_path(directory).exists():
-        existing = load_evaluation_records(directory, examples)
+    path = evaluation_artifact_path(directory, identity.evaluation_id)
+    if path.exists():
+        existing = load_evaluation_records(directory, identity.evaluation_id, examples)
         ordered = [existing[example["id"]] for example in examples]
         if ordered != list(result.records):
             raise RunStoreError(
                 "Unregistered evaluation artifact conflicts with computed results."
             )
-    artifact_hash = write_evaluation_records(directory, list(result.records))
-    complete_evaluation(directory, artifact_hash, generation_hash, result.summary)
+    artifact_hash = write_evaluation_records(
+        directory, identity.evaluation_id, list(result.records)
+    )
+    complete_evaluation(
+        directory,
+        identity,
+        prepared.answer_matcher,
+        artifact_hash,
+        result.summary,
+    )
+    print(f"Evaluation ID: {identity.evaluation_id}")
     _print_evaluation(result.summary, reused=False)
     return result.summary
 

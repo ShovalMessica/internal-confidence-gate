@@ -38,6 +38,7 @@ class TaskConfig:
     reasoning_max_new_tokens: int = 1024
     answer_max_new_tokens: int = 64
     allow_abstention: bool = True
+    answer_matcher_path: Path | None = None
     generation_seed: int = 42
     direct_batch_size: int = 8
     split_ratios: SplitRatios = SplitRatios()
@@ -221,6 +222,17 @@ def load_config(path: str | Path) -> TaskConfig:
 
     if type(values["allow_abstention"]) is not bool:
         errors.append("allow_abstention must be true or false.")
+
+    if "answer_matcher_path" in raw:
+        matcher = _absolute_path(
+            raw["answer_matcher_path"], "answer_matcher_path", errors
+        )
+        values["answer_matcher_path"] = matcher
+        if matcher is not None:
+            if matcher.suffix.lower() != ".py":
+                errors.append("answer_matcher_path must name a .py file.")
+            if not matcher.is_file():
+                errors.append("answer_matcher_path must point to an existing file.")
 
     if "split_ratios" in raw:
         values["split_ratios"] = _split_ratios(raw["split_ratios"], errors)

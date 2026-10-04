@@ -12,6 +12,8 @@ from src.generation import (
 from src.evaluation import (
     EVALUATION_PROTOCOL_VERSION,
     EVALUATION_RECORD_SCHEMA_VERSION,
+    build_evaluation_identity,
+    load_answer_matcher,
 )
 from src.run_store import (
     RunStoreError,
@@ -113,8 +115,14 @@ class RunStoreTests(unittest.TestCase):
     def test_evaluation_artifact_validation_and_hash_detection(self):
         examples = [_example(1), _example(2)]
         records = [_evaluation(1), _evaluation(2, "incorrect")]
-        artifact_hash = write_evaluation_records(self.directory, records)
-        loaded = load_evaluation_records(self.directory, examples)
+        matcher = load_answer_matcher(None)
+        identity = build_evaluation_identity("generation-hash", matcher)
+        artifact_hash = write_evaluation_records(
+            self.directory, identity.evaluation_id, records
+        )
+        loaded = load_evaluation_records(
+            self.directory, identity.evaluation_id, examples
+        )
         self.assertEqual(list(loaded), [1, 2])
 
         (self.directory / "run.json").write_text(
@@ -123,29 +131,37 @@ class RunStoreTests(unittest.TestCase):
         )
         summary = {"probe_ready": False, "shortages": []}
         complete_evaluation(
-            self.directory, artifact_hash, "generation-hash", summary
+            self.directory, identity, matcher, artifact_hash, summary
         )
         run_record = load_run_record(self.directory)
         self.assertTrue(
             validate_completed_evaluation(
-                self.directory, run_record, "generation-hash"
+                self.directory, run_record, identity
             )
         )
 
-        evaluation_artifact_path(self.directory).write_text(
+        evaluation_artifact_path(self.directory, identity.evaluation_id).write_text(
             json.dumps(records[0]) + "\n", encoding="utf-8"
         )
         with self.assertRaisesRegex(RunStoreError, "missing or has changed"):
             validate_completed_evaluation(
-                self.directory, run_record, "generation-hash"
+                self.directory, run_record, identity
             )
 
-        write_evaluation_records(self.directory, list(reversed(records)))
+        write_evaluation_records(
+            self.directory, identity.evaluation_id, list(reversed(records))
+        )
         with self.assertRaisesRegex(RunStoreError, "dataset order"):
-            load_evaluation_records(self.directory, examples)
+            load_evaluation_records(
+                self.directory, identity.evaluation_id, examples
+            )
 
     def test_force_reset_removes_downstream_evaluation(self):
-        evaluation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
+        evaluation_id = "a" * 12
+        path = evaluation_artifact_path(self.directory, evaluation_id)
+        path.parent.mkdir()
+        path.write_text("{}\n", encoding="utf-8")
+        (self.directory / "evaluations.jsonl").write_text("{}\n", encoding="utf-8")
         generation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
         (self.directory / "run.json").write_text(
             json.dumps(
@@ -154,6 +170,7 @@ class RunStoreTests(unittest.TestCase):
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
                     "evaluation": {},
+                    "evaluations": {evaluation_id: {}},
                 }
             ),
             encoding="utf-8",
@@ -163,7 +180,10 @@ class RunStoreTests(unittest.TestCase):
         self.assertEqual(pinned, "commit")
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertNotIn("evaluation", record)
-        self.assertFalse(evaluation_artifact_path(self.directory).exists())
+        self.assertNotIn("evaluations", record)
+        self.assertFalse(path.exists())
+        self.assertFalse((self.directory / "evaluations").exists())
+        self.assertFalse((self.directory / "evaluations.jsonl").exists())
 
 
 if __name__ == "__main__":

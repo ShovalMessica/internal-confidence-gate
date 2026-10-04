@@ -334,6 +334,9 @@ class RunTests(unittest.TestCase):
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation complete: 700 succeeded, 0 failed.", stdout)
         self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("Model Behavior:", stdout)
+        self.assertIn("Correct prediction", stdout)
+        self.assertIn("Token-limit output", stdout)
         load_model.assert_called_once_with(prepared.config, pinned_revision=None)
 
         with patch("src.run.load_model") as load_model:
@@ -354,7 +357,8 @@ class RunTests(unittest.TestCase):
             len((run_directory / "generations.jsonl").read_text().splitlines()), 700
         )
         self.assertEqual(
-            len((run_directory / "evaluations.jsonl").read_text().splitlines()), 700
+            len(next((run_directory / "evaluations").iterdir()).read_text().splitlines()),
+            700,
         )
 
     def test_force_recompute_uses_recorded_revision(self):
@@ -433,7 +437,120 @@ class RunTests(unittest.TestCase):
             (run_directory / "run.json").read_text(encoding="utf-8")
         )
         self.assertIn("evaluation", run_record["completed_stages"])
-        self.assertFalse(run_record["evaluation"]["summary"]["probe_ready"])
+        evaluation = next(iter(run_record["evaluations"].values()))
+        self.assertFalse(evaluation["summary"]["probe_ready"])
+
+    def test_matcher_changes_reuse_generation_and_preserve_evaluations(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        matcher = self.root / "matcher.py"
+        source = (
+            "def answer_match(prediction, target_answer):\n"
+            "    return prediction.casefold() == target_answer.casefold()\n"
+        )
+        matcher.write_text(source, encoding="utf-8")
+        self.write_config(answer_matcher_path=str(matcher))
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        copy = self.root / "matcher-copy.py"
+        copy.write_text(source, encoding="utf-8")
+        self.write_config(answer_matcher_path=str(copy))
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Evaluation artifact: reused", stdout)
+        load_model.assert_not_called()
+
+        copy.write_text(source + "# revised matcher\n", encoding="utf-8")
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation artifact: reused", stdout)
+        self.assertIn("Evaluation artifact: created", stdout)
+        load_model.assert_not_called()
+
+        run_directory = next((self.root / "outputs").iterdir())
+        record = json.loads((run_directory / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(record["evaluations"]), 2)
+        self.assertEqual(len(list((run_directory / "evaluations").iterdir())), 2)
+
+    def test_invalid_matcher_stops_before_model_loading(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        matcher = self.root / "matcher.py"
+        matcher.write_text("value = 1\n", encoding="utf-8")
+        self.write_config(answer_matcher_path=str(matcher))
+
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+
+        self.assertEqual((code, stdout), (1, ""))
+        self.assertIn("Answer matcher must define answer_match", stderr)
+        self.assertFalse((self.root / "outputs").exists())
+        load_model.assert_not_called()
+
+    def test_legacy_evaluation_is_rebuilt_without_model_loading(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        run_directory = next((self.root / "outputs").iterdir())
+        run_path = run_directory / "run.json"
+        run_record = json.loads(run_path.read_text(encoding="utf-8"))
+        legacy = next(iter(run_record.pop("evaluations").values()))
+        source = run_directory / legacy["artifact"]
+        legacy_path = run_directory / "evaluations.jsonl"
+        source.replace(legacy_path)
+        (run_directory / "evaluations").rmdir()
+        run_record["evaluation"] = legacy
+        run_path.write_text(json.dumps(run_record), encoding="utf-8")
+
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation artifact: reused", stdout)
+        self.assertIn("Evaluation artifact: created", stdout)
+        load_model.assert_not_called()
+        rebuilt = json.loads(run_path.read_text(encoding="utf-8"))
+        self.assertIn("evaluations", rebuilt)
 
     def test_split_settings_are_inactive_when_dataset_supplies_splits(self):
         splits = ["train"] * 500 + ["validation"] * 100 + ["test"] * 100

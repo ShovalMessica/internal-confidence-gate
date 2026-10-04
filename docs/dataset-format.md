@@ -23,7 +23,7 @@ Example
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
-  Correctness uses complete-answer matching after ignoring case, trimming surrounding whitespace, and collapsing repeated whitespace. Extra words remain significant.
+  Correctness uses complete-answer matching after ignoring case, trimming surrounding whitespace, and collapsing repeated whitespace. Extra words remain significant. Tasks requiring different equivalence rules can configure a custom [`answer_match`](configuration.md#answer-evaluation) function.
 
   Target answers support supervised probe training and evaluation. They never enter the probe as features, and applying a trained probe does not require them.
 
@@ -83,4 +83,4 @@ These loading functions do not run a model, print messages, or save files. The r
 {"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
 ```
 
-**TODO:** Token alignment, multi-token captures, exact layer conventions, and optional task-specific answer matching.
+**TODO:** Token alignment, multi-token captures, and exact layer conventions.

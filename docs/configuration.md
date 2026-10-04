@@ -57,9 +57,28 @@ Context-length and prompt-rendering failures are saved per example while generat
 
 After generation, the runner compares each saved answer with its dataset target. Matching ignores case, surrounding whitespace, and repeated internal whitespace. It does not remove punctuation or apply task-specific rules.
 
+- **`answer_matcher_path` (optional; default: omitted)** — Absolute path to a trusted Python file that defines:
+
+  ```python
+  def answer_match(prediction: str, target_answer: str) -> bool:
+      return prediction.casefold().strip() == target_answer.casefold().strip()
+  ```
+
+  The function receives the raw extracted answer and raw dataset target and must return `True` or `False`. Use it for task-specific rules such as aliases, punctuation handling, or numeric tolerance. When omitted, the toolkit uses its stricter built-in complete-answer comparison described above. Keep the task-specific matching logic in this file because its exact bytes define the matcher hash.
+
+  The matcher is loaded during preparation, so its path, function, and signature are checked before model generation. Exceptions raised for an example or non-Boolean return values stop evaluation with a clear error. The toolkit still decides whether an output is structurally valid and whether it is exactly `UNKNOWN`; the custom function only compares concrete answers.
+
 Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
 
-Evaluation is saved to `evaluations.jsonl` and summarized by split in `run.json`. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
+The runner prints and stores a Model Behavior summary overall and by split. For `N` examples in the reported scope:
+
+- **Correct prediction:** a concrete answer accepted by `answer_match`; rate `N_correct / N`.
+- **Wrong prediction:** a concrete answer rejected by `answer_match`; rate `N_wrong / N`.
+- **Missed prediction:** the model returned `UNKNOWN`; rate `N_missed / N`.
+- **Invalid output:** the response could not be evaluated structurally; rate `N_invalid / N`.
+- **Token-limit output:** answer generation reached its token limit; rate `N_token_limit / N`. This is an independent diagnostic, so the same example also appears in one of the four outcomes above.
+
+The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
 
 ## Automatic splitting
 
@@ -83,6 +102,7 @@ dtype: auto
 reasoning_max_new_tokens: 1024
 answer_max_new_tokens: 64
 allow_abstention: true
+# answer_matcher_path: "C:/tasks/my-task/answer_matcher.py"
 generation_seed: 42
 direct_batch_size: 8
 split_ratios:
@@ -107,6 +127,7 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
 - Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation and split seeds must be nonnegative integers; `allow_abstention` must be a Boolean.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
+- `answer_matcher_path`, when supplied, must be an absolute path to an existing `.py` file. The runner loads and validates its `answer_match` function during preparation.
 - Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
 - Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
@@ -121,7 +142,7 @@ Model revision, device, dtype, generation seed, and active generation settings a
 
 When `model_revision` is omitted, the model loader resolves one exact Hub commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoint paths are treated as immutable for now; stronger local-checkpoint identity remains **TODO**.
 
-Generation progress is appended after each reasoning example or completed direct batch. Complete, hash-validated generation and evaluation artifacts are reused without loading the model. Use `--force-recompute` to restart generation while keeping the recorded model revision; its downstream evaluation is cleared as well.
+Generation progress is appended after each reasoning example or completed direct batch. Complete, hash-validated generation and matcher-specific evaluation artifacts are reused without loading the model. Use `--force-recompute` to restart generation while keeping the recorded model revision; all downstream evaluations are cleared as well.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 

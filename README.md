@@ -105,7 +105,9 @@ When abstention is enabled, UNKNOWN predictions are reported separately and excl
 6. **Validate:** select probe settings and an acceptance threshold using validation data.
 7. **Test:** evaluate the frozen probe and threshold on test data and compare performance with output-probability confidence.
 
-Answer normalization ignores case, trims surrounding whitespace, and collapses repeated internal whitespace.
+By default, answer matching ignores case, trims surrounding whitespace, collapses repeated internal whitespace, and then requires complete-answer equality. Tasks that need different equivalence rules can provide a small `answer_match` function through `answer_matcher_path`; see [Answer evaluation](docs/configuration.md#answer-evaluation).
+
+Before probe training, the runner reports model behavior overall and by split: correct predictions, wrong predictions, missed predictions (`UNKNOWN`), invalid outputs, and token-limit outputs. Every rate uses all examples in its scope as the denominator.
 
 For eligible predictions:
 
@@ -179,12 +181,12 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 ```text
 <output_dir>/<run_id>/run.json
 <output_dir>/<run_id>/generations.jsonl
-<output_dir>/<run_id>/evaluations.jsonl
+<output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
 ```
 
-The run ID represents the effective configuration and exact dataset contents. `run.json` stores provenance, evaluation summaries, and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures. `evaluations.jsonl` stores correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures. Each evaluation file stores correctness outcomes in dataset order.
 
-Interrupted generation resumes from saved work. Completed generation and evaluation artifacts are reused without loading the model. To discard generation and downstream evaluation results and rerun with the same pinned model revision:
+Interrupted generation resumes from saved work. Completed generation and matching evaluations are reused without loading the model. Changing only the answer matcher creates another evaluation from the saved generations. To discard generation and all downstream evaluations and rerun with the same pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute

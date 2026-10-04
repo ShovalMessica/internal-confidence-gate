@@ -12,6 +12,8 @@ from typing import Literal
 
 from src.config import TaskConfig
 from src.evaluation import (
+    AnswerMatcher,
+    EvaluationIdentity,
     EVALUATION_PROTOCOL_VERSION,
     EVALUATION_RECORD_SCHEMA_VERSION,
 )
@@ -25,7 +27,8 @@ IDENTITY_SCHEMA_VERSION = 3
 _RUN_ID_LENGTH = 12
 _RUN_RECORD = "run.json"
 _GENERATION_ARTIFACT = "generations.jsonl"
-_EVALUATION_ARTIFACT = "evaluations.jsonl"
+_EVALUATIONS_DIR = "evaluations"
+_LEGACY_EVALUATION_ARTIFACT = "evaluations.jsonl"
 
 
 class RunStoreError(ValueError):
@@ -176,8 +179,8 @@ def generation_artifact_path(directory: Path) -> Path:
     return directory / _GENERATION_ARTIFACT
 
 
-def evaluation_artifact_path(directory: Path) -> Path:
-    return directory / _EVALUATION_ARTIFACT
+def evaluation_artifact_path(directory: Path, evaluation_id: str) -> Path:
+    return directory / _EVALUATIONS_DIR / f"{evaluation_id}.jsonl"
 
 
 def _write_jsonl_records(path: Path, records: list[dict]) -> None:
@@ -386,10 +389,10 @@ def _validate_evaluation_record(record: object, expected: dict, line: int) -> di
 
 
 def load_evaluation_records(
-    directory: Path, examples: list[dict]
+    directory: Path, evaluation_id: str, examples: list[dict]
 ) -> dict[int, dict]:
     """Load and validate a complete evaluation artifact."""
-    path = evaluation_artifact_path(directory)
+    path = evaluation_artifact_path(directory, evaluation_id)
     if not path.is_file():
         raise RunStoreError(f"Evaluation artifact is missing: {path}")
     try:
@@ -423,46 +426,82 @@ def load_evaluation_records(
     return records
 
 
-def write_evaluation_records(directory: Path, records: list[dict]) -> str:
-    path = evaluation_artifact_path(directory)
+def write_evaluation_records(
+    directory: Path, evaluation_id: str, records: list[dict]
+) -> str:
+    path = evaluation_artifact_path(directory, evaluation_id)
+    try:
+        path.parent.mkdir(exist_ok=True)
+    except OSError as exc:
+        raise RunStoreError(f"Cannot create evaluation directory: {path.parent}") from exc
     _write_jsonl_records(path, records)
     return _sha256(path)
 
 
 def complete_evaluation(
     directory: Path,
+    identity: EvaluationIdentity,
+    matcher: AnswerMatcher,
     artifact_sha256: str,
-    generation_sha256: str,
     summary: dict,
 ) -> None:
     record = load_run_record(directory)
     stages = record["completed_stages"]
     if "evaluation" not in stages:
         stages.append("evaluation")
-    record["evaluation"] = {
+    evaluations = record.setdefault("evaluations", {})
+    if not isinstance(evaluations, dict):
+        raise RunStoreError("Run record has an invalid evaluation registry.")
+    artifact = f"{_EVALUATIONS_DIR}/{identity.evaluation_id}.jsonl"
+    entry = {
+        "evaluation_id": identity.evaluation_id,
+        "fingerprint": identity.fingerprint,
         "protocol_version": EVALUATION_PROTOCOL_VERSION,
-        "artifact": _EVALUATION_ARTIFACT,
+        "artifact": artifact,
         "artifact_sha256": artifact_sha256,
-        "generation_sha256": generation_sha256,
+        "generation_sha256": identity.generation_sha256,
+        "matcher": matcher.metadata(),
         "summary": summary,
         "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    existing = evaluations.get(identity.evaluation_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Evaluation ID collision or conflicting run record.")
+    evaluations[identity.evaluation_id] = entry
     _save_run_record(directory, record)
 
 
 def validate_completed_evaluation(
-    directory: Path, record: dict, generation_sha256: str
+    directory: Path, record: dict, identity: EvaluationIdentity
 ) -> bool:
-    if "evaluation" not in record.get("completed_stages", []):
+    evaluations = record.get("evaluations")
+    if evaluations is None:
         return False
-    evaluation = record.get("evaluation")
+    if not isinstance(evaluations, dict):
+        raise RunStoreError("Run record has an invalid evaluation registry.")
+    evaluation = evaluations.get(identity.evaluation_id)
+    if evaluation is None:
+        return False
+    if "evaluation" not in record.get("completed_stages", []):
+        raise RunStoreError("Saved evaluation is missing its completed stage.")
     if not isinstance(evaluation, dict):
         raise RunStoreError("Completed evaluation has no valid run summary.")
+    if (
+        evaluation.get("evaluation_id") != identity.evaluation_id
+        or evaluation.get("fingerprint") != identity.fingerprint
+    ):
+        raise RunStoreError("Completed evaluation identity is invalid.")
     if evaluation.get("protocol_version") != EVALUATION_PROTOCOL_VERSION:
         raise RunStoreError("Completed evaluation uses an unsupported protocol version.")
-    if evaluation.get("generation_sha256") != generation_sha256:
+    if evaluation.get("generation_sha256") != identity.generation_sha256:
         raise RunStoreError("Completed evaluation does not match saved generation.")
-    path = evaluation_artifact_path(directory)
+    matcher = evaluation.get("matcher")
+    if not isinstance(matcher, dict) or matcher.get("sha256") != identity.matcher_sha256:
+        raise RunStoreError("Completed evaluation has invalid matcher provenance.")
+    expected_artifact = f"{_EVALUATIONS_DIR}/{identity.evaluation_id}.jsonl"
+    if evaluation.get("artifact") != expected_artifact:
+        raise RunStoreError("Completed evaluation has an invalid artifact path.")
+    path = evaluation_artifact_path(directory, identity.evaluation_id)
     if not path.is_file() or _sha256(path) != evaluation.get("artifact_sha256"):
         raise RunStoreError("Completed evaluation artifact is missing or has changed.")
     if not isinstance(evaluation.get("summary"), dict):
@@ -528,6 +567,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("execution", None)
     record.pop("generation_settings", None)
     record.pop("evaluation", None)
+    record.pop("evaluations", None)
     record["completed_stages"] = [
         stage
         for stage in record["completed_stages"]
@@ -535,7 +575,20 @@ def reset_generation(directory: Path) -> str | None:
     ]
     try:
         generation_artifact_path(directory).unlink(missing_ok=True)
-        evaluation_artifact_path(directory).unlink(missing_ok=True)
+        (directory / _LEGACY_EVALUATION_ARTIFACT).unlink(missing_ok=True)
+        evaluations = directory / _EVALUATIONS_DIR
+        if evaluations.exists():
+            if not evaluations.is_dir():
+                raise OSError(f"Not a directory: {evaluations}")
+            artifacts = list(evaluations.iterdir())
+            unexpected = next(
+                (artifact for artifact in artifacts if not artifact.is_file()), None
+            )
+            if unexpected is not None:
+                raise OSError(f"Unexpected entry: {unexpected}")
+            for artifact in artifacts:
+                artifact.unlink()
+            evaluations.rmdir()
     except OSError as exc:
         raise RunStoreError("Cannot remove generation or evaluation artifacts.") from exc
     _save_run_record(directory, record)

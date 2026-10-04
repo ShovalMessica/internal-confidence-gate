@@ -44,6 +44,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.reasoning_max_new_tokens, 1024)
         self.assertEqual(config.answer_max_new_tokens, 64)
         self.assertTrue(config.allow_abstention)
+        self.assertIsNone(config.answer_matcher_path)
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
         self.assertEqual(config.split_seed, 42)
@@ -56,10 +57,13 @@ class ConfigTests(unittest.TestCase):
     def test_explicit_settings_and_local_checkpoint(self):
         checkpoint = self.root / "checkpoint"
         checkpoint.mkdir()
+        matcher = self.root / "matcher.py"
+        matcher.write_text("def answer_match(prediction, target_answer):\n    return True\n")
         output = self.root / "custom-results"
         values = dict(self.required, model_name_or_path=str(checkpoint), output_dir=str(output),
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
                       answer_max_new_tokens=16, allow_abstention=False,
+                      answer_matcher_path=str(matcher),
                       generation_seed=7, direct_batch_size=4, split_seed=0,
                       device="cuda:1", dtype="bfloat16",
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
@@ -71,6 +75,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.dtype, "bfloat16")
         self.assertEqual((config.reasoning_max_new_tokens, config.answer_max_new_tokens), (256, 16))
         self.assertFalse(config.allow_abstention)
+        self.assertEqual(config.answer_matcher_path, matcher)
         self.assertEqual((config.generation_seed, config.direct_batch_size), (7, 4))
         self.assertEqual(config.split_seed, 0)
         self.assertEqual(config.split_ratios.train, 0.8)
@@ -144,6 +149,10 @@ class ConfigTests(unittest.TestCase):
             ("output_dir", str(checkpoint_file)),
             ("model_name_or_path", str(self.root / "missing-checkpoint")),
             ("model_name_or_path", str(checkpoint_file)),
+            ("answer_matcher_path", None),
+            ("answer_matcher_path", "relative.py"),
+            ("answer_matcher_path", str(self.root / "missing.py")),
+            ("answer_matcher_path", str(self.dataset)),
         ]
         for field, value in cases:
             with self.subTest(field=field, value=value):
