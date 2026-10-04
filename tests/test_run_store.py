@@ -217,6 +217,8 @@ class RunStoreTests(unittest.TestCase):
         (self.directory / "evaluations.jsonl").write_text("{}\n", encoding="utf-8")
         activation_path = self.directory / "activations.h5"
         activation_path.write_bytes(b"saved activations")
+        probe_path = self.directory / "probes.h5"
+        probe_path.write_bytes(b"saved probes")
         generation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
         (self.directory / "run.json").write_text(
             json.dumps(
@@ -226,12 +228,14 @@ class RunStoreTests(unittest.TestCase):
                         "generation",
                         "evaluation",
                         "activation_capture",
+                        "probe_training",
                     ],
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
                     "evaluation": {},
                     "evaluations": {evaluation_id: {}},
                     "activation_capture": {},
+                    "probe_trainings": {"probe": {}},
                 }
             ),
             encoding="utf-8",
@@ -243,10 +247,12 @@ class RunStoreTests(unittest.TestCase):
         self.assertNotIn("evaluation", record)
         self.assertNotIn("evaluations", record)
         self.assertNotIn("activation_capture", record)
+        self.assertNotIn("probe_trainings", record)
         self.assertFalse(path.exists())
         self.assertFalse((self.directory / "evaluations").exists())
         self.assertFalse((self.directory / "evaluations.jsonl").exists())
         self.assertFalse(activation_path.exists())
+        self.assertFalse(probe_path.exists())
 
 
 if __name__ == "__main__":

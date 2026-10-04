@@ -39,6 +39,13 @@ from src.generation_cache import (
     load_generation,
     store_generation,
 )
+from src.probe import (
+    PROBE_FILE,
+    PROBE_PROTOCOL_VERSION,
+    ProbeIdentity,
+    probe_file_path,
+    validate_probe_group,
+)
 
 
 IDENTITY_SCHEMA_VERSION = 4
@@ -675,6 +682,73 @@ def validate_completed_activation_capture(
     return True
 
 
+def complete_probe_training(
+    directory: Path,
+    identity: ProbeIdentity,
+    content_sha256: str,
+    summary: dict,
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "probe_training" not in stages:
+        stages.append("probe_training")
+    trainings = record.setdefault("probe_trainings", {})
+    if not isinstance(trainings, dict):
+        raise RunStoreError("Run record has an invalid probe-training registry.")
+    entry = {
+        "probe_id": identity.probe_id,
+        "fingerprint": identity.fingerprint,
+        "protocol_version": PROBE_PROTOCOL_VERSION,
+        "seed": identity.seed,
+        "activation_sha256": identity.activation_sha256,
+        "evaluation_sha256": identity.evaluation_sha256,
+        "artifact": PROBE_FILE,
+        "group": f"trainings/{identity.probe_id}",
+        "content_sha256": content_sha256,
+        "summary": summary,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    existing = trainings.get(identity.probe_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Probe ID collision or conflicting run record.")
+    trainings[identity.probe_id] = entry
+    _save_run_record(directory, record)
+
+
+def validate_completed_probe_training(
+    directory: Path, record: dict, identity: ProbeIdentity
+) -> bool:
+    trainings = record.get("probe_trainings")
+    if trainings is None:
+        return False
+    if not isinstance(trainings, dict):
+        raise RunStoreError("Run record has an invalid probe-training registry.")
+    training = trainings.get(identity.probe_id)
+    if training is None:
+        return False
+    if "probe_training" not in record.get("completed_stages", []):
+        raise RunStoreError("Saved probes are missing their completed stage.")
+    if (
+        not isinstance(training, dict)
+        or training.get("probe_id") != identity.probe_id
+        or training.get("fingerprint") != identity.fingerprint
+        or training.get("protocol_version") != PROBE_PROTOCOL_VERSION
+        or training.get("seed") != identity.seed
+        or training.get("activation_sha256") != identity.activation_sha256
+        or training.get("evaluation_sha256") != identity.evaluation_sha256
+        or training.get("artifact") != PROBE_FILE
+        or training.get("group") != f"trainings/{identity.probe_id}"
+        or not isinstance(training.get("summary"), dict)
+    ):
+        raise RunStoreError("Completed probe training is invalid.")
+    _, summary = validate_probe_group(
+        directory, identity, training.get("content_sha256")
+    )
+    if summary != training["summary"]:
+        raise RunStoreError("Completed probe summary is invalid.")
+    return True
+
+
 def save_model_metadata(
     directory: Path, metadata: dict, provenance: dict, generation_settings: dict
 ) -> None:
@@ -744,14 +818,22 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("evaluations", None)
     record.pop("activation_capture", None)
     record.pop("activation_captures", None)
+    record.pop("probe_training", None)
+    record.pop("probe_trainings", None)
     record["completed_stages"] = [
         stage
         for stage in record["completed_stages"]
-        if stage not in ("generation", "evaluation", "activation_capture")
+        if stage not in (
+            "generation",
+            "evaluation",
+            "activation_capture",
+            "probe_training",
+        )
     ]
     try:
         generation_artifact_path(directory).unlink(missing_ok=True)
         activation_file_path(directory).unlink(missing_ok=True)
+        probe_file_path(directory).unlink(missing_ok=True)
         (directory / _LEGACY_EVALUATION_ARTIFACT).unlink(missing_ok=True)
         evaluations = directory / _EVALUATIONS_DIR
         if evaluations.exists():
@@ -781,7 +863,7 @@ def reset_generation(directory: Path) -> str | None:
             activations.rmdir()
     except OSError as exc:
         raise RunStoreError(
-            "Cannot remove generation, evaluation, or activation artifacts."
+            "Cannot remove generation, evaluation, activation, or probe artifacts."
         ) from exc
     _save_run_record(directory, record)
     return pinned

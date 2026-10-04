@@ -76,9 +76,11 @@ class RunTests(unittest.TestCase):
             redirect_stdout(stdout),
             redirect_stderr(stderr),
             patch("src.run._capture_activations") as capture,
+            patch("src.run._train_probes") as train_probes,
         ):
             code = main([str(path or self.config), *options])
         self.capture_mock = capture
+        self.probe_mock = train_probes
         return code, stdout.getvalue(), stderr.getvalue()
 
     def run_directories(self):
@@ -251,6 +253,14 @@ class RunTests(unittest.TestCase):
             inactive_change.split_source,
         ).run_id
 
+        self.write_config(reasoning_max_new_tokens=999, probe_seed=7)
+        probe_change = prepare_run(self.config)
+        probe_seed_id = build_run_identity(
+            probe_change.config,
+            probe_change.dataset.content_sha256,
+            probe_change.split_source,
+        ).run_id
+
         self.write_config(reasoning_max_new_tokens=999, answer_max_new_tokens=65)
         active_change = prepare_run(self.config)
         active_id = build_run_identity(
@@ -266,6 +276,7 @@ class RunTests(unittest.TestCase):
         ).run_id
 
         self.assertEqual(first_id, inactive_id)
+        self.assertEqual(first_id, probe_seed_id)
         self.assertNotEqual(first_id, active_id)
         self.assertNotEqual(active_id, data_id)
 
@@ -411,12 +422,14 @@ class RunTests(unittest.TestCase):
                 return_value=iter((GenerationUnit(records),)),
             ),
             patch("src.run._capture_activations") as capture,
+            patch("src.run._train_probes") as train_probes,
         ):
             code = main([str(self.config)])
 
         self.assertEqual((code, stderr.getvalue()), (0, ""))
         capture.assert_called_once()
         self.assertIs(capture.call_args.args[2], loaded)
+        train_probes.assert_called_once()
 
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
@@ -590,9 +603,14 @@ class RunTests(unittest.TestCase):
         )
         self.assertIn("span_1", run_record["activation_capture"]["summary"]["positions"])
         self.assertIn("span_2", run_record["activation_capture"]["summary"]["positions"])
+        self.assertIn("probe_training", run_record["completed_stages"])
+        self.assertEqual(len(run_record["probe_trainings"]), 1)
+        self.assertEqual(next(iter(run_record["probe_trainings"].values()))["seed"], 42)
+        self.assertTrue((run_directory / "probes.h5").is_file())
 
+        reused_stdout = io.StringIO()
         with (
-            redirect_stdout(io.StringIO()),
+            redirect_stdout(reused_stdout),
             redirect_stderr(io.StringIO()),
             patch("src.run.load_model") as load_model,
             patch("src.run.load_tokenizer") as load_tokenizer,
@@ -603,6 +621,7 @@ class RunTests(unittest.TestCase):
         load_model.assert_not_called()
         load_tokenizer.assert_not_called()
         capture.assert_not_called()
+        self.assertIn("Probe artifact: reused.", reused_stdout.getvalue())
 
     def test_semantic_mapping_failure_precedes_activation_file_writes(self):
         run_directory = self.root / "run"

@@ -1,4 +1,4 @@
-"""Command-line coordinator for preparation and generation."""
+"""Command-line coordinator for the confidence-gate pipeline."""
 
 from __future__ import annotations
 
@@ -54,6 +54,7 @@ from src.model import (
     load_model,
     load_tokenizer,
 )
+from src.probe import ProbeError, build_probe_identity, train_probes
 from src.run_store import (
     RegisteredRun,
     RunStoreError,
@@ -62,6 +63,7 @@ from src.run_store import (
     complete_generation,
     complete_evaluation,
     complete_activation_capture,
+    complete_probe_training,
     evaluation_artifact_path,
     finalize_generation_records,
     load_evaluation_records,
@@ -74,6 +76,7 @@ from src.run_store import (
     validate_completed_generation,
     validate_completed_evaluation,
     validate_completed_activation_capture,
+    validate_completed_probe_training,
     write_evaluation_records,
 )
 
@@ -609,6 +612,68 @@ def _capture_activations(
     )
 
 
+def _probe_progress(done: int, total: int, started: float, starting_done: int) -> None:
+    elapsed = max(time.monotonic() - started, 1e-9)
+    rate = (done - starting_done) / elapsed
+    remaining = total - done
+    eta = f"{remaining / rate:.1f}s" if rate else "unknown"
+    print(
+        f"Probe training: {done}/{total} ({100 * done / total:.1f}%) | "
+        f"elapsed {elapsed:.1f}s | {rate:.2f} probes/s | ETA {eta}",
+        flush=True,
+    )
+
+
+def _train_probes(prepared: PreparedRun, registered: RegisteredRun) -> None:
+    directory = registered.directory
+    run_record = load_run_record(directory)
+    capture = run_record.get("activation_capture")
+    generation = run_record.get("generation")
+    if not isinstance(capture, dict) or not isinstance(generation, dict):
+        raise RunStoreError("Probe training requires completed activations.")
+
+    evaluation_identity = build_evaluation_identity(
+        generation["artifact_sha256"], prepared.answer_matcher
+    )
+    evaluations = run_record.get("evaluations")
+    evaluation = (
+        evaluations.get(evaluation_identity.evaluation_id)
+        if isinstance(evaluations, dict)
+        else None
+    )
+    if not isinstance(evaluation, dict):
+        raise RunStoreError("Probe training requires the current evaluation.")
+
+    identity = build_probe_identity(
+        capture["artifact_sha256"],
+        evaluation["artifact_sha256"],
+        prepared.config.probe_seed,
+    )
+    if validate_completed_probe_training(directory, run_record, identity):
+        print(f"Probe training ID: {identity.probe_id}")
+        print("Probe artifact: reused.")
+        return
+
+    records = load_evaluation_records(
+        directory, evaluation_identity.evaluation_id, prepared.dataset.examples
+    )
+    result = train_probes(directory, identity, records, _probe_progress)
+    complete_probe_training(
+        directory,
+        identity,
+        result.content_sha256,
+        result.summary,
+    )
+    print(f"Probe training ID: {identity.probe_id}")
+    if result.trained_candidates:
+        print(
+            f"Probe training complete: {result.starting_candidates} resumed, "
+            f"{result.trained_candidates} trained."
+        )
+    else:
+        print("Probe training complete from stored candidates.")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare and run an Internal Confidence Gate task."
@@ -659,6 +724,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _capture_activations(
                 prepared, registered, loaded, args.force_recompute
             )
+            _train_probes(prepared, registered)
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1
@@ -683,6 +749,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except ActivationStoreError as error:
         print(f"Activation storage error: {error}", file=sys.stderr)
+        return 1
+    except ProbeError as error:
+        print(f"Probe training error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)

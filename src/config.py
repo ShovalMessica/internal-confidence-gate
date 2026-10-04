@@ -41,6 +41,7 @@ class TaskConfig:
     answer_matcher_path: Path | None = None
     generation_seed: int = 42
     direct_batch_size: int = 8
+    probe_seed: int = 42
     split_ratios: SplitRatios = SplitRatios()
     split_seed: int = 42
 
@@ -215,6 +216,7 @@ def load_config(path: str | Path) -> TaskConfig:
         ("answer_max_new_tokens", 1),
         ("generation_seed", 0),
         ("direct_batch_size", 1),
+        ("probe_seed", 0),
         ("split_seed", 0),
     )
     for name, minimum in integer_fields:

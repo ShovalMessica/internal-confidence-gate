@@ -47,6 +47,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(config.answer_matcher_path)
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
+        self.assertEqual(config.probe_seed, 42)
         self.assertEqual(config.split_seed, 42)
         self.assertEqual((config.split_ratios.train, config.split_ratios.validation, config.split_ratios.test), (0.7, 0.15, 0.15))
         self.assertFalse(config.output_dir.exists())
@@ -64,7 +65,8 @@ class ConfigTests(unittest.TestCase):
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
                       answer_max_new_tokens=16, allow_abstention=False,
                       answer_matcher_path=str(matcher),
-                      generation_seed=7, direct_batch_size=4, split_seed=0,
+                      generation_seed=7, direct_batch_size=4, probe_seed=11,
+                      split_seed=0,
                       device="cuda:1", dtype="bfloat16",
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
         config = load_config(self.write(values))
@@ -77,6 +79,7 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config.allow_abstention)
         self.assertEqual(config.answer_matcher_path, matcher)
         self.assertEqual((config.generation_seed, config.direct_batch_size), (7, 4))
+        self.assertEqual(config.probe_seed, 11)
         self.assertEqual(config.split_seed, 0)
         self.assertEqual(config.split_ratios.train, 0.8)
         self.assertFalse(output.exists())
@@ -103,6 +106,7 @@ class ConfigTests(unittest.TestCase):
             "answer_max_new_tokens": [None, 0, False, "64"],
             "generation_seed": [None, -1, True, 1.5, "42"],
             "direct_batch_size": [None, 0, -1, True, 1.5, "8"],
+            "probe_seed": [None, -1, True, 1.5, "42"],
             "split_seed": [None, -1, True, 1.5],
             "allow_abstention": [None, 1, "true"],
             "model_revision": [None, "", "  ", 1, False],

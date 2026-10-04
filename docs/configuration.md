@@ -80,6 +80,16 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 
 The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
 
+## Probe training
+
+- **`probe_seed` (optional; default: `42`)** — Seed for reproducible linear-probe fitting.
+
+After activation capture, the toolkit trains one probe for every captured position and saved model state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
+
+Each probe is an L2 logistic regression with `C=1`, balanced correct/incorrect class weights, and training-only feature standardization. Its score is `P(correct)`, so larger values indicate greater estimated reliability. The stage saves train and validation scores but does not read test activations, select a candidate, or choose an acceptance threshold.
+
+All candidates are stored in `<run_dir>/probes.h5`. The probe ID depends on the activation artifact, evaluation artifact, fixed training protocol, and `probe_seed`. Different matchers or probe seeds create separate groups inside this file without rerunning generation or activation capture.
+
 ## Automatic splitting
 
 Applies only when the dataset omits `split`.
@@ -105,6 +115,7 @@ allow_abstention: true
 # answer_matcher_path: "C:/tasks/my-task/answer_matcher.py"
 generation_seed: 42
 direct_batch_size: 8
+probe_seed: 42
 split_ratios:
   train: 0.70
   validation: 0.15
@@ -125,7 +136,7 @@ config = load_config("configs/task.yaml")
 The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the runner displays them.
 
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
-- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation and split seeds must be nonnegative integers; `allow_abstention` must be a Boolean.
+- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `allow_abstention` must be a Boolean.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
 - `answer_matcher_path`, when supplied, must be an absolute path to an existing `.py` file. The runner loads and validates its `answer_match` function during preparation.
 - Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
@@ -146,7 +157,9 @@ Generations are cached per example under `<output_dir>/.cache/generations`. A ca
 
 After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, `final_prompt_end`, every `answer_tokens` position, and any configured semantic spans. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
 
-Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations and the activation file for that run are cleared.
+Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. All probe groups share `<run_dir>/probes.h5`; interrupted groups resume from their completed position-and-state candidates, and completed groups are validated and reused.
+
+Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 
