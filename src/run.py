@@ -57,8 +57,11 @@ from src.model import (
 from src.probe import (
     ProbeError,
     ProbeIdentity,
+    SelectionIdentity,
     build_probe_identity,
     build_selection_identity,
+    build_test_evaluation_identity,
+    evaluate_frozen_test,
     select_probe,
     train_probes,
 )
@@ -72,6 +75,7 @@ from src.run_store import (
     complete_activation_capture,
     complete_probe_selection,
     complete_probe_training,
+    complete_test_evaluation,
     evaluation_artifact_path,
     finalize_generation_records,
     load_evaluation_records,
@@ -86,6 +90,7 @@ from src.run_store import (
     validate_completed_activation_capture,
     validate_completed_probe_selection,
     validate_completed_probe_training,
+    validate_completed_test_evaluation,
     write_evaluation_records,
 )
 
@@ -706,7 +711,7 @@ def _select_probe(
     registered: RegisteredRun,
     probe_identity: ProbeIdentity,
     probe_sha256: str,
-) -> None:
+) -> tuple[SelectionIdentity, str]:
     identity = build_selection_identity(
         probe_identity.probe_id,
         probe_sha256,
@@ -718,7 +723,9 @@ def _select_probe(
     ):
         summary = run_record["probe_selections"][identity.selection_id]["selected"]
         _print_probe_selection(identity.selection_id, summary, True)
-        return
+        return identity, run_record["probe_selections"][identity.selection_id][
+            "content_sha256"
+        ]
 
     result = select_probe(registered.directory, probe_identity, identity)
     complete_probe_selection(
@@ -728,6 +735,78 @@ def _select_probe(
         result.summary,
     )
     _print_probe_selection(identity.selection_id, result.summary, not result.created)
+    return identity, result.content_sha256
+
+
+def _print_test_evaluation(test_id: str, summary: dict, reused: bool) -> None:
+    print(f"Test evaluation ID: {test_id}")
+    print(f"Test evaluation: {'reused' if reused else 'created'}.")
+    for label, key in (
+        ("Probe", "probe"),
+        ("Output probability", "output_probability"),
+    ):
+        metrics = summary[key]
+        print(
+            f"{label}: threshold {metrics['threshold']:.6f} | "
+            f"TPR {metrics['tpr']:.4f} | FPR {metrics['fpr']:.4f} | "
+            f"acceptance {metrics['acceptance_rate']:.4f} | "
+            f"AUROC {metrics['auroc']:.4f}"
+        )
+
+
+def _evaluate_frozen_test(
+    prepared: PreparedRun,
+    registered: RegisteredRun,
+    probe_identity: ProbeIdentity,
+    selection_identity: SelectionIdentity,
+    selection_sha256: str,
+) -> None:
+    directory = registered.directory
+    run_record = load_run_record(directory)
+    generation = run_record.get("generation")
+    if not isinstance(generation, dict):
+        raise RunStoreError("Frozen test evaluation requires completed generation.")
+    identity = build_test_evaluation_identity(
+        selection_identity.selection_id,
+        selection_sha256,
+        generation["artifact_sha256"],
+    )
+    if validate_completed_test_evaluation(
+        directory,
+        run_record,
+        probe_identity,
+        selection_identity,
+        identity,
+    ):
+        summary = run_record["test_evaluations"][identity.test_id]["summary"]
+        _print_test_evaluation(identity.test_id, summary, True)
+        return
+
+    evaluation_identity = build_evaluation_identity(
+        generation["artifact_sha256"], prepared.answer_matcher
+    )
+    evaluations = load_evaluation_records(
+        directory, evaluation_identity.evaluation_id, prepared.dataset.examples
+    )
+    generation_context = build_generation_context(prepared.config)
+    generations, _ = load_generation_records(
+        directory, generation_context, prepared.dataset.examples
+    )
+    result = evaluate_frozen_test(
+        directory,
+        probe_identity,
+        selection_identity,
+        identity,
+        evaluations,
+        generations,
+    )
+    complete_test_evaluation(
+        directory,
+        identity,
+        result.content_sha256,
+        result.summary,
+    )
+    _print_test_evaluation(identity.test_id, result.summary, not result.created)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -781,8 +860,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prepared, registered, loaded, args.force_recompute
             )
             probe_identity, probe_sha256 = _train_probes(prepared, registered)
-            _select_probe(
+            selection_identity, selection_sha256 = _select_probe(
                 prepared, registered, probe_identity, probe_sha256
+            )
+            _evaluate_frozen_test(
+                prepared,
+                registered,
+                probe_identity,
+                selection_identity,
+                selection_sha256,
             )
     except ConfigurationError as error:
         print(error, file=sys.stderr)

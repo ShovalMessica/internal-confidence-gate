@@ -93,6 +93,14 @@ For each candidate, validation selection chooses the highest observed `P(correct
 
 All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID depends on the activation artifact, evaluation artifact, fixed training protocol, and `probe_seed`. The selection ID depends on that completed probe group and `target_tpr`. Changing the target therefore reuses trained probes and creates another small selection group without rerunning the model.
 
+## Frozen test evaluation
+
+After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, acceptance rate, and AUROC.
+
+The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability.
+
+Per-example test labels, scores, and accept/reject decisions are stored in the existing `<run_dir>/probes.h5`; `run.json` stores the summary. Neither method uses test data to select a representation or threshold.
+
 ## Automatic splitting
 
 Applies only when the dataset omits `split`.
@@ -161,7 +169,7 @@ Generations are cached per example under `<output_dir>/.cache/generations`. A ca
 
 After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, `final_prompt_end`, every `answer_tokens` position, and any configured semantic spans. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
 
-Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection has its own ID, so `target_tpr` changes reuse the completed probes. All training and selection groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
+Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection and frozen test evaluation have their own IDs, so downstream setting changes reuse completed upstream work. All groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
 
 Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
 

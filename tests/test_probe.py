@@ -1,6 +1,7 @@
 """Offline checks for linear probe training and storage."""
 
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -16,10 +17,13 @@ from src.probe import (
     ProbeError,
     build_probe_identity,
     build_selection_identity,
+    build_test_evaluation_identity,
+    evaluate_frozen_test,
     select_probe,
     train_probes,
     validate_probe_group,
     validate_selection_group,
+    validate_test_evaluation_group,
 )
 
 
@@ -40,6 +44,7 @@ class ProbeTests(unittest.TestCase):
             8: self.evaluation(8, "validation", "incorrect"),
             # Deliberately has no activation group. Probe training must not read test.
             9: self.evaluation(9, "test", "correct"),
+            10: self.evaluation(10, "test", "incorrect"),
         }
         self.write_activations()
 
@@ -52,7 +57,7 @@ class ProbeTests(unittest.TestCase):
             "is_correct": outcome == "correct",
         }
 
-    def write_activations(self, *, nonfinite=False):
+    def write_activations(self, *, nonfinite=False, include_test=False):
         labels = ("embedding", "hidden_state_1")
         with h5py.File(self.activation_path, "w") as output:
             output.attrs["completed"] = True
@@ -60,7 +65,9 @@ class ProbeTests(unittest.TestCase):
             output.attrs["state_count"] = len(labels)
             output.attrs["hidden_size"] = 2
             examples = output.create_group("examples")
-            for example_id, record in list(self.evaluations.items())[:-1]:
+            for example_id, record in self.evaluations.items():
+                if record["split"] == "test" and not include_test:
+                    continue
                 sign = 1.0 if record["outcome"] == "correct" else -1.0
                 group = examples.create_group(str(example_id))
                 group.attrs["split"] = record["split"]
@@ -298,6 +305,95 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.summary["state_index"], 0)
         self.assertEqual(result.summary["fpr"], 0.0)
         self.assertLess(result.summary["auroc"], 1.0)
+
+    def test_frozen_test_scores_probe_and_geometric_probability(self):
+        self.write_activations(include_test=True)
+        probe = self.identity()
+        trained = train_probes(self.directory, probe, self.evaluations)
+        selection = build_selection_identity(
+            probe.probe_id, trained.content_sha256, 0.9
+        )
+        selected = select_probe(self.directory, probe, selection)
+        identity = build_test_evaluation_identity(
+            selection.selection_id, selected.content_sha256, "g" * 64
+        )
+        probabilities = {
+            5: [0.9],
+            6: [0.8],
+            7: [0.7],
+            8: [0.1],
+            9: [0.8, 0.2],
+            10: [0.3],
+        }
+        generations = {
+            example_id: {
+                "answer": {
+                    "token_logprobs": [math.log(value) for value in values]
+                }
+            }
+            for example_id, values in probabilities.items()
+        }
+
+        invalid_generations = dict(generations)
+        invalid_generations[9] = {"answer": {"token_logprobs": []}}
+        with self.assertRaisesRegex(ProbeError, "example ID 9"):
+            evaluate_frozen_test(
+                self.directory,
+                probe,
+                selection,
+                identity,
+                self.evaluations,
+                invalid_generations,
+            )
+        with h5py.File(self.directory / PROBE_FILE, "r") as source:
+            self.assertNotIn("test_evaluations", source)
+
+        result = evaluate_frozen_test(
+            self.directory,
+            probe,
+            selection,
+            identity,
+            self.evaluations,
+            generations,
+        )
+
+        self.assertTrue(result.created)
+        baseline = result.summary["output_probability"]
+        self.assertEqual(baseline["aggregation"], "geometric_mean_token_probability")
+        self.assertAlmostEqual(baseline["threshold"], 0.8)
+        self.assertEqual((baseline["tpr"], baseline["fpr"]), (0.0, 0.0))
+        with h5py.File(self.directory / PROBE_FILE, "r") as source:
+            group = source[f"test_evaluations/{identity.test_id}"]
+            np.testing.assert_allclose(group["probability_scores"][...], [0.4, 0.3])
+            self.assertEqual(group["ids"][...].tolist(), [9, 10])
+        content_hash, summary = validate_test_evaluation_group(
+            self.directory,
+            probe,
+            selection,
+            identity,
+            result.content_sha256,
+        )
+        self.assertEqual((content_hash, summary), (result.content_sha256, result.summary))
+        reused = evaluate_frozen_test(
+            self.directory,
+            probe,
+            selection,
+            identity,
+            self.evaluations,
+            generations,
+        )
+        self.assertFalse(reused.created)
+
+        with h5py.File(self.directory / PROBE_FILE, "a") as source:
+            source[f"test_evaluations/{identity.test_id}/probe_scores"][0] = 0.0
+        with self.assertRaisesRegex(ProbeError, "invalid|changed"):
+            validate_test_evaluation_group(
+                self.directory,
+                probe,
+                selection,
+                identity,
+                result.content_sha256,
+            )
 
 
 if __name__ == "__main__":

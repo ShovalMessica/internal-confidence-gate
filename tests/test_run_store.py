@@ -230,6 +230,7 @@ class RunStoreTests(unittest.TestCase):
                         "activation_capture",
                         "probe_training",
                         "probe_selection",
+                        "test_evaluation",
                     ],
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
@@ -238,6 +239,7 @@ class RunStoreTests(unittest.TestCase):
                     "activation_capture": {},
                     "probe_trainings": {"probe": {}},
                     "probe_selections": {"selection": {}},
+                    "test_evaluations": {"test": {}},
                 }
             ),
             encoding="utf-8",
@@ -251,6 +253,7 @@ class RunStoreTests(unittest.TestCase):
         self.assertNotIn("activation_capture", record)
         self.assertNotIn("probe_trainings", record)
         self.assertNotIn("probe_selections", record)
+        self.assertNotIn("test_evaluations", record)
         self.assertFalse(path.exists())
         self.assertFalse((self.directory / "evaluations").exists())
         self.assertFalse((self.directory / "evaluations.jsonl").exists())

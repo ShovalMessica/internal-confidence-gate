@@ -19,8 +19,10 @@ from src.activation_store import activation_file_path
 PROBE_PROTOCOL_VERSION = 1
 PROBE_STORE_SCHEMA_VERSION = 1
 SELECTION_PROTOCOL_VERSION = 1
+TEST_EVALUATION_PROTOCOL_VERSION = 1
 PROBE_FILE = "probes.h5"
 PROBE_SCORE = "probability_correct"
+PROBABILITY_AGGREGATION = "geometric_mean_token_probability"
 TOKEN_POOLING = "mean"
 REGULARIZATION_C = 1.0
 MAX_ITERATIONS = 5_000
@@ -67,6 +69,22 @@ class SelectionIdentity:
 
 @dataclass(frozen=True)
 class ProbeSelectionResult:
+    content_sha256: str
+    summary: dict
+    created: bool
+
+
+@dataclass(frozen=True)
+class TestEvaluationIdentity:
+    test_id: str
+    fingerprint: str
+    selection_id: str
+    selection_sha256: str
+    generation_sha256: str
+
+
+@dataclass(frozen=True)
+class TestEvaluationResult:
     content_sha256: str
     summary: dict
     created: bool
@@ -155,6 +173,27 @@ def build_selection_identity(
     fingerprint = hashlib.sha256(_encoded(payload)).hexdigest()
     return SelectionIdentity(
         fingerprint[:12], fingerprint, probe_id, probe_sha256, target_tpr
+    )
+
+
+def build_test_evaluation_identity(
+    selection_id: str, selection_sha256: str, generation_sha256: str
+) -> TestEvaluationIdentity:
+    """Identify frozen test scoring independently from upstream computation."""
+    payload = {
+        "protocol_version": TEST_EVALUATION_PROTOCOL_VERSION,
+        "selection_id": selection_id,
+        "selection_sha256": selection_sha256,
+        "generation_sha256": generation_sha256,
+        "probability_aggregation": PROBABILITY_AGGREGATION,
+    }
+    fingerprint = hashlib.sha256(_encoded(payload)).hexdigest()
+    return TestEvaluationIdentity(
+        fingerprint[:12],
+        fingerprint,
+        selection_id,
+        selection_sha256,
+        generation_sha256,
     )
 
 
@@ -303,6 +342,14 @@ def _selections(source, *, create: bool = False):
         return source["selections"]
     if create:
         return source.create_group("selections")
+    return None
+
+
+def _test_evaluations(source, *, create: bool = False):
+    if "test_evaluations" in source:
+        return source["test_evaluations"]
+    if create:
+        return source.create_group("test_evaluations")
     return None
 
 
@@ -675,20 +722,77 @@ def _candidate_metrics(
     threshold = np.sort(correct)[-required_correct]
     accepted_correct = int(np.count_nonzero(correct >= threshold))
     accepted_incorrect = int(np.count_nonzero(incorrect >= threshold))
-    try:
-        from sklearn.metrics import roc_auc_score
-    except ImportError as exc:
-        raise ProbeError(
-            "Probe selection is unavailable; install requirements.txt."
-        ) from exc
     return (
         float(threshold),
         accepted_correct,
         accepted_incorrect,
         accepted_correct / correct.size,
         accepted_incorrect / incorrect.size,
-        float(roc_auc_score(labels, scores)),
+        _auroc(labels, scores),
     )
+
+
+def _auroc(labels: np.ndarray, scores: np.ndarray) -> float:
+    try:
+        from sklearn.metrics import roc_auc_score
+    except ImportError as exc:
+        raise ProbeError(
+            "Probe evaluation is unavailable; install requirements.txt."
+        ) from exc
+    return float(roc_auc_score(labels, scores))
+
+
+def _frozen_metrics(
+    labels: np.ndarray, scores: np.ndarray, threshold: float
+) -> dict[str, object]:
+    accepted = scores >= threshold
+    correct = labels == 1
+    incorrect = labels == 0
+    accepted_correct = int(np.count_nonzero(accepted & correct))
+    accepted_incorrect = int(np.count_nonzero(accepted & incorrect))
+    total_correct = int(np.count_nonzero(correct))
+    total_incorrect = int(np.count_nonzero(incorrect))
+    return {
+        "threshold": threshold,
+        "accepted_correct": accepted_correct,
+        "total_correct": total_correct,
+        "tpr": accepted_correct / total_correct,
+        "accepted_incorrect": accepted_incorrect,
+        "total_incorrect": total_incorrect,
+        "fpr": accepted_incorrect / total_incorrect,
+        "accepted": int(np.count_nonzero(accepted)),
+        "total": int(labels.size),
+        "acceptance_rate": float(np.mean(accepted)),
+        "auroc": _auroc(labels, scores),
+    }
+
+
+def _answer_probability(record: Mapping[str, object], example_id: int) -> float:
+    answer = record.get("answer")
+    logprobs = answer.get("token_logprobs") if isinstance(answer, Mapping) else None
+    if (
+        not isinstance(logprobs, (list, tuple))
+        or not logprobs
+        or any(type(value) not in (int, float) for value in logprobs)
+    ):
+        raise ProbeError(
+            f"Answer token probabilities are invalid for example ID {example_id}."
+        )
+    values = np.asarray(logprobs, dtype=np.float64)
+    if not np.isfinite(values).all() or np.any(values > 1e-6):
+        raise ProbeError(
+            f"Answer token probabilities are invalid for example ID {example_id}."
+        )
+    return float(np.exp(values.mean()))
+
+
+def _sigmoid(values: np.ndarray) -> np.ndarray:
+    result = np.empty_like(values, dtype=np.float64)
+    positive = values >= 0
+    result[positive] = 1 / (1 + np.exp(-values[positive]))
+    exp_values = np.exp(values[~positive])
+    result[~positive] = exp_values / (1 + exp_values)
+    return result
 
 
 def _selection_summary(group) -> dict[str, object]:
@@ -934,6 +1038,253 @@ def select_probe(
         raise
     except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
         raise ProbeError(f"Cannot select or save probe: {path}") from exc
+
+
+def _test_summary(group) -> dict[str, object]:
+    labels = np.asarray(group["labels"][...], dtype=np.int8)
+    probe = _frozen_metrics(
+        labels,
+        np.asarray(group["probe_scores"][...]),
+        float(group.attrs["probe_threshold"]),
+    )
+    probability = _frozen_metrics(
+        labels,
+        np.asarray(group["probability_scores"][...]),
+        float(group.attrs["probability_threshold"]),
+    )
+    probability["aggregation"] = PROBABILITY_AGGREGATION
+    return {
+        "examples": int(labels.size),
+        "correct": int(np.count_nonzero(labels == 1)),
+        "incorrect": int(np.count_nonzero(labels == 0)),
+        "probe": probe,
+        "output_probability": probability,
+    }
+
+
+def _test_sha256(group) -> str:
+    if not bool(group.attrs.get("completed", False)):
+        raise ProbeError("Cannot hash incomplete frozen test evaluation.")
+    metadata_names = (
+        "fingerprint",
+        "selection_id",
+        "selection_sha256",
+        "generation_sha256",
+        "protocol_version",
+        "probability_aggregation",
+        "probe_threshold",
+        "probability_threshold",
+        "probability_validation",
+    )
+    metadata = {}
+    for name in metadata_names:
+        value = group.attrs[name]
+        metadata[name] = value.item() if isinstance(value, np.generic) else value
+    digest = hashlib.sha256(_encoded(metadata))
+    for name in sorted(group.keys()):
+        values = np.asarray(group[name][...])
+        digest.update(name.encode("utf-8"))
+        digest.update(str(values.dtype).encode("ascii"))
+        digest.update(_encoded(values.shape))
+        digest.update(values.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _validate_test_layout(group, identity: TestEvaluationIdentity) -> None:
+    expected = {
+        "fingerprint": identity.fingerprint,
+        "selection_id": identity.selection_id,
+        "selection_sha256": identity.selection_sha256,
+        "generation_sha256": identity.generation_sha256,
+        "protocol_version": TEST_EVALUATION_PROTOCOL_VERSION,
+        "probability_aggregation": PROBABILITY_AGGREGATION,
+    }
+    if any(group.attrs.get(name) != value for name, value in expected.items()):
+        raise ProbeError(f"Frozen test evaluation is incompatible: {identity.test_id}")
+    arrays = {
+        "ids": "int64",
+        "labels": "int8",
+        "probe_scores": "float64",
+        "probability_scores": "float64",
+        "probe_accepted": "bool",
+        "probability_accepted": "bool",
+    }
+    if set(group.keys()) != set(arrays):
+        raise ProbeError(f"Frozen test evaluation is incomplete: {identity.test_id}")
+    size = group["ids"].shape
+    if len(size) != 1 or size[0] == 0:
+        raise ProbeError(f"Frozen test evaluation has no examples: {identity.test_id}")
+    for name, dtype in arrays.items():
+        if group[name].shape != size or group[name].dtype.name != dtype:
+            raise ProbeError(
+                f"Frozen test evaluation has invalid '{name}': {identity.test_id}"
+            )
+    labels = group["labels"][...]
+    probe_scores = group["probe_scores"][...]
+    probability_scores = group["probability_scores"][...]
+    probe_threshold = float(group.attrs.get("probe_threshold", float("nan")))
+    probability_threshold = float(
+        group.attrs.get("probability_threshold", float("nan"))
+    )
+    if (
+        not bool(group.attrs.get("completed", False))
+        or set(labels.tolist()) != {0, 1}
+        or len(set(group["ids"][...].tolist())) != size[0]
+        or not np.isfinite(probe_scores).all()
+        or not np.isfinite(probability_scores).all()
+        or np.any((probe_scores < 0) | (probe_scores > 1))
+        or np.any((probability_scores < 0) | (probability_scores > 1))
+        or not 0 <= probe_threshold <= 1
+        or not 0 <= probability_threshold <= 1
+        or not np.array_equal(group["probe_accepted"][...], probe_scores >= probe_threshold)
+        or not np.array_equal(
+            group["probability_accepted"][...],
+            probability_scores >= probability_threshold,
+        )
+        or not isinstance(_json_attr(group, "probability_validation"), dict)
+    ):
+        raise ProbeError(f"Frozen test evaluation is invalid: {identity.test_id}")
+
+
+def validate_test_evaluation_group(
+    run_directory: Path,
+    probe_identity: ProbeIdentity,
+    selection_identity: SelectionIdentity,
+    identity: TestEvaluationIdentity,
+    expected_sha256: str | None = None,
+) -> tuple[str, dict]:
+    """Validate frozen test scores and their selected-probe provenance."""
+    validate_selection_group(
+        run_directory,
+        probe_identity,
+        selection_identity,
+        identity.selection_sha256,
+    )
+    path = probe_file_path(run_directory)
+    try:
+        with _open(path, "r") as source:
+            tests = _test_evaluations(source)
+            if tests is None or identity.test_id not in tests:
+                raise ProbeError(f"Frozen test evaluation is missing: {identity.test_id}")
+            group = tests[identity.test_id]
+            _validate_test_layout(group, identity)
+            content_hash = _test_sha256(group)
+            if expected_sha256 is not None and content_hash != expected_sha256:
+                raise ProbeError(
+                    f"Frozen test evaluation has changed: {identity.test_id}"
+                )
+            return content_hash, _test_summary(group)
+    except ProbeError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ProbeError(f"Probe artifact is invalid: {path}") from exc
+
+
+def evaluate_frozen_test(
+    run_directory: Path,
+    probe_identity: ProbeIdentity,
+    selection_identity: SelectionIdentity,
+    identity: TestEvaluationIdentity,
+    evaluations: Mapping[int, Mapping[str, object]],
+    generations: Mapping[int, Mapping[str, object]],
+) -> TestEvaluationResult:
+    """Apply frozen probe and probability thresholds to concrete test predictions."""
+    validate_selection_group(
+        run_directory,
+        probe_identity,
+        selection_identity,
+        identity.selection_sha256,
+    )
+    validation_ids, validation_labels = _split_records(evaluations, "validation")
+    test_ids, test_labels = _split_records(evaluations, "test")
+    validation_probabilities = np.asarray(
+        [_answer_probability(generations[item], item) for item in validation_ids]
+    )
+    test_probabilities = np.asarray(
+        [_answer_probability(generations[item], item) for item in test_ids]
+    )
+    probability_values = _candidate_metrics(
+        validation_probabilities,
+        validation_labels,
+        selection_identity.target_tpr,
+    )
+    probability_validation = dict(zip(SELECTION_METRICS, probability_values))
+    probability_threshold = float(probability_validation["thresholds"])
+
+    path = probe_file_path(run_directory)
+    activation_path = activation_file_path(run_directory)
+    try:
+        with (
+            _h5py().File(activation_path, "r") as activations,
+            _open(path, "a") as output,
+        ):
+            training = _root(output)[probe_identity.probe_id]
+            selection = _selections(output)[selection_identity.selection_id]
+            tests = _test_evaluations(output, create=True)
+            if identity.test_id in tests:
+                group = tests[identity.test_id]
+                _validate_test_layout(group, identity)
+                return TestEvaluationResult(
+                    _test_sha256(group), _test_summary(group), False
+                )
+
+            position = str(selection.attrs["selected_position"])
+            state = int(selection.attrs["selected_state_index"])
+            probe_threshold = float(selection.attrs["selected_threshold"])
+            model = training["position_models"][position]
+            test_values = _matrix(activations, test_ids, position, state)
+            standardized = (
+                test_values - np.asarray(model["scaler_mean"][state])
+            ) / np.asarray(model["scaler_scale"][state])
+            logits = (
+                standardized @ np.asarray(model["coefficients"][state])
+                + float(model["intercepts"][state])
+            )
+            probe_scores = _sigmoid(np.asarray(logits, dtype=np.float64))
+            if not np.isfinite(probe_scores).all():
+                raise ProbeError("Frozen probe produced nonfinite test scores.")
+
+            pending_name = f"_pending_{identity.test_id}"
+            if pending_name in tests:
+                del tests[pending_name]
+            group = tests.create_group(pending_name)
+            group.attrs["fingerprint"] = identity.fingerprint
+            group.attrs["selection_id"] = identity.selection_id
+            group.attrs["selection_sha256"] = identity.selection_sha256
+            group.attrs["generation_sha256"] = identity.generation_sha256
+            group.attrs["protocol_version"] = TEST_EVALUATION_PROTOCOL_VERSION
+            group.attrs["probability_aggregation"] = PROBABILITY_AGGREGATION
+            group.attrs["probe_threshold"] = probe_threshold
+            group.attrs["probability_threshold"] = probability_threshold
+            group.attrs["probability_validation"] = json.dumps(
+                probability_validation, sort_keys=True
+            )
+            group.create_dataset("ids", data=test_ids, dtype="int64")
+            group.create_dataset("labels", data=test_labels, dtype="int8")
+            group.create_dataset("probe_scores", data=probe_scores, dtype="float64")
+            group.create_dataset(
+                "probability_scores", data=test_probabilities, dtype="float64"
+            )
+            group.create_dataset(
+                "probe_accepted", data=probe_scores >= probe_threshold, dtype="bool"
+            )
+            group.create_dataset(
+                "probability_accepted",
+                data=test_probabilities >= probability_threshold,
+                dtype="bool",
+            )
+            group.attrs["completed"] = True
+            output.flush()
+            tests.move(pending_name, identity.test_id)
+            output.flush()
+            completed = tests[identity.test_id]
+            return TestEvaluationResult(
+                _test_sha256(completed), _test_summary(completed), True
+            )
+    except ProbeError:
+        raise
+    except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+        raise ProbeError(f"Cannot evaluate or save frozen test results: {path}") from exc
 
 
 def train_probes(

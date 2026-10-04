@@ -43,11 +43,14 @@ from src.probe import (
     PROBE_FILE,
     PROBE_PROTOCOL_VERSION,
     SELECTION_PROTOCOL_VERSION,
+    TEST_EVALUATION_PROTOCOL_VERSION,
     ProbeIdentity,
     SelectionIdentity,
+    TestEvaluationIdentity,
     probe_file_path,
     validate_probe_group,
     validate_selection_group,
+    validate_test_evaluation_group,
 )
 
 
@@ -825,6 +828,81 @@ def validate_completed_probe_selection(
     return True
 
 
+def complete_test_evaluation(
+    directory: Path,
+    identity: TestEvaluationIdentity,
+    content_sha256: str,
+    summary: dict,
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "test_evaluation" not in stages:
+        stages.append("test_evaluation")
+    evaluations = record.setdefault("test_evaluations", {})
+    if not isinstance(evaluations, dict):
+        raise RunStoreError("Run record has an invalid test-evaluation registry.")
+    entry = {
+        "test_id": identity.test_id,
+        "fingerprint": identity.fingerprint,
+        "protocol_version": TEST_EVALUATION_PROTOCOL_VERSION,
+        "selection_id": identity.selection_id,
+        "selection_sha256": identity.selection_sha256,
+        "generation_sha256": identity.generation_sha256,
+        "artifact": PROBE_FILE,
+        "group": f"test_evaluations/{identity.test_id}",
+        "content_sha256": content_sha256,
+        "summary": summary,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    existing = evaluations.get(identity.test_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Test evaluation ID collision or conflicting run record.")
+    evaluations[identity.test_id] = entry
+    _save_run_record(directory, record)
+
+
+def validate_completed_test_evaluation(
+    directory: Path,
+    record: dict,
+    probe_identity: ProbeIdentity,
+    selection_identity: SelectionIdentity,
+    identity: TestEvaluationIdentity,
+) -> bool:
+    evaluations = record.get("test_evaluations")
+    if evaluations is None:
+        return False
+    if not isinstance(evaluations, dict):
+        raise RunStoreError("Run record has an invalid test-evaluation registry.")
+    evaluation = evaluations.get(identity.test_id)
+    if evaluation is None:
+        return False
+    if "test_evaluation" not in record.get("completed_stages", []):
+        raise RunStoreError("Saved test evaluation is missing its completed stage.")
+    if (
+        not isinstance(evaluation, dict)
+        or evaluation.get("test_id") != identity.test_id
+        or evaluation.get("fingerprint") != identity.fingerprint
+        or evaluation.get("protocol_version") != TEST_EVALUATION_PROTOCOL_VERSION
+        or evaluation.get("selection_id") != identity.selection_id
+        or evaluation.get("selection_sha256") != identity.selection_sha256
+        or evaluation.get("generation_sha256") != identity.generation_sha256
+        or evaluation.get("artifact") != PROBE_FILE
+        or evaluation.get("group") != f"test_evaluations/{identity.test_id}"
+        or not isinstance(evaluation.get("summary"), dict)
+    ):
+        raise RunStoreError("Completed test evaluation is invalid.")
+    _, summary = validate_test_evaluation_group(
+        directory,
+        probe_identity,
+        selection_identity,
+        identity,
+        evaluation.get("content_sha256"),
+    )
+    if summary != evaluation["summary"]:
+        raise RunStoreError("Completed test-evaluation summary is invalid.")
+    return True
+
+
 def save_model_metadata(
     directory: Path, metadata: dict, provenance: dict, generation_settings: dict
 ) -> None:
@@ -897,6 +975,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("probe_training", None)
     record.pop("probe_trainings", None)
     record.pop("probe_selections", None)
+    record.pop("test_evaluations", None)
     record["completed_stages"] = [
         stage
         for stage in record["completed_stages"]
@@ -906,6 +985,7 @@ def reset_generation(directory: Path) -> str | None:
             "activation_capture",
             "probe_training",
             "probe_selection",
+            "test_evaluation",
         )
     ]
     try:
