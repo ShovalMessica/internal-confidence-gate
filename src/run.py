@@ -21,6 +21,12 @@ from src.evaluation import (
     load_answer_matcher,
 )
 from src.generation import GenerationError, generation_units
+from src.generation_cache import (
+    GenerationCacheError,
+    build_generation_context,
+    load_context_model,
+    save_context_model,
+)
 from src.model import ModelLoadError, describe_model, load_model
 from src.run_store import (
     RegisteredRun,
@@ -36,7 +42,7 @@ from src.run_store import (
     load_run_record,
     register_run,
     reset_generation,
-    reset_partial_direct_batches,
+    reuse_cached_generation_records,
     save_model_metadata,
     validate_completed_generation,
     validate_completed_evaluation,
@@ -188,37 +194,55 @@ def _generate(
 ) -> None:
     directory = registered.directory
     examples = prepared.dataset.examples
+    examples_by_id = {example["id"]: example for example in examples}
+    context = build_generation_context(prepared.config)
     record = load_run_record(directory)
 
     pinned_revision = None
     if force_recompute:
         pinned_revision = reset_generation(directory)
         record = load_run_record(directory)
-    elif validate_completed_generation(directory, record):
-        records, _ = load_generation_records(directory, examples)
+    elif validate_completed_generation(directory, record, context):
+        records, _ = load_generation_records(directory, context, examples)
         if set(records) != {example["id"] for example in examples}:
             raise RunStoreError("Completed generation does not contain every example.")
         print("Generation artifact: reused (model not loaded).")
         return
 
-    records, recovered = load_generation_records(directory, examples)
+    records, recovered = load_generation_records(directory, context, examples)
     if recovered:
         print("Recovered a truncated final generation record.")
-    if prepared.config.reasoning_mode == "direct":
-        records, removed = reset_partial_direct_batches(
-            directory, records, examples, prepared.config.direct_batch_size
-        )
-        if removed:
-            print(f"Reset {removed} record(s) from an incomplete direct batch.")
 
     stored_model = record.get("model")
+    cached_model = load_context_model(context)
+    if isinstance(stored_model, dict) and cached_model not in (None, stored_model):
+        raise RunStoreError("Run model metadata conflicts with the generation cache.")
+    if cached_model is not None and stored_model is None:
+        save_model_metadata(
+            directory,
+            cached_model,
+            _provenance(config_path, force_recompute),
+            _generation_settings(prepared.config),
+        )
+        stored_model = cached_model
     if records and not isinstance(stored_model, dict):
         raise RunStoreError("Generation records exist without recorded model metadata.")
+
+    if not force_recompute and cached_model is not None:
+        reused = reuse_cached_generation_records(
+            directory, context, examples, set(records)
+        )
+        records.update(reused)
+        if reused:
+            print(f"Generation cache: {len(reused)} reused.")
+
     expected_ids = {example["id"] for example in examples}
     if set(records) == expected_ids:
-        artifact_hash, counts = finalize_generation_records(directory, records, examples)
-        complete_generation(directory, artifact_hash, counts)
-        print("Recovered and finalized the complete generation artifact.")
+        artifact_hash, counts = finalize_generation_records(
+            directory, context, records, examples
+        )
+        complete_generation(directory, context, artifact_hash, counts)
+        print("Generation complete from cached records; model not loaded.")
         return
     if pinned_revision is None and isinstance(stored_model, dict):
         pinned_revision = stored_model.get("resolved_revision")
@@ -229,6 +253,7 @@ def _generate(
         "requested_revision": prepared.config.model_revision,
         **describe_model(loaded),
     }
+    save_context_model(context, metadata)
     save_model_metadata(
         directory,
         metadata,
@@ -244,14 +269,19 @@ def _generate(
     for unit in generation_units(
         loaded, examples, prepared.config, completed_ids=records
     ):
-        append_generation_records(directory, list(unit.records))
+        append_generation_records(
+            directory, context, examples_by_id, list(unit.records)
+        )
         records.update((item["id"], item) for item in unit.records)
         _progress(len(records), total, records, started, starting_done)
 
-    artifact_hash, counts = finalize_generation_records(directory, records, examples)
-    complete_generation(directory, artifact_hash, counts)
+    artifact_hash, counts = finalize_generation_records(
+        directory, context, records, examples
+    )
+    complete_generation(directory, context, artifact_hash, counts)
     print(
-        f"Generation complete: {counts['successful']} succeeded, "
+        f"Generation complete: {starting_done} reused, "
+        f"{total - starting_done} generated; {counts['successful']} succeeded, "
         f"{counts['failed']} failed."
     )
 
@@ -295,8 +325,9 @@ def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
 def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     directory = registered.directory
     examples = prepared.dataset.examples
+    context = build_generation_context(prepared.config)
     run_record = load_run_record(directory)
-    if not validate_completed_generation(directory, run_record):
+    if not validate_completed_generation(directory, run_record, context):
         raise RunStoreError("Evaluation requires completed generation.")
     generation_hash = run_record["generation"]["artifact_sha256"]
     identity = build_evaluation_identity(
@@ -310,7 +341,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         _print_evaluation(summary, reused=True)
         return summary
 
-    generations, _ = load_generation_records(directory, examples)
+    generations, _ = load_generation_records(directory, context, examples)
     result = evaluate_answers(
         examples,
         generations,
@@ -397,6 +428,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except GenerationError as error:
         print(f"Generation error: {error}", file=sys.stderr)
+        return 1
+    except GenerationCacheError as error:
+        print(f"Generation cache error: {error}", file=sys.stderr)
         return 1
     except EvaluationError as error:
         print(f"Evaluation error: {error}", file=sys.stderr)

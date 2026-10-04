@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 2
+GENERATION_PROTOCOL_VERSION = 3
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -116,8 +116,8 @@ def _context_limit(model: Any, tokenizer: Any) -> int | None:
     return min(finite) if finite else None
 
 
-def _stable_seed(base_seed: int, position: int) -> int:
-    digest = hashlib.sha256(f"{base_seed}:{position}".encode("ascii")).digest()
+def _stable_seed(base_seed: int, example_id: int) -> int:
+    digest = hashlib.sha256(f"{base_seed}:{example_id}".encode("ascii")).digest()
     return int.from_bytes(digest[:4], "big")
 
 
@@ -337,7 +337,7 @@ def _direct_unit(
         prepared.append((position, example, chat_ids, answer_context, control))
 
     if prepared:
-        set_seed(_stable_seed(config.generation_seed, indexed_examples[0][0]))
+        set_seed(_stable_seed(config.generation_seed, indexed_examples[0][1]["id"]))
         answers = _answer_outputs(
             loaded,
             [row[3] for row in prepared],
@@ -400,7 +400,7 @@ def _reasoning_unit(
             ),
         )
 
-    set_seed(_stable_seed(config.generation_seed, position))
+    set_seed(_stable_seed(config.generation_seed, example["id"]))
     reasoning_ids, stop_reason, forced = _reasoning_output(
         loaded,
         initial_ids,
@@ -442,15 +442,12 @@ def generation_units(
     indexed = list(enumerate(examples))
     if config.reasoning_mode == "direct":
         size = config.direct_batch_size
-        for start in range(0, len(indexed), size):
-            batch = indexed[start : start + size]
-            if all(example["id"] in completed for _, example in batch):
-                continue
-            if any(example["id"] in completed for _, example in batch):
-                raise GenerationError(
-                    "A direct-generation batch is only partially stored; reset that "
-                    "batch before resuming."
-                )
+        missing = [item for item in indexed if item[1]["id"] not in completed]
+        generation_config = getattr(loaded.model, "generation_config", None)
+        if bool(getattr(generation_config, "do_sample", False)):
+            size = 1
+        for start in range(0, len(missing), size):
+            batch = missing[start : start + size]
             yield _direct_unit(loaded, batch, config)
         return
 

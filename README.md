@@ -179,14 +179,15 @@ python -m src.run configs/task.yaml --prepare-only
 The runner reports valid and excluded examples and the final split sizes. It creates or reuses:
 
 ```text
+<output_dir>/.cache/generations/<context_id>/...
 <output_dir>/<run_id>/run.json
-<output_dir>/<run_id>/generations.jsonl
+<output_dir>/<run_id>/generation-manifest.jsonl
 <output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, and completed stages. `generations.jsonl` stores generated tokens, token log probabilities, and recoverable failures. Each evaluation file stores correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, and completed stages. The manifest references shared per-example generations containing generated tokens, token log probabilities, and recoverable failures. Each evaluation file stores correctness outcomes in dataset order.
 
-Interrupted generation resumes from saved work. Completed generation and matching evaluations are reused without loading the model. Changing only the answer matcher creates another evaluation from the saved generations. To discard generation and all downstream evaluations and rerun with the same pinned model revision:
+Interrupted generation resumes from saved work. If a dataset is extended, unchanged examples with the same ID and input reuse their cached generations; only new or modified inputs run through the model. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation from the saved generations. To discard a run's generation and downstream evaluations and regenerate with the same pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute

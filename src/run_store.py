@@ -21,12 +21,20 @@ from src.generation import (
     GENERATION_PROTOCOL_VERSION,
     GENERATION_RECORD_SCHEMA_VERSION,
 )
+from src.generation_cache import (
+    CachedGeneration,
+    GenerationContext,
+    example_key,
+    load_generation,
+    store_generation,
+)
 
 
-IDENTITY_SCHEMA_VERSION = 3
+IDENTITY_SCHEMA_VERSION = 4
 _RUN_ID_LENGTH = 12
 _RUN_RECORD = "run.json"
-_GENERATION_ARTIFACT = "generations.jsonl"
+_GENERATION_ARTIFACT = "generation-manifest.jsonl"
+_GENERATION_MANIFEST_SCHEMA_VERSION = 1
 _EVALUATIONS_DIR = "evaluations"
 _LEGACY_EVALUATION_ARTIFACT = "evaluations.jsonl"
 
@@ -238,10 +246,47 @@ def _validate_generation_record(record: object, expected: dict, line: int) -> di
     return record
 
 
+def _manifest_entry(
+    context: GenerationContext, example: dict, cached: CachedGeneration
+) -> dict:
+    return {
+        "schema_version": _GENERATION_MANIFEST_SCHEMA_VERSION,
+        "context_id": context.context_id,
+        "id": example["id"],
+        "split": example["split"],
+        "example_key": cached.example_key,
+        "artifact_sha256": cached.artifact_sha256,
+    }
+
+
+def _validate_manifest_entry(
+    entry: object,
+    context: GenerationContext,
+    expected: dict[int, dict],
+    line: int,
+) -> dict:
+    if not isinstance(entry, dict):
+        raise RunStoreError(f"Generation manifest line {line} must be an object.")
+    example_id = entry.get("id")
+    example = expected.get(example_id) if type(example_id) is int else None
+    if (
+        entry.get("schema_version") != _GENERATION_MANIFEST_SCHEMA_VERSION
+        or entry.get("context_id") != context.context_id
+        or example is None
+        or entry.get("split") != example["split"]
+        or entry.get("example_key") != example_key(context, example)
+    ):
+        raise RunStoreError(f"Generation manifest line {line} is invalid.")
+    artifact_hash = entry.get("artifact_sha256")
+    if not isinstance(artifact_hash, str) or len(artifact_hash) != 64:
+        raise RunStoreError(f"Generation manifest line {line} has an invalid hash.")
+    return entry
+
+
 def load_generation_records(
-    directory: Path, examples: list[dict]
+    directory: Path, context: GenerationContext, examples: list[dict]
 ) -> tuple[dict[int, dict], bool]:
-    """Load resumable records and recover only a truncated final line."""
+    """Resolve a run manifest into generation records."""
     path = generation_artifact_path(directory)
     if not path.exists():
         return {}, False
@@ -262,6 +307,7 @@ def load_generation_records(
 
     expected = {example["id"]: example for example in examples}
     records: dict[int, dict] = {}
+    entries: list[dict] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         try:
             raw = json.loads(line)
@@ -269,50 +315,81 @@ def load_generation_records(
             raise RunStoreError(
                 f"Invalid generation JSON at line {line_number}: {path}"
             ) from exc
-        record = _validate_generation_record(raw, expected, line_number)
-        example_id = record["id"]
+        entry = _validate_manifest_entry(raw, context, expected, line_number)
+        example_id = entry["id"]
         if example_id in records:
             raise RunStoreError(
-                f"Duplicate generation record for ID {example_id}: {path}"
+                f"Duplicate generation manifest entry for ID {example_id}: {path}"
             )
+        try:
+            cached = load_generation(
+                context, expected[example_id], entry["artifact_sha256"]
+            )
+        except ValueError as exc:
+            raise RunStoreError(str(exc)) from exc
+        if cached is None or cached.example_key != entry["example_key"]:
+            raise RunStoreError(f"Cached generation is missing for ID {example_id}.")
+        record = _validate_generation_record(cached.record, expected, line_number)
         records[example_id] = record
+        entries.append(entry)
 
     if recovered:
-        _write_jsonl_records(path, list(records.values()))
+        _write_jsonl_records(path, entries)
     return records, recovered
 
 
-def reset_partial_direct_batches(
-    directory: Path,
-    records: dict[int, dict],
-    examples: list[dict],
-    batch_size: int,
-) -> tuple[dict[int, dict], int]:
-    """Drop incomplete fixed batches so resumed sampling uses the same grouping."""
-    retained = dict(records)
-    removed = 0
-    for start in range(0, len(examples), batch_size):
-        ids = [example["id"] for example in examples[start : start + batch_size]]
-        present = [example_id in retained for example_id in ids]
-        if any(present) and not all(present):
-            for example_id in ids:
-                removed += int(retained.pop(example_id, None) is not None)
-    if removed:
-        ordered = [retained[example["id"]] for example in examples if example["id"] in retained]
-        _write_jsonl_records(generation_artifact_path(directory), ordered)
-    return retained, removed
-
-
-def append_generation_records(directory: Path, records: list[dict]) -> None:
+def _append_manifest_entries(directory: Path, entries: list[dict]) -> None:
     path = generation_artifact_path(directory)
     try:
         with path.open("a", encoding="utf-8", newline="\n") as output:
-            for record in records:
-                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+            for entry in entries:
+                output.write(json.dumps(entry, ensure_ascii=False) + "\n")
             output.flush()
             os.fsync(output.fileno())
     except OSError as exc:
-        raise RunStoreError(f"Cannot append generation artifact: {path}") from exc
+        raise RunStoreError(f"Cannot append generation manifest: {path}") from exc
+
+
+def append_generation_records(
+    directory: Path,
+    context: GenerationContext,
+    examples: dict[int, dict],
+    records: list[dict],
+) -> None:
+    entries = []
+    for record in records:
+        example = examples[record["id"]]
+        try:
+            cached = store_generation(context, example, record)
+        except ValueError as exc:
+            raise RunStoreError(str(exc)) from exc
+        entries.append(_manifest_entry(context, example, cached))
+    _append_manifest_entries(directory, entries)
+
+
+def reuse_cached_generation_records(
+    directory: Path,
+    context: GenerationContext,
+    examples: list[dict],
+    completed_ids: set[int],
+) -> dict[int, dict]:
+    """Attach unchanged cross-run generations to the current run."""
+    reused: dict[int, dict] = {}
+    entries: list[dict] = []
+    for example in examples:
+        if example["id"] in completed_ids:
+            continue
+        try:
+            cached = load_generation(context, example)
+        except ValueError as exc:
+            raise RunStoreError(str(exc)) from exc
+        if cached is not None:
+            record = _validate_generation_record(cached.record, {example["id"]: example}, 1)
+            reused[example["id"]] = record
+            entries.append(_manifest_entry(context, example, cached))
+    if entries:
+        _append_manifest_entries(directory, entries)
+    return reused
 
 
 def _sha256(path: Path) -> str:
@@ -327,13 +404,23 @@ def _sha256(path: Path) -> str:
 
 
 def finalize_generation_records(
-    directory: Path, records: dict[int, dict], examples: list[dict]
+    directory: Path,
+    context: GenerationContext,
+    records: dict[int, dict],
+    examples: list[dict],
 ) -> tuple[str, dict[str, int]]:
     if set(records) != {example["id"] for example in examples}:
         raise RunStoreError("Cannot finalize generation before every example is recorded.")
     ordered = [records[example["id"]] for example in examples]
+    entries = []
+    for example, record in zip(examples, ordered):
+        try:
+            cached = store_generation(context, example, record)
+        except ValueError as exc:
+            raise RunStoreError(str(exc)) from exc
+        entries.append(_manifest_entry(context, example, cached))
     path = generation_artifact_path(directory)
-    _write_jsonl_records(path, ordered)
+    _write_jsonl_records(path, entries)
     counts = {
         "total": len(ordered),
         "successful": sum(record["status"] == "success" for record in ordered),
@@ -530,7 +617,10 @@ def save_model_metadata(
 
 
 def complete_generation(
-    directory: Path, artifact_sha256: str, counts: dict[str, int]
+    directory: Path,
+    context: GenerationContext,
+    artifact_sha256: str,
+    counts: dict[str, int],
 ) -> None:
     record = load_run_record(directory)
     stages = record["completed_stages"]
@@ -538,6 +628,7 @@ def complete_generation(
         stages.append("generation")
     record["generation"] = {
         **counts,
+        "context_id": context.context_id,
         "artifact": _GENERATION_ARTIFACT,
         "artifact_sha256": artifact_sha256,
         "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -545,12 +636,16 @@ def complete_generation(
     _save_run_record(directory, record)
 
 
-def validate_completed_generation(directory: Path, record: dict) -> bool:
+def validate_completed_generation(
+    directory: Path, record: dict, context: GenerationContext
+) -> bool:
     if "generation" not in record.get("completed_stages", []):
         return False
     generation = record.get("generation")
     if not isinstance(generation, dict):
         raise RunStoreError("Completed generation has no valid run summary.")
+    if generation.get("context_id") != context.context_id:
+        raise RunStoreError("Completed generation uses a different cache context.")
     path = generation_artifact_path(directory)
     if not path.is_file() or _sha256(path) != generation.get("artifact_sha256"):
         raise RunStoreError("Completed generation artifact is missing or has changed.")

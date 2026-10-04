@@ -9,6 +9,12 @@ from src.generation import (
     GENERATION_PROTOCOL_VERSION,
     GENERATION_RECORD_SCHEMA_VERSION,
 )
+from src.config import TaskConfig
+from src.generation_cache import (
+    build_generation_context,
+    load_context_model,
+    save_context_model,
+)
 from src.evaluation import (
     EVALUATION_PROTOCOL_VERSION,
     EVALUATION_RECORD_SCHEMA_VERSION,
@@ -17,6 +23,7 @@ from src.evaluation import (
 )
 from src.run_store import (
     RunStoreError,
+    append_generation_records,
     complete_evaluation,
     evaluation_artifact_path,
     generation_artifact_path,
@@ -24,14 +31,14 @@ from src.run_store import (
     load_run_record,
     load_generation_records,
     reset_generation,
-    reset_partial_direct_batches,
+    reuse_cached_generation_records,
     validate_completed_evaluation,
     write_evaluation_records,
 )
 
 
 def _example(example_id):
-    return {"id": example_id, "split": "train"}
+    return {"id": example_id, "input": f"Task {example_id}", "split": "train"}
 
 
 def _record(example_id):
@@ -66,14 +73,31 @@ class RunStoreTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         self.path = generation_artifact_path(self.directory)
+        self.context = build_generation_context(
+            TaskConfig(
+                model_name_or_path="organization/model",
+                dataset_path=self.directory / "data.jsonl",
+                reasoning_mode="direct",
+                output_dir=self.directory / "outputs",
+            )
+        )
+
+    def append(self, examples, records):
+        append_generation_records(
+            self.directory,
+            self.context,
+            {example["id"]: example for example in examples},
+            records,
+        )
 
     def test_only_truncated_final_line_is_recovered(self):
         first = _record(1)
-        self.path.write_text(
-            json.dumps(first) + "\n" + '{"id": 2', encoding="utf-8"
-        )
+        examples = [_example(1), _example(2)]
+        self.append(examples, [first])
+        with self.path.open("a", encoding="utf-8") as output:
+            output.write('{"id": 2')
         records, recovered = load_generation_records(
-            self.directory, [_example(1), _example(2)]
+            self.directory, self.context, examples
         )
         self.assertTrue(recovered)
         self.assertEqual(records, {1: first})
@@ -81,36 +105,50 @@ class RunStoreTests(unittest.TestCase):
 
         self.path.write_text("not-json\n" + '{"id": 2', encoding="utf-8")
         with self.assertRaisesRegex(RunStoreError, "line 1"):
-            load_generation_records(self.directory, [_example(1), _example(2)])
+            load_generation_records(self.directory, self.context, examples)
 
     def test_duplicate_and_unexpected_ids_are_rejected(self):
-        for rows, message in (
-            ([_record(1), _record(1)], "Duplicate"),
-            ([_record(9)], "unexpected"),
-        ):
-            with self.subTest(message=message):
-                self.path.write_text(
-                    "".join(json.dumps(row) + "\n" for row in rows),
-                    encoding="utf-8",
-                )
-                with self.assertRaisesRegex(RunStoreError, message):
-                    load_generation_records(
-                        self.directory, [_example(1), _example(2)]
-                    )
+        examples = [_example(1), _example(2)]
+        self.append(examples, [_record(1), _record(1)])
+        with self.assertRaisesRegex(RunStoreError, "Duplicate"):
+            load_generation_records(self.directory, self.context, examples)
 
-    def test_partial_direct_batch_is_removed_before_resume(self):
-        examples = [_example(index) for index in range(6)]
-        records = {index: _record(index) for index in (0, 1, 2, 4, 5)}
-        self.path.write_text(
-            "".join(json.dumps(record) + "\n" for record in records.values()),
-            encoding="utf-8",
+        self.path.unlink()
+        unexpected = _example(9)
+        self.append([unexpected], [_record(9)])
+        with self.assertRaisesRegex(RunStoreError, "invalid"):
+            load_generation_records(self.directory, self.context, examples)
+
+    def test_cache_reuses_unchanged_examples_and_adapts_split(self):
+        original = [_example(1)]
+        self.append(original, [_record(1)])
+        second_run = self.directory / "second"
+        second_run.mkdir()
+        changed_split = [{**original[0], "split": "test"}]
+        reused = reuse_cached_generation_records(
+            second_run, self.context, changed_split, set()
         )
-        retained, removed = reset_partial_direct_batches(
-            self.directory, records, examples, batch_size=4
+        self.assertEqual(reused[1]["split"], "test")
+        loaded, _ = load_generation_records(
+            second_run, self.context, changed_split
         )
-        self.assertEqual((set(retained), removed), ({4, 5}, 3))
-        loaded, _ = load_generation_records(self.directory, examples)
-        self.assertEqual(set(loaded), {4, 5})
+        self.assertEqual(loaded, reused)
+
+        changed_input = [{**changed_split[0], "input": "Changed"}]
+        third_run = self.directory / "third"
+        third_run.mkdir()
+        self.assertEqual(
+            reuse_cached_generation_records(
+                third_run, self.context, changed_input, set()
+            ),
+            {},
+        )
+
+    def test_cache_context_pins_model_metadata(self):
+        metadata = {"resolved_revision": "commit", "model_class": "Model"}
+        self.assertIsNone(load_context_model(self.context))
+        save_context_model(self.context, metadata)
+        self.assertEqual(load_context_model(self.context), metadata)
 
     def test_evaluation_artifact_validation_and_hash_detection(self):
         examples = [_example(1), _example(2)]

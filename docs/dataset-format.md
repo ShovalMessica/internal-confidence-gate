@@ -83,4 +83,10 @@ These loading functions do not run a model, print messages, or save files. The r
 {"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
 ```
 
+## Adding examples later
+
+Append records with new unique IDs while preserving the same field and semantic-span rules, then rerun the same configuration. With the same `output_dir`, model, and generation settings, unchanged ID-and-input pairs reuse their saved generations. New IDs or changed inputs run through the model; target-answer changes only rerun evaluation.
+
+Automatic splitting is recalculated for the new dataset. Supply explicit splits on every record when existing split assignments must remain fixed.
+
 **TODO:** Token alignment, multi-token captures, and exact layer conventions.

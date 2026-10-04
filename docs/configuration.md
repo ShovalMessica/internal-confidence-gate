@@ -45,7 +45,7 @@ V1 requires a standard Transformers text-only, decoder-only causal language mode
 
   Enabled UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
 
-- **`generation_seed` (optional; default: `42`)** — Base seed used to derive reproducible seeds from fixed dataset positions.
+- **`generation_seed` (optional; default: `42`)** — Base seed used to derive a reproducible seed from each example ID.
 
 - **`direct_batch_size` (optional; default: `8`)** — Batch size in direct mode. Reasoning mode always processes one example at a time.
 
@@ -142,7 +142,9 @@ Model revision, device, dtype, generation seed, and active generation settings a
 
 When `model_revision` is omitted, the model loader resolves one exact Hub commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoint paths are treated as immutable for now; stronger local-checkpoint identity remains **TODO**.
 
-Generation progress is appended after each reasoning example or completed direct batch. Complete, hash-validated generation and matcher-specific evaluation artifacts are reused without loading the model. Use `--force-recompute` to restart generation while keeping the recorded model revision; all downstream evaluations are cleared as well.
+Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
+
+Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; all downstream evaluations for that run are cleared.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 

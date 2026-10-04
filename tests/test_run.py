@@ -69,6 +69,10 @@ class RunTests(unittest.TestCase):
             code = main([str(path or self.config), *options])
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def run_directories(self):
+        output = self.root / "outputs"
+        return [path for path in output.iterdir() if (path / "run.json").is_file()]
+
     @staticmethod
     def generation_record(example, answer="A"):
         return {
@@ -119,7 +123,7 @@ class RunTests(unittest.TestCase):
         ):
             self.assertIn(text, stdout)
 
-        run_directories = list((self.root / "outputs").iterdir())
+        run_directories = self.run_directories()
         self.assertEqual(len(run_directories), 1)
         record = json.loads((run_directories[0] / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(record["run_id"], run_directories[0].name)
@@ -332,7 +336,10 @@ class RunTests(unittest.TestCase):
         ):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
-        self.assertIn("Generation complete: 700 succeeded, 0 failed.", stdout)
+        self.assertIn(
+            "Generation complete: 0 reused, 700 generated; 700 succeeded, 0 failed.",
+            stdout,
+        )
         self.assertIn("Evaluation artifact: created", stdout)
         self.assertIn("Model Behavior:", stdout)
         self.assertIn("Correct prediction", stdout)
@@ -346,7 +353,7 @@ class RunTests(unittest.TestCase):
         self.assertIn("Evaluation artifact: reused", stdout)
         load_model.assert_not_called()
 
-        run_directory = next((self.root / "outputs").iterdir())
+        run_directory = self.run_directories()[0]
         record = json.loads((run_directory / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(
             record["completed_stages"], ["preparation", "generation", "evaluation"]
@@ -354,7 +361,8 @@ class RunTests(unittest.TestCase):
         self.assertEqual(record["model"]["resolved_revision"], "resolved-commit")
         self.assertEqual(record["generation"]["successful"], 700)
         self.assertEqual(
-            len((run_directory / "generations.jsonl").read_text().splitlines()), 700
+            len((run_directory / "generation-manifest.jsonl").read_text().splitlines()),
+            700,
         )
         self.assertEqual(
             len(next((run_directory / "evaluations").iterdir()).read_text().splitlines()),
@@ -401,6 +409,77 @@ class RunTests(unittest.TestCase):
             prepared.config, pinned_revision="resolved-commit"
         )
 
+    def test_extended_dataset_reuses_unchanged_generations(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        changed_targets = []
+        for index in range(700):
+            record = self.record(index)
+            record["target_answer"] = "Negative"
+            changed_targets.append(record)
+        self.write_dataset(changed_targets)
+        with (
+            patch("src.run.load_model") as load_model,
+            patch("src.run.generation_units") as units,
+        ):
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation cache: 700 reused.", stdout)
+        self.assertIn("model not loaded", stdout)
+        load_model.assert_not_called()
+        units.assert_not_called()
+
+        self.write_dataset(self.record(index) for index in range(701))
+        extended = prepare_run(self.config)
+        new_record = self.generation_record(
+            extended.dataset.examples[-1], "Positive"
+        )
+        completed_count = []
+
+        def remaining_units(*_, completed_ids):
+            completed_count.append(len(completed_ids))
+            return iter((GenerationUnit((new_record,)),))
+
+        with (
+            patch("src.run.load_model", return_value=object()) as load_model,
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                side_effect=remaining_units,
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full()
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation cache: 700 reused.", stdout)
+        self.assertIn("Generation complete: 700 reused, 1 generated", stdout)
+        load_model.assert_called_once_with(
+            extended.config, pinned_revision="resolved-commit"
+        )
+        self.assertEqual(completed_count, [700])
+
     def test_evaluation_shortages_are_saved_before_runner_fails(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
@@ -432,7 +511,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Evaluation artifact: created", stdout)
         self.assertIn("train needs 100 correct predictions", stderr)
-        run_directory = next((self.root / "outputs").iterdir())
+        run_directory = self.run_directories()[0]
         run_record = json.loads(
             (run_directory / "run.json").read_text(encoding="utf-8")
         )
@@ -488,7 +567,7 @@ class RunTests(unittest.TestCase):
         self.assertIn("Evaluation artifact: created", stdout)
         load_model.assert_not_called()
 
-        run_directory = next((self.root / "outputs").iterdir())
+        run_directory = self.run_directories()[0]
         record = json.loads((run_directory / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(len(record["evaluations"]), 2)
         self.assertEqual(len(list((run_directory / "evaluations").iterdir())), 2)
@@ -532,7 +611,7 @@ class RunTests(unittest.TestCase):
         ):
             self.assertEqual(self.invoke_full()[0], 0)
 
-        run_directory = next((self.root / "outputs").iterdir())
+        run_directory = self.run_directories()[0]
         run_path = run_directory / "run.json"
         run_record = json.loads(run_path.read_text(encoding="utf-8"))
         legacy = next(iter(run_record.pop("evaluations").values()))

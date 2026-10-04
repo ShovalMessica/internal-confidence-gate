@@ -257,9 +257,10 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(unit.records[0]["failure"]["reason"], "context_length")
         self.assertEqual(model.calls, [])
 
-    def test_resume_skips_complete_units_and_rejects_partial_direct_batch(self):
+    def test_resume_batches_only_missing_direct_examples(self):
         tokenizer = _Tokenizer()
-        model = _Model([])
+        answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
+        model = _Model([[[*answer]] * 7])
         examples = [
             {"id": index, "input": str(index), "split": "train"} for index in range(8)
         ]
@@ -267,10 +268,31 @@ class GenerationTests(unittest.TestCase):
             list(generation_units(_loaded(model, tokenizer), examples, _config(), range(8))),
             [],
         )
-        with self.assertRaisesRegex(Exception, "partially stored"):
-            list(generation_units(
-                _loaded(model, tokenizer), examples, _config(), [0]
-            ))
+        units = list(generation_units(
+            _loaded(model, tokenizer), examples, _config(), [0]
+        ))
+        self.assertEqual([record["id"] for record in units[0].records], list(range(1, 8)))
+
+    def test_sampled_direct_generation_uses_one_id_seed_per_example(self):
+        tokenizer = _Tokenizer()
+        answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
+        model = _Model([answer, answer])
+        model.generation_config = SimpleNamespace(do_sample=True)
+        examples = [
+            {"id": 10, "input": "first", "split": "train"},
+            {"id": 20, "input": "second", "split": "train"},
+        ]
+        seed = Mock()
+        with patch(
+            "src.generation._runtime",
+            return_value=(torch, StoppingCriteriaList, seed),
+        ):
+            units = list(generation_units(_loaded(model, tokenizer), examples, _config()))
+        self.assertEqual([len(unit.records) for unit in units], [1, 1])
+        self.assertEqual(
+            [call.args[0] for call in seed.call_args_list],
+            [_stable_seed(42, 10), _stable_seed(42, 20)],
+        )
 
 
 if __name__ == "__main__":
