@@ -767,7 +767,8 @@ def _frozen_metrics(
     }
 
 
-def _answer_probability(record: Mapping[str, object], example_id: int) -> float:
+def answer_probability(record: Mapping[str, object], example_id: int) -> float:
+    """Aggregate saved answer-token probabilities into one confidence score."""
     answer = record.get("answer")
     logprobs = answer.get("token_logprobs") if isinstance(answer, Mapping) else None
     if (
@@ -1198,10 +1199,10 @@ def evaluate_frozen_test(
     validation_ids, validation_labels = _split_records(evaluations, "validation")
     test_ids, test_labels = _split_records(evaluations, "test")
     validation_probabilities = np.asarray(
-        [_answer_probability(generations[item], item) for item in validation_ids]
+        [answer_probability(generations[item], item) for item in validation_ids]
     )
     test_probabilities = np.asarray(
-        [_answer_probability(generations[item], item) for item in test_ids]
+        [answer_probability(generations[item], item) for item in test_ids]
     )
     probability_values = _candidate_metrics(
         validation_probabilities,

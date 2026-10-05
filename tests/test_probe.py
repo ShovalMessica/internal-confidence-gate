@@ -25,6 +25,16 @@ from src.probe import (
     validate_selection_group,
     validate_test_evaluation_group,
 )
+from src.reporting import (
+    build_report_identity,
+    create_report,
+    validate_report,
+)
+from src.run_store import (
+    complete_report,
+    load_run_record,
+    validate_completed_report,
+)
 
 
 class ProbeTests(unittest.TestCase):
@@ -394,6 +404,88 @@ class ProbeTests(unittest.TestCase):
                 identity,
                 result.content_sha256,
             )
+
+    def test_reporting_uses_validation_representatives_and_frozen_test(self):
+        self.write_activations(include_test=True)
+        probe = self.identity()
+        trained = train_probes(self.directory, probe, self.evaluations)
+        selection = build_selection_identity(
+            probe.probe_id, trained.content_sha256, 0.9
+        )
+        selected = select_probe(self.directory, probe, selection)
+        test_identity = build_test_evaluation_identity(
+            selection.selection_id, selected.content_sha256, "g" * 64
+        )
+        generations = {
+            example_id: {"answer": {"token_logprobs": [math.log(probability)]}}
+            for example_id, probability in {
+                5: 0.9, 6: 0.8, 7: 0.7, 8: 0.1, 9: 0.6, 10: 0.2
+            }.items()
+        }
+        tested = evaluate_frozen_test(
+            self.directory,
+            probe,
+            selection,
+            test_identity,
+            self.evaluations,
+            generations,
+        )
+        identity = build_report_identity(
+            selection.selection_id,
+            selected.content_sha256,
+            test_identity.test_id,
+            tested.content_sha256,
+        )
+
+        result = create_report(
+            self.directory,
+            probe,
+            selection,
+            test_identity,
+            identity,
+            generations,
+        )
+
+        self.assertTrue(result.created)
+        report = self.directory / "reports" / identity.report_id
+        self.assertTrue((report / "validation_layers_answer_tokens.png").is_file())
+        self.assertTrue((report / "validation_layers_prompt_end.png").is_file())
+        self.assertTrue((report / "validation_tpr_fpr.png").is_file())
+        self.assertTrue((report / "test_tpr_fpr.png").is_file())
+        metrics = json.loads((report / "metrics.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            metrics["metrics"], ["tpr", "fpr", "balanced_accuracy", "auroc"]
+        )
+        self.assertEqual(
+            set(metrics["validation"]["representatives"]),
+            {"answer_tokens", "prompt_end"},
+        )
+        reused = create_report(
+            self.directory,
+            probe,
+            selection,
+            test_identity,
+            identity,
+            generations,
+        )
+        self.assertFalse(reused.created)
+        validated = validate_report(
+            self.directory, identity, result.artifact_sha256
+        )
+        self.assertEqual(validated.summary, result.summary)
+        (self.directory / "run.json").write_text(
+            json.dumps({"completed_stages": ["preparation"]}), encoding="utf-8"
+        )
+        complete_report(
+            self.directory,
+            identity,
+            result.artifact_sha256,
+            result.summary,
+            result.files,
+        )
+        record = load_run_record(self.directory)
+        self.assertTrue(validate_completed_report(self.directory, record, identity))
+        self.assertIn("reporting", record["completed_stages"])
 
 
 if __name__ == "__main__":

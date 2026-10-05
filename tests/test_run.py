@@ -79,14 +79,17 @@ class RunTests(unittest.TestCase):
             patch("src.run._train_probes") as train_probes,
             patch("src.run._select_probe") as select_probe,
             patch("src.run._evaluate_frozen_test") as evaluate_test,
+            patch("src.run._create_report") as create_report,
         ):
             train_probes.return_value = (object(), "probe-hash")
             select_probe.return_value = (object(), "selection-hash")
+            evaluate_test.return_value = (object(), "test-hash")
             code = main([str(path or self.config), *options])
         self.capture_mock = capture
         self.probe_mock = train_probes
         self.selection_mock = select_probe
         self.test_evaluation_mock = evaluate_test
+        self.report_mock = create_report
         return code, stdout.getvalue(), stderr.getvalue()
 
     def run_directories(self):
@@ -440,9 +443,11 @@ class RunTests(unittest.TestCase):
             patch("src.run._train_probes") as train_probes,
             patch("src.run._select_probe") as select_probe,
             patch("src.run._evaluate_frozen_test") as evaluate_test,
+            patch("src.run._create_report") as create_report,
         ):
             train_probes.return_value = (object(), "probe-hash")
             select_probe.return_value = (object(), "selection-hash")
+            evaluate_test.return_value = (object(), "test-hash")
             code = main([str(self.config)])
 
         self.assertEqual((code, stderr.getvalue()), (0, ""))
@@ -451,6 +456,7 @@ class RunTests(unittest.TestCase):
         train_probes.assert_called_once()
         select_probe.assert_called_once()
         evaluate_test.assert_called_once()
+        create_report.assert_called_once()
 
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))

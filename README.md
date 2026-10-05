@@ -97,13 +97,11 @@ When abstention is enabled, UNKNOWN predictions are reported separately and excl
 
 ## Pipeline overview
 
-1. **Prepare data:** provide complete task prompts and target answers in the required dataset format. Optionally assign splits and annotate additional semantic positions.
-2. **Generate:** run the model and save its responses, exact token sequence, and answer-token probabilities.
-3. **Evaluate predictions:** validate response formatting and compare answers with target answers after normalization.
-4. **Capture activations:** replay the saved token sequence at the selected positions.
-5. **Train:** fit probes using training activations and prediction correctness.
-6. **Validate:** select probe settings and an acceptance threshold using validation data.
-7. **Test:** evaluate the frozen probe and threshold on test data and compare performance with output-probability confidence.
+1. **Preparation:** validate the configuration and dataset, then preserve supplied splits or create reproducible train, validation, and test splits.
+2. **Model Behavior:** generate answers, validate their structure, and compare them with target answers.
+3. **Activation Capture:** replay eligible saved predictions and capture hidden states at the default and task-specific semantic positions.
+4. **Confidence Probe:** train candidates on the training split, select a probe and threshold on validation, then evaluate that frozen choice on test against output-probability confidence.
+5. **Reporting:** save the metrics, layer comparisons, and TPR-FPR curves described below.
 
 By default, answer matching ignores case, trims surrounding whitespace, collapses repeated internal whitespace, and then requires complete-answer equality. Tasks that need different equivalence rules can provide a small `answer_match` function through `answer_matcher_path`; see [Answer evaluation](docs/configuration.md#answer-evaluation).
 
@@ -120,7 +118,16 @@ Validation then selects one probe and acceptance threshold. For each candidate, 
 
 On test data, the selected probe and threshold are frozen. The output-probability baseline receives its own validation threshold at the same target TPR. For multi-token answers, its confidence is the geometric mean of the generated tokens' probabilities; for a one-token answer, this is simply that token's probability.
 
-**TODO:** Design the final metrics, graphs, and representation-comparison report.
+The final report uses four gate metrics:
+
+- **TPR:** fraction of correct predictions accepted.
+- **FPR:** fraction of incorrect predictions accepted.
+- **Balanced accuracy:** `(TPR + (1 - FPR)) / 2`.
+- **AUROC:** threshold-independent ranking quality.
+
+For every captured position, a validation graph shows balanced accuracy from Layer 0—the initial token embedding—through every transformer layer. A validation TPR-FPR graph contains one representative per position: the layer with the lowest FPR while meeting `target_tpr`. The overall winner and output-probability baseline are highlighted. A separate test graph compares only the frozen overall winner with the probability baseline.
+
+The TPR-FPR graph contains the same threshold sweep as a conventional ROC curve with its axes reversed: TPR is horizontal and FPR is vertical, so better gates move toward the lower-right. Head-level comparisons remain a later extension.
 
 ## Requirements and limitations
 
@@ -146,7 +153,7 @@ Deployment is the user’s responsibility and is outside the toolkit’s trainin
 
 ### Prerequisites and installation
 
-Preparation through frozen test evaluation is implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
+Preparation through final reporting is implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -191,6 +198,7 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 <output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
 <output_dir>/<run_id>/activations.h5
 <output_dir>/<run_id>/probes.h5
+<output_dir>/<run_id>/reports/<report_id>/...
 ```
 
 The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, probe-training and selection summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
@@ -198,6 +206,8 @@ The run ID represents the generation settings and exact dataset contents. `run.j
 `activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 
 `probes.h5` contains one candidate for every position and model state. Each training group stores its scaler, linear model, and train/validation scores. Validation-selection groups store every candidate's threshold, TPR, FPR, and AUROC. Frozen test groups store per-example labels, probe and probability scores, and both accept/reject decisions. Different matchers, probe seeds, or target TPRs coexist inside the same file.
+
+Each report directory contains `metrics.json`, CSV data behind every plot, one validation layer graph per captured position, `validation_tpr_fpr.png`, `test_tpr_fpr.png`, and a hash-validated manifest. Reusing a completed report does not reload the model or retrain probes.
 
 Interrupted generation, activation capture, and probe training resume from saved work. If a dataset is extended, unchanged examples reuse cached generations and copy compatible activations from the earlier run without model work; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation and probe group from the saved generations and activations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
 

@@ -95,11 +95,22 @@ All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID 
 
 ## Frozen test evaluation
 
-After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, acceptance rate, and AUROC.
+After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, and AUROC.
 
 The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability.
 
 Per-example test labels, scores, and accept/reject decisions are stored in the existing `<run_dir>/probes.h5`; `run.json` stores the summary. Neither method uses test data to select a representation or threshold.
+
+## Reporting
+
+Reporting runs automatically after frozen test evaluation and uses only saved scores. It reports TPR, FPR, balanced accuracy, and AUROC.
+
+- `validation_layers_<position>.png` shows validation balanced accuracy across Layer 0 (the token embedding) and every transformer layer.
+- `validation_tpr_fpr.png` shows one validation-selected representative per captured position plus output probability. Each representative is the position's layer with the lowest FPR while meeting `target_tpr`.
+- `test_tpr_fpr.png` compares only the frozen overall winner and output-probability baseline. Test data does not choose either method or threshold.
+- `metrics.json` and CSV files store the exact values behind the figures.
+
+The TPR-FPR plots reverse conventional ROC axes: TPR is on the horizontal axis and FPR is on the vertical axis. Lower-right is better. Reports are stored under `<run_dir>/reports/<report_id>` with a hash-validated manifest and are reused when their frozen inputs match.
 
 ## Automatic splitting
 

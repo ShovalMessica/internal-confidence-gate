@@ -5,3 +5,4 @@ accelerate>=0.32.1,<2
 h5py>=3.11,<4
 numpy>=1.26,<3
 scikit-learn>=1.2,<2
+matplotlib>=3.8,<4

@@ -52,6 +52,12 @@ from src.probe import (
     validate_selection_group,
     validate_test_evaluation_group,
 )
+from src.reporting import (
+    REPORT_PROTOCOL_VERSION,
+    REPORTS_DIR,
+    ReportIdentity,
+    validate_report,
+)
 
 
 IDENTITY_SCHEMA_VERSION = 4
@@ -903,6 +909,74 @@ def validate_completed_test_evaluation(
     return True
 
 
+def complete_report(
+    directory: Path,
+    identity: ReportIdentity,
+    artifact_sha256: str,
+    summary: dict,
+    files: dict[str, str],
+) -> None:
+    record = load_run_record(directory)
+    stages = record["completed_stages"]
+    if "reporting" not in stages:
+        stages.append("reporting")
+    reports = record.setdefault("reports", {})
+    if not isinstance(reports, dict):
+        raise RunStoreError("Run record has an invalid report registry.")
+    entry = {
+        "report_id": identity.report_id,
+        "fingerprint": identity.fingerprint,
+        "protocol_version": REPORT_PROTOCOL_VERSION,
+        "selection_id": identity.selection_id,
+        "selection_sha256": identity.selection_sha256,
+        "test_id": identity.test_id,
+        "test_sha256": identity.test_sha256,
+        "directory": f"{REPORTS_DIR}/{identity.report_id}",
+        "artifact_sha256": artifact_sha256,
+        "files": files,
+        "summary": summary,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    existing = reports.get(identity.report_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Report ID collision or conflicting run record.")
+    reports[identity.report_id] = entry
+    _save_run_record(directory, record)
+
+
+def validate_completed_report(
+    directory: Path, record: dict, identity: ReportIdentity
+) -> bool:
+    reports = record.get("reports")
+    if reports is None:
+        return False
+    if not isinstance(reports, dict):
+        raise RunStoreError("Run record has an invalid report registry.")
+    report = reports.get(identity.report_id)
+    if report is None:
+        return False
+    if "reporting" not in record.get("completed_stages", []):
+        raise RunStoreError("Saved report is missing its completed stage.")
+    if (
+        not isinstance(report, dict)
+        or report.get("report_id") != identity.report_id
+        or report.get("fingerprint") != identity.fingerprint
+        or report.get("protocol_version") != REPORT_PROTOCOL_VERSION
+        or report.get("selection_id") != identity.selection_id
+        or report.get("selection_sha256") != identity.selection_sha256
+        or report.get("test_id") != identity.test_id
+        or report.get("test_sha256") != identity.test_sha256
+        or report.get("directory") != f"{REPORTS_DIR}/{identity.report_id}"
+        or not isinstance(report.get("summary"), dict)
+        or not isinstance(report.get("files"), dict)
+    ):
+        raise RunStoreError("Completed report is invalid.")
+    result = validate_report(directory, identity, report.get("artifact_sha256"))
+    if result.summary != report["summary"] or result.files != report["files"]:
+        raise RunStoreError("Completed report summary is invalid.")
+    return True
+
+
 def save_model_metadata(
     directory: Path, metadata: dict, provenance: dict, generation_settings: dict
 ) -> None:
@@ -976,6 +1050,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("probe_trainings", None)
     record.pop("probe_selections", None)
     record.pop("test_evaluations", None)
+    record.pop("reports", None)
     record["completed_stages"] = [
         stage
         for stage in record["completed_stages"]
@@ -986,12 +1061,26 @@ def reset_generation(directory: Path) -> str | None:
             "probe_training",
             "probe_selection",
             "test_evaluation",
+            "reporting",
         )
     ]
     try:
         generation_artifact_path(directory).unlink(missing_ok=True)
         activation_file_path(directory).unlink(missing_ok=True)
         probe_file_path(directory).unlink(missing_ok=True)
+        reports = directory / REPORTS_DIR
+        if reports.exists():
+            if not reports.is_dir():
+                raise OSError(f"Not a directory: {reports}")
+            for report in reports.iterdir():
+                if not report.is_dir():
+                    raise OSError(f"Unexpected entry: {report}")
+                for artifact in report.iterdir():
+                    if not artifact.is_file():
+                        raise OSError(f"Unexpected entry: {artifact}")
+                    artifact.unlink()
+                report.rmdir()
+            reports.rmdir()
         (directory / _LEGACY_EVALUATION_ARTIFACT).unlink(missing_ok=True)
         evaluations = directory / _EVALUATIONS_DIR
         if evaluations.exists():
@@ -1021,7 +1110,7 @@ def reset_generation(directory: Path) -> str | None:
             activations.rmdir()
     except OSError as exc:
         raise RunStoreError(
-            "Cannot remove generation, evaluation, activation, or probe artifacts."
+            "Cannot remove generation, evaluation, activation, probe, or report artifacts."
         ) from exc
     _save_run_record(directory, record)
     return pinned

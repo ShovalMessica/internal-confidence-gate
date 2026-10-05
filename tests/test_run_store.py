@@ -219,6 +219,9 @@ class RunStoreTests(unittest.TestCase):
         activation_path.write_bytes(b"saved activations")
         probe_path = self.directory / "probes.h5"
         probe_path.write_bytes(b"saved probes")
+        report_path = self.directory / "reports" / "report"
+        report_path.mkdir(parents=True)
+        (report_path / "metrics.json").write_text("{}\n", encoding="utf-8")
         generation_artifact_path(self.directory).write_text("{}\n", encoding="utf-8")
         (self.directory / "run.json").write_text(
             json.dumps(
@@ -231,6 +234,7 @@ class RunStoreTests(unittest.TestCase):
                         "probe_training",
                         "probe_selection",
                         "test_evaluation",
+                        "reporting",
                     ],
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
@@ -240,6 +244,7 @@ class RunStoreTests(unittest.TestCase):
                     "probe_trainings": {"probe": {}},
                     "probe_selections": {"selection": {}},
                     "test_evaluations": {"test": {}},
+                    "reports": {"report": {}},
                 }
             ),
             encoding="utf-8",
@@ -254,11 +259,13 @@ class RunStoreTests(unittest.TestCase):
         self.assertNotIn("probe_trainings", record)
         self.assertNotIn("probe_selections", record)
         self.assertNotIn("test_evaluations", record)
+        self.assertNotIn("reports", record)
         self.assertFalse(path.exists())
         self.assertFalse((self.directory / "evaluations").exists())
         self.assertFalse((self.directory / "evaluations.jsonl").exists())
         self.assertFalse(activation_path.exists())
         self.assertFalse(probe_path.exists())
+        self.assertFalse((self.directory / "reports").exists())
 
 
 if __name__ == "__main__":

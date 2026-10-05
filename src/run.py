@@ -58,12 +58,18 @@ from src.probe import (
     ProbeError,
     ProbeIdentity,
     SelectionIdentity,
+    TestEvaluationIdentity,
     build_probe_identity,
     build_selection_identity,
     build_test_evaluation_identity,
     evaluate_frozen_test,
     select_probe,
     train_probes,
+)
+from src.reporting import (
+    ReportingError,
+    build_report_identity,
+    create_report,
 )
 from src.run_store import (
     RegisteredRun,
@@ -76,6 +82,7 @@ from src.run_store import (
     complete_probe_selection,
     complete_probe_training,
     complete_test_evaluation,
+    complete_report,
     evaluation_artifact_path,
     finalize_generation_records,
     load_evaluation_records,
@@ -91,6 +98,7 @@ from src.run_store import (
     validate_completed_probe_selection,
     validate_completed_probe_training,
     validate_completed_test_evaluation,
+    validate_completed_report,
     write_evaluation_records,
 )
 
@@ -694,6 +702,7 @@ def _train_probes(
 
 
 def _print_probe_selection(selection_id: str, summary: dict, reused: bool) -> None:
+    balanced_accuracy = (summary["tpr"] + 1 - summary["fpr"]) / 2
     print(f"Probe selection ID: {selection_id}")
     print(f"Probe selection: {'reused' if reused else 'created'}.")
     print(
@@ -702,6 +711,7 @@ def _print_probe_selection(selection_id: str, summary: dict, reused: bool) -> No
         f"threshold {summary['threshold']:.6f} | "
         f"validation TPR {summary['tpr']:.4f} | "
         f"validation FPR {summary['fpr']:.4f} | "
+        f"balanced accuracy {balanced_accuracy:.4f} | "
         f"AUROC {summary['auroc']:.4f}"
     )
 
@@ -746,10 +756,11 @@ def _print_test_evaluation(test_id: str, summary: dict, reused: bool) -> None:
         ("Output probability", "output_probability"),
     ):
         metrics = summary[key]
+        balanced_accuracy = (metrics["tpr"] + 1 - metrics["fpr"]) / 2
         print(
             f"{label}: threshold {metrics['threshold']:.6f} | "
             f"TPR {metrics['tpr']:.4f} | FPR {metrics['fpr']:.4f} | "
-            f"acceptance {metrics['acceptance_rate']:.4f} | "
+            f"balanced accuracy {balanced_accuracy:.4f} | "
             f"AUROC {metrics['auroc']:.4f}"
         )
 
@@ -760,7 +771,7 @@ def _evaluate_frozen_test(
     probe_identity: ProbeIdentity,
     selection_identity: SelectionIdentity,
     selection_sha256: str,
-) -> None:
+) -> tuple[TestEvaluationIdentity, str]:
     directory = registered.directory
     run_record = load_run_record(directory)
     generation = run_record.get("generation")
@@ -780,7 +791,9 @@ def _evaluate_frozen_test(
     ):
         summary = run_record["test_evaluations"][identity.test_id]["summary"]
         _print_test_evaluation(identity.test_id, summary, True)
-        return
+        return identity, run_record["test_evaluations"][identity.test_id][
+            "content_sha256"
+        ]
 
     evaluation_identity = build_evaluation_identity(
         generation["artifact_sha256"], prepared.answer_matcher
@@ -807,6 +820,51 @@ def _evaluate_frozen_test(
         result.summary,
     )
     _print_test_evaluation(identity.test_id, result.summary, not result.created)
+    return identity, result.content_sha256
+
+
+def _create_report(
+    prepared: PreparedRun,
+    registered: RegisteredRun,
+    probe_identity: ProbeIdentity,
+    selection_identity: SelectionIdentity,
+    selection_sha256: str,
+    test_identity: TestEvaluationIdentity,
+    test_sha256: str,
+) -> None:
+    identity = build_report_identity(
+        selection_identity.selection_id,
+        selection_sha256,
+        test_identity.test_id,
+        test_sha256,
+    )
+    run_record = load_run_record(registered.directory)
+    if validate_completed_report(registered.directory, run_record, identity):
+        print(f"Report ID: {identity.report_id}")
+        print(f"Report: reused ({registered.directory / 'reports' / identity.report_id}).")
+        return
+
+    context = build_generation_context(prepared.config)
+    generations, _ = load_generation_records(
+        registered.directory, context, prepared.dataset.examples
+    )
+    result = create_report(
+        registered.directory,
+        probe_identity,
+        selection_identity,
+        test_identity,
+        identity,
+        generations,
+    )
+    complete_report(
+        registered.directory,
+        identity,
+        result.artifact_sha256,
+        result.summary,
+        result.files,
+    )
+    print(f"Report ID: {identity.report_id}")
+    print(f"Report: created ({registered.directory / 'reports' / identity.report_id}).")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -863,12 +921,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             selection_identity, selection_sha256 = _select_probe(
                 prepared, registered, probe_identity, probe_sha256
             )
-            _evaluate_frozen_test(
+            test_identity, test_sha256 = _evaluate_frozen_test(
                 prepared,
                 registered,
                 probe_identity,
                 selection_identity,
                 selection_sha256,
+            )
+            _create_report(
+                prepared,
+                registered,
+                probe_identity,
+                selection_identity,
+                selection_sha256,
+                test_identity,
+                test_sha256,
             )
     except ConfigurationError as error:
         print(error, file=sys.stderr)
@@ -897,6 +964,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except ProbeError as error:
         print(f"Probe error: {error}", file=sys.stderr)
+        return 1
+    except ReportingError as error:
+        print(f"Reporting error: {error}", file=sys.stderr)
         return 1
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)
