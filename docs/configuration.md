@@ -15,7 +15,7 @@ The fields below are accepted by the configuration loader. Later pipeline behavi
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
-V1 requires a standard Transformers text-only, decoder-only causal language model with a tokenizer chat template. Models requiring `trust_remote_code=True` are not supported.
+The current version requires a standard Transformers text-only, decoder-only causal language model with a tokenizer chat template. Models requiring `trust_remote_code=True` are not supported.
 
 ## Generation
 

@@ -110,6 +110,8 @@ When abstention is enabled, UNKNOWN predictions are reported separately and excl
 
 ## Pipeline overview
 
+**Configuration and dataset → model generation → answer evaluation → activation capture → probe training → validation selection → frozen test evaluation → reports.**
+
 1. **Preparation:** validate the configuration and dataset, then preserve supplied splits or create reproducible train, validation, and test splits.
 2. **Model Behavior:** generate answers, validate their structure, and compare them with target answers.
 3. **Activation Capture:** replay eligible saved predictions and capture hidden states at the default and task-specific semantic positions.
@@ -172,7 +174,7 @@ Preparation through final reporting is implemented. Use Python 3.10 or newer and
 python -m pip install -r requirements.txt
 ```
 
-Model loading currently supports standard Hugging Face Transformers text-only, decoder-only chat models through `AutoModelForCausalLM`. Models requiring custom remote code are outside V1 support. CUDA is optional; model size determines the required CPU/GPU memory.
+Model loading currently supports standard Hugging Face Transformers text-only, decoder-only chat models through `AutoModelForCausalLM`. Models requiring custom remote code are outside the currently supported scope. CUDA is optional; model size determines the required CPU/GPU memory.
 
 ### Prepare your dataset
 
