@@ -3,6 +3,9 @@ model_name_or_path: null  # Hugging Face ID or absolute checkpoint path
 dataset_path: null        # Absolute path to your JSONL dataset
 reasoning_mode: null      # direct or reasoning
 
+# Optional fixed system message shared by every example.
+# system_prompt_path: "C:/path/to/system-prompt.md"
+
 # Model loading defaults
 # model_revision: "abc123" # Optional Hub commit, tag, or branch
 device: auto               # auto, cpu, cuda, or cuda:N

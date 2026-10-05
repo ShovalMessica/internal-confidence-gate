@@ -2,15 +2,15 @@
 
 Design and refine the task prompt you supply so the model reliably answers in the form your task expects—for example, a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
 
-Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined.
+Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined. Fixed instructions may be supplied once as an optional system prompt; each dataset `input` is always the complete user message for its example.
 
 The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the implemented [generation behavior](configuration.md#generation).
 
 ## Named-entity correction — no reasoning
 
-**Example prompt:**
+**Example system prompt (fixed across examples):**
 
-*For each task input, `<PARTICIPANTS>` holds its participant list and `<MEETING_TRANSCRIPT>` its transcript; these vary between inputs. The two demonstrations within the prompt below are fixed examples.*
+*This fixed message contains the task rules and two demonstrations.*
 
 ```text
 # Task
@@ -90,6 +90,27 @@ I
 Output exactly `NONE` or one participant label like `E`.
 Output only that single token.
 No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewrite.
+```
+
+**Example dataset `input` (changes between examples):**
+
+```text
+<PARTICIPANTS>
+A John Wilson
+B Christopher Clark
+C Mary Brown
+D Melissa Stone
+E Kathryn Wilson
+F Jeffrey Weiss
+G Joshua Waters
+H Jason Cochran
+I Angela Francis
+J Juan West
+</PARTICIPANTS>
+
+<MEETING_TRANSCRIPT>
+<119><Russell Peterson>I heard from Wan that ops mostly wants accountability, not self-serve, so support-only might be fine initially.
+</MEETING_TRANSCRIPT>
 ```
 
 **Toolkit-added instruction:**

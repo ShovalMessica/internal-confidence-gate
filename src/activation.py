@@ -145,6 +145,7 @@ def map_semantic_spans(
     tokenizer: Any,
     example: Mapping[str, object],
     generation: Mapping[str, object],
+    system_prompt: str | None = None,
 ) -> dict[str, tuple[int, ...]]:
     """Map input character spans to exact positions in the saved initial prompt."""
     spans = example.get("semantic_spans", {})
@@ -177,6 +178,7 @@ def map_semantic_spans(
             instruction,
             reasoning=reasoning,
             tokenize=False,
+            system_prompt=system_prompt,
         )
     except ValueError as exc:
         raise ActivationError(f"Example ID {example_id}: {exc}") from exc

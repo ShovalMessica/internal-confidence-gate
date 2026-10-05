@@ -107,6 +107,8 @@ def build_run_identity(
         "activation_protocol_version": ACTIVATION_PROTOCOL_VERSION,
         "position_protocol": POSITION_PROTOCOL,
     }
+    if config.system_prompt_sha256 is not None:
+        effective["system_prompt_sha256"] = config.system_prompt_sha256
     if config.model_revision is not None:
         effective["model_revision"] = config.model_revision
     if config.reasoning_mode == "reasoning":
@@ -151,6 +153,11 @@ def _record(
         "source_paths": {
             "configuration": str(Path(config_path).resolve()),
             "dataset": str(config.dataset_path),
+            **(
+                {"system_prompt": str(config.system_prompt_path)}
+                if config.system_prompt_path is not None
+                else {}
+            ),
         },
         "completed_stages": ["preparation"],
         "preparation": preparation,

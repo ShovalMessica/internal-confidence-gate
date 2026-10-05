@@ -105,7 +105,10 @@ class _SpanTokenizer:
     def apply_chat_template(
         self, messages, tokenize, add_generation_prompt, enable_thinking
     ):
-        rendered = f"<user>{messages[0]['content']}</user><assistant>"
+        rendered = "".join(
+            f"<{message['role']}>{message['content']}</{message['role']}>"
+            for message in messages
+        ) + "<assistant>"
         return self._ids(rendered) if tokenize else rendered
 
     def __call__(self, text, add_special_tokens, return_offsets_mapping):
@@ -129,12 +132,14 @@ class _DuplicatingTokenizer(_SpanTokenizer):
     def apply_chat_template(
         self, messages, tokenize, add_generation_prompt, enable_thinking
     ):
-        content = messages[0]["content"]
+        content = messages[-1]["content"]
         rendered = f"<user>{content}{content}</user><assistant>"
         return self._ids(rendered) if tokenize else rendered
 
 
-def _generation_for_spans(tokenizer, task_input, *, reasoning=False):
+def _generation_for_spans(
+    tokenizer, task_input, *, reasoning=False, system_prompt=None
+):
     record = _generation(reasoning=reasoning)
     instruction = REASONING_INSTRUCTION if reasoning else "final instruction"
     record["formatted_prompt_token_ids"] = render_initial_prompt(
@@ -142,6 +147,7 @@ def _generation_for_spans(tokenizer, task_input, *, reasoning=False):
         task_input,
         instruction,
         reasoning=reasoning,
+        system_prompt=system_prompt,
     )
     record["final_control"]["answer_instruction"] = "final instruction"
     return record
@@ -182,6 +188,27 @@ class ActivationTests(unittest.TestCase):
         }
 
         mapped = map_semantic_spans(tokenizer, example, generation)
+
+        self.assertTrue(mapped["span_1"])
+
+    def test_semantic_span_mapping_with_fixed_system_prompt(self):
+        tokenizer = _SpanTokenizer()
+        task_input = "Ask José now"
+        system_prompt = "Fixed instructions"
+        generation = _generation_for_spans(
+            tokenizer, task_input, system_prompt=system_prompt
+        )
+        example = {
+            "id": 9,
+            "input": task_input,
+            "semantic_spans": {
+                "span_1": {"start_char": 4, "end_char": 8},
+            },
+        }
+
+        mapped = map_semantic_spans(
+            tokenizer, example, generation, system_prompt
+        )
 
         self.assertTrue(mapped["span_1"])
 

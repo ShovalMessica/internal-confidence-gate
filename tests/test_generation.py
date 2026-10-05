@@ -31,6 +31,7 @@ class _Tokenizer:
     def __init__(self):
         self.rendered_contents = []
         self.rendered_modes = []
+        self.rendered_messages = []
 
     @staticmethod
     def _ids(text):
@@ -45,9 +46,11 @@ class _Tokenizer:
     def apply_chat_template(
         self, messages, tokenize, add_generation_prompt, enable_thinking
     ):
-        self.rendered_contents.append(messages[0]["content"])
+        self.rendered_messages.append(messages)
+        self.rendered_contents.append(messages[-1]["content"])
         self.rendered_modes.append(enable_thinking)
-        return [8, *self._ids(messages[0]["content"]), 9]
+        content = "\n".join(message["content"] for message in messages)
+        return [8, *self._ids(content), 9]
 
     def pad(self, encoded, padding, return_tensors):
         rows = encoded["input_ids"]
@@ -172,6 +175,35 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(
             tokenizer.rendered_contents,
             [f"Task\n\n{ANSWER_INSTRUCTION}\n{DISALLOW_ABSTENTION_INSTRUCTION}"],
+        )
+
+    def test_fixed_system_prompt_precedes_example_user_message(self):
+        tokenizer = _Tokenizer()
+        model = _Model([[[tokenizer.eos_token_id]]])
+        examples = [{"id": 1, "input": "Example input", "split": "test"}]
+
+        list(
+            generation_units(
+                _loaded(model, tokenizer),
+                examples,
+                _config(system_prompt="Fixed instructions"),
+            )
+        )
+
+        self.assertEqual(
+            tokenizer.rendered_messages,
+            [
+                [
+                    {"role": "system", "content": "Fixed instructions"},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Example input\n\n{ANSWER_INSTRUCTION}\n"
+                            f"{ALLOW_ABSTENTION_INSTRUCTION}"
+                        ),
+                    },
+                ]
+            ],
         )
 
     def test_reasoning_boundary_is_replaced_by_canonical_control(self):

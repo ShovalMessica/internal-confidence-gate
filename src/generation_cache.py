@@ -56,6 +56,8 @@ def build_generation_context(config: TaskConfig) -> GenerationContext:
         "generation_seed": config.generation_seed,
         "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
     }
+    if config.system_prompt_sha256 is not None:
+        settings["system_prompt_sha256"] = config.system_prompt_sha256
     if config.reasoning_mode == "reasoning":
         settings["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:

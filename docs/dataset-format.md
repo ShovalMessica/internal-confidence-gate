@@ -19,7 +19,13 @@ Example
 
 - **`id`** — Unique integer identifier. Boolean values are not accepted as integers.
 
-- **`input`** — The full prompt as a nonempty string, including task instructions and example-specific content already inserted. Do not supply a template with unresolved placeholders. The generation stage adds its output instruction and `FINAL:` prefix; you do not add them. See [Generation](configuration.md#generation).
+- **`input`** — The complete nonempty user message for this example. When an
+  optional fixed [`system_prompt_path`](configuration.md#model-and-paths) is
+  configured, put shared task instructions in that file and only the
+  example-specific user content here. Otherwise, include all task instructions
+  directly in every `input`. Do not supply unresolved placeholders. The
+  generation stage adds its output instruction and `FINAL:` prefix; you do not
+  add them. See [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 

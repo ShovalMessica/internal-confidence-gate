@@ -205,10 +205,16 @@ Follow the [dataset format](docs/dataset-format.md).
 Each example contains:
 
 - `id`: a unique identifier.
-- `input`: the complete task prompt.
+- `input`: the complete user message for that example.
 - `target_answer`: the expected final answer.
 - Optional `split`: a training, validation, or test assignment.
 - Optional `semantic_spans`: additional character spans for activation capture.
+
+Shared task instructions may instead be supplied once through the optional
+`system_prompt_path` configuration field. That file is fixed across examples
+and contains no placeholders; each dataset `input` then contains only its
+example-specific user content. If no system prompt is configured, each `input`
+must contain all instructions needed for the task.
 
 The toolkit adds the output instruction and generates responses itself. Users do not need to supply existing model predictions.
 

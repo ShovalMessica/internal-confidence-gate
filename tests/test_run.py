@@ -316,6 +316,37 @@ class RunTests(unittest.TestCase):
             ).run_id)
         self.assertEqual(len(set(identities)), len(identities))
 
+    def test_system_prompt_content_defines_identity(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        first_prompt = self.root / "first-system.md"
+        second_prompt = self.root / "second-system.md"
+        first_prompt.write_text("Fixed instructions", encoding="utf-8")
+        second_prompt.write_text("Fixed instructions", encoding="utf-8")
+
+        identities = []
+        for prompt in (first_prompt, second_prompt):
+            self.write_config(system_prompt_path=str(prompt))
+            prepared = prepare_run(self.config)
+            identities.append(
+                build_run_identity(
+                    prepared.config,
+                    prepared.dataset.content_sha256,
+                    prepared.split_source,
+                ).run_id
+            )
+
+        second_prompt.write_text("Changed instructions", encoding="utf-8")
+        self.write_config(system_prompt_path=str(second_prompt))
+        changed = prepare_run(self.config)
+        changed_id = build_run_identity(
+            changed.config,
+            changed.dataset.content_sha256,
+            changed.split_source,
+        ).run_id
+
+        self.assertEqual(identities[0], identities[1])
+        self.assertNotEqual(identities[0], changed_id)
+
     def test_only_active_generation_settings_define_identity(self):
         self.write_dataset(self.record(index) for index in range(700))
         identities = []

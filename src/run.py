@@ -154,6 +154,8 @@ def _print_preparation(
     print("Configuration valid.", file=stream)
     print(f"Model: {config.model_name_or_path}", file=stream)
     print(f"Reasoning mode: {config.reasoning_mode}", file=stream)
+    if config.system_prompt_path is not None:
+        print(f"System prompt: {config.system_prompt_path}", file=stream)
     matcher = prepared.answer_matcher
     matcher_name = str(matcher.source_path) if matcher.source_path else "built-in"
     print(f"Answer matcher: {matcher_name}", file=stream)
@@ -179,6 +181,8 @@ def _generation_settings(config: TaskConfig) -> dict:
         "allow_abstention": config.allow_abstention,
         "generation_seed": config.generation_seed,
     }
+    if config.system_prompt_sha256 is not None:
+        settings["system_prompt_sha256"] = config.system_prompt_sha256
     if config.reasoning_mode == "reasoning":
         settings["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
@@ -538,7 +542,12 @@ def _capture_activations(
         example_id = example["id"]
         record = generations[example_id]
         semantic_positions = (
-            map_semantic_spans(tokenizer, example, record)
+            map_semantic_spans(
+                tokenizer,
+                example,
+                record,
+                prepared.config.system_prompt,
+            )
             if tokenizer is not None
             else None
         )

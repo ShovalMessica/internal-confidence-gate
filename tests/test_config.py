@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
+import hashlib
 import io
 from pathlib import Path
 import tempfile
@@ -39,6 +40,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.dataset_path, self.dataset)
         self.assertEqual(config.output_dir, self.root / "outputs")
         self.assertIsNone(config.model_revision)
+        self.assertIsNone(config.system_prompt_path)
+        self.assertIsNone(config.system_prompt)
+        self.assertIsNone(config.system_prompt_sha256)
         self.assertEqual(config.device, "auto")
         self.assertEqual(config.dtype, "auto")
         self.assertEqual(config.reasoning_max_new_tokens, 1024)
@@ -86,6 +90,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.split_seed, 0)
         self.assertEqual(config.split_ratios.train, 0.8)
         self.assertFalse(output.exists())
+
+    def test_fixed_system_prompt_is_loaded_and_hashed(self):
+        prompt = self.root / "system.md"
+        prompt_bytes = "Fixed task instructions.\n".encode("utf-8")
+        prompt.write_bytes(prompt_bytes)
+
+        config = load_config(
+            self.write(dict(self.required, system_prompt_path=str(prompt)))
+        )
+
+        self.assertEqual(config.system_prompt_path, prompt)
+        self.assertEqual(config.system_prompt, prompt_bytes.decode("utf-8"))
+        self.assertEqual(
+            config.system_prompt_sha256,
+            hashlib.sha256(prompt_bytes).hexdigest(),
+        )
 
     def test_all_missing_required_fields_are_reported_together(self):
         with self.assertRaises(ConfigurationError) as caught:
@@ -161,12 +181,25 @@ class ConfigTests(unittest.TestCase):
             ("answer_matcher_path", "relative.py"),
             ("answer_matcher_path", str(self.root / "missing.py")),
             ("answer_matcher_path", str(self.dataset)),
+            ("system_prompt_path", None),
+            ("system_prompt_path", "relative.md"),
+            ("system_prompt_path", str(self.root / "missing-system.md")),
+            ("system_prompt_path", str(self.root)),
         ]
         for field, value in cases:
             with self.subTest(field=field, value=value):
                 with self.assertRaises(ConfigurationError) as caught:
                     load_config(self.write(dict(self.required, **{field: value})))
                 self.assertIn(field, str(caught.exception))
+
+        empty_prompt = self.root / "empty-system.md"
+        empty_prompt.write_text(" \n", encoding="utf-8")
+        with self.assertRaisesRegex(ConfigurationError, "empty prompt"):
+            load_config(
+                self.write(
+                    dict(self.required, system_prompt_path=str(empty_prompt))
+                )
+            )
 
     def test_invalid_ratios(self):
         cases = [None, [], {}, {"train": 0.7, "validation": 0.3},

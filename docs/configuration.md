@@ -11,6 +11,11 @@ The fields below are accepted by the configuration loader. Later pipeline behavi
 - **`device` (optional; default: `auto`)** — `auto`, `cpu`, `cuda`, or a numbered CUDA device such as `cuda:1`.
 - **`dtype` (optional; default: `auto`)** — `auto`, `float16`, `bfloat16`, or `float32`. `auto` uses the dtype stored with the checkpoint.
 - **`dataset_path`** — Required absolute path to the JSONL dataset.
+- **`system_prompt_path` (optional)** — Absolute path to a nonempty UTF-8 text
+  file used as the fixed system message for every example. It must not contain
+  placeholders. When omitted, generation uses only the dataset `input` as the
+  user message. The file's SHA-256 hash is recorded in the run identity, so
+  changing its contents creates a different generation run.
 - **`output_dir` (optional)** — Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Each validated run is stored under `<output_dir>/<run_id>`.
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
@@ -18,6 +23,14 @@ User-supplied filesystem paths must be absolute; relative paths are rejected. Hu
 The current version requires a standard Transformers text-only, decoder-only causal language model with a tokenizer chat template. Models requiring `trust_remote_code=True` are not supported.
 
 ## Generation
+
+The toolkit builds standard chat messages and lets the model tokenizer's
+`apply_chat_template` render its model-specific format. When
+`system_prompt_path` is configured, the fixed file becomes the `system`
+message and each dataset `input` becomes the `user` message. Otherwise, the
+dataset `input` is the only user message. In both cases, the toolkit appends its
+answer instruction to the user message and requests the assistant generation
+boundary from the tokenizer.
 
 - **`reasoning_mode`** — Required: `direct` or `reasoning`.
 

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, dataclass, field, fields
+import hashlib
 import math
 from pathlib import Path
 import re
@@ -33,6 +34,7 @@ class TaskConfig:
     reasoning_mode: Literal["direct", "reasoning"]
     output_dir: Path
     model_revision: str | None = None
+    system_prompt_path: Path | None = None
     device: str = "auto"
     dtype: Literal["auto", "float16", "bfloat16", "float32"] = "auto"
     reasoning_max_new_tokens: int = 1024
@@ -45,13 +47,22 @@ class TaskConfig:
     target_tpr: float = 0.90
     split_ratios: SplitRatios = SplitRatios()
     split_seed: int = 42
+    system_prompt: str | None = field(
+        default=None, repr=False, metadata={"yaml": False}
+    )
+    system_prompt_sha256: str | None = field(
+        default=None, metadata={"yaml": False}
+    )
 
 
-_FIELDS = {field.name for field in fields(TaskConfig)}
+_YAML_FIELDS = tuple(
+    item for item in fields(TaskConfig) if item.metadata.get("yaml", True)
+)
+_FIELDS = {item.name for item in _YAML_FIELDS}
 _DEFAULTS = {
-    field.name: field.default
-    for field in fields(TaskConfig)
-    if field.default is not MISSING
+    item.name: item.default
+    for item in _YAML_FIELDS
+    if item.default is not MISSING
 }
 _SPLIT_NAMES = tuple(field.name for field in fields(SplitRatios))
 _MODEL_ID = re.compile(r"[\w][\w.-]*(?:/[\w][\w.-]*)?", re.ASCII)
@@ -200,6 +211,30 @@ def load_config(path: str | Path) -> TaskConfig:
             errors.append("dataset_path must name a .jsonl file.")
         if not dataset.is_file():
             errors.append("dataset_path must point to an existing file.")
+
+    if "system_prompt_path" in raw:
+        prompt_path = _absolute_path(
+            raw["system_prompt_path"], "system_prompt_path", errors
+        )
+        values["system_prompt_path"] = prompt_path
+        if prompt_path is not None:
+            try:
+                prompt_bytes = prompt_path.read_bytes()
+                prompt_text = prompt_bytes.decode("utf-8")
+            except (OSError, UnicodeError):
+                errors.append(
+                    "system_prompt_path must point to a readable UTF-8 text file."
+                )
+            else:
+                if not prompt_text.strip():
+                    errors.append(
+                        "system_prompt_path must not contain an empty prompt."
+                    )
+                else:
+                    values["system_prompt"] = prompt_text
+                    values["system_prompt_sha256"] = hashlib.sha256(
+                        prompt_bytes
+                    ).hexdigest()
 
     if raw.get("reasoning_mode") not in ("direct", "reasoning"):
         errors.append("reasoning_mode is required and must be 'direct' or 'reasoning'.")

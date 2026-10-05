@@ -98,12 +98,17 @@ def render_initial_prompt(
     *,
     reasoning: bool,
     tokenize: bool = True,
+    system_prompt: str | None = None,
 ) -> list[int] | str:
     """Render the exact initial chat prompt used for generation or span mapping."""
     content = initial_prompt_content(task_input, instruction)
+    messages = []
+    if system_prompt is not None:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": content})
     try:
         rendered = tokenizer.apply_chat_template(
-            [{"role": "user", "content": content}],
+            messages,
             tokenize=tokenize,
             add_generation_prompt=True,
             enable_thinking=reasoning,
@@ -323,7 +328,11 @@ def _direct_unit(
     for position, example in indexed_examples:
         try:
             chat_ids = render_initial_prompt(
-                tokenizer, example["input"], instruction, reasoning=False
+                tokenizer,
+                example["input"],
+                instruction,
+                reasoning=False,
+                system_prompt=config.system_prompt,
             )
         except ValueError as exc:
             records.append(_failure(example, "prompt_rendering", str(exc)))
@@ -387,6 +396,7 @@ def _reasoning_unit(
             example["input"],
             REASONING_INSTRUCTION,
             reasoning=True,
+            system_prompt=config.system_prompt,
         )
     except ValueError as exc:
         return GenerationUnit(
