@@ -48,6 +48,11 @@ class ProbeIdentity:
     activation_sha256: str
     evaluation_sha256: str
     seed: int
+    positions: tuple[str, ...] | None
+    layers: tuple[int, ...] | None
+    excluded_answers: tuple[str, ...]
+    regularization_c: float
+    class_weight: str
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,7 @@ class _ProbeData:
     validation_labels: np.ndarray
     positions: tuple[str, ...]
     state_labels: tuple[str, ...]
+    state_indices: tuple[int, ...]
     hidden_size: int
 
 
@@ -121,7 +127,14 @@ def _encoded(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _settings(seed: int) -> dict[str, object]:
+def _settings_values(
+    seed: int,
+    positions: tuple[str, ...] | None,
+    layers: tuple[int, ...] | None,
+    excluded_answers: tuple[str, ...],
+    regularization_c: float,
+    class_weight: str,
+) -> dict[str, object]:
     return {
         "protocol_version": PROBE_PROTOCOL_VERSION,
         "score": PROBE_SCORE,
@@ -129,27 +142,66 @@ def _settings(seed: int) -> dict[str, object]:
         "standardization": "training_split_only",
         "model": "logistic_regression",
         "penalty": "l2",
-        "regularization_C": REGULARIZATION_C,
-        "class_weight": "balanced",
+        "regularization_C": regularization_c,
+        "class_weight": class_weight,
         "solver": SOLVER,
         "max_iterations": MAX_ITERATIONS,
         "seed": seed,
+        "positions": list(positions) if positions is not None else None,
+        "layers": list(layers) if layers is not None else None,
+        "excluded_answers": list(excluded_answers),
     }
 
 
+def _settings(identity: ProbeIdentity) -> dict[str, object]:
+    return _settings_values(
+        identity.seed,
+        identity.positions,
+        identity.layers,
+        identity.excluded_answers,
+        identity.regularization_c,
+        identity.class_weight,
+    )
+
+
 def build_probe_identity(
-    activation_sha256: str, evaluation_sha256: str, seed: int
+    activation_sha256: str,
+    evaluation_sha256: str,
+    seed: int,
+    *,
+    positions: tuple[str, ...] | None = None,
+    layers: tuple[int, ...] | None = None,
+    excluded_answers: tuple[str, ...] = (),
+    regularization_c: float = REGULARIZATION_C,
+    class_weight: str = "balanced",
 ) -> ProbeIdentity:
     """Identify one downstream probe training without changing upstream identity."""
+    settings = _settings_values(
+        seed,
+        positions,
+        layers,
+        excluded_answers,
+        float(regularization_c),
+        class_weight,
+    )
     payload = {
         "schema_version": PROBE_STORE_SCHEMA_VERSION,
         "activation_sha256": activation_sha256,
         "evaluation_sha256": evaluation_sha256,
-        "settings": _settings(seed),
+        "settings": settings,
     }
     fingerprint = hashlib.sha256(_encoded(payload)).hexdigest()
     return ProbeIdentity(
-        fingerprint[:12], fingerprint, activation_sha256, evaluation_sha256, seed
+        fingerprint[:12],
+        fingerprint,
+        activation_sha256,
+        evaluation_sha256,
+        seed,
+        positions,
+        layers,
+        excluded_answers,
+        float(regularization_c),
+        class_weight,
     )
 
 
@@ -233,13 +285,17 @@ def _labels(records: Sequence[Mapping[str, object]]) -> np.ndarray:
 
 
 def _split_records(
-    evaluations: Mapping[int, Mapping[str, object]], split: str
+    evaluations: Mapping[int, Mapping[str, object]],
+    split: str,
+    excluded_answers: Sequence[str] = (),
 ) -> tuple[tuple[int, ...], np.ndarray]:
+    excluded = set(excluded_answers)
     records = [
         record
         for record in evaluations.values()
         if record.get("split") == split
         and record.get("outcome") in ("correct", "incorrect")
+        and record.get("normalized_answer") not in excluded
     ]
     ids = tuple(int(record["id"]) for record in records)
     labels = _labels(records)
@@ -253,19 +309,24 @@ def _split_records(
 def _activation_metadata(
     activation_path: Path,
     evaluations: Mapping[int, Mapping[str, object]],
+    identity: ProbeIdentity,
 ) -> _ProbeData:
-    train_ids, train_labels = _split_records(evaluations, "train")
-    validation_ids, validation_labels = _split_records(evaluations, "validation")
+    train_ids, train_labels = _split_records(
+        evaluations, "train", identity.excluded_answers
+    )
+    validation_ids, validation_labels = _split_records(
+        evaluations, "validation", identity.excluded_answers
+    )
     selected_ids = train_ids + validation_ids
     try:
         with _h5py().File(activation_path, "r") as source:
             if not bool(source.attrs.get("completed", False)):
                 raise ProbeError("Activation capture is not complete.")
-            state_labels = tuple(_json_attr(source, "state_labels"))
+            all_state_labels = tuple(_json_attr(source, "state_labels"))
             hidden_size = int(source.attrs.get("hidden_size", 0))
             if (
-                not state_labels
-                or int(source.attrs.get("state_count", 0)) != len(state_labels)
+                not all_state_labels
+                or int(source.attrs.get("state_count", 0)) != len(all_state_labels)
                 or hidden_size <= 0
                 or "examples" not in source
             ):
@@ -276,9 +337,32 @@ def _activation_metadata(
                 raise ProbeError(
                     f"Activations are missing for example ID {selected_ids[0]}."
                 )
-            positions = tuple(source["examples"][first_key].keys())
-            if not positions or any("/" in name for name in positions):
+            all_positions = tuple(source["examples"][first_key].keys())
+            if not all_positions or any("/" in name for name in all_positions):
                 raise ProbeError("Activation position names are invalid.")
+            positions = identity.positions or all_positions
+            missing_positions = set(positions) - set(all_positions)
+            if missing_positions:
+                raise ProbeError(
+                    "Requested probe positions are unavailable: "
+                    + ", ".join(sorted(missing_positions))
+                )
+            requested_labels = (
+                tuple(
+                    "embedding" if layer == 0 else f"hidden_state_{layer}"
+                    for layer in identity.layers
+                )
+                if identity.layers is not None
+                else all_state_labels
+            )
+            missing_states = set(requested_labels) - set(all_state_labels)
+            if missing_states:
+                raise ProbeError(
+                    "Requested probe layers are unavailable: "
+                    + ", ".join(sorted(missing_states))
+                )
+            state_labels = tuple(requested_labels)
+            state_indices = tuple(all_state_labels.index(label) for label in state_labels)
 
             for example_id in selected_ids:
                 key = str(example_id)
@@ -292,7 +376,7 @@ def _activation_metadata(
                     raise ProbeError(
                         f"Activation split is invalid for example ID {example_id}."
                     )
-                if tuple(group.keys()) != positions:
+                if tuple(group.keys()) != all_positions:
                     raise ProbeError(
                         f"Activation positions differ for example ID {example_id}."
                     )
@@ -300,7 +384,7 @@ def _activation_metadata(
                     dataset = group[position]
                     if (
                         len(dataset.shape) != 3
-                        or dataset.shape[0] != len(state_labels)
+                        or dataset.shape[0] != len(all_state_labels)
                         or dataset.shape[1] < 1
                         or dataset.shape[2] != hidden_size
                     ):
@@ -320,6 +404,7 @@ def _activation_metadata(
         validation_labels,
         positions,
         state_labels,
+        state_indices,
         hidden_size,
     )
 
@@ -357,7 +442,7 @@ def _create_training(group, identity: ProbeIdentity, data: _ProbeData) -> None:
     group.attrs["fingerprint"] = identity.fingerprint
     group.attrs["activation_sha256"] = identity.activation_sha256
     group.attrs["evaluation_sha256"] = identity.evaluation_sha256
-    group.attrs["settings"] = json.dumps(_settings(identity.seed), sort_keys=True)
+    group.attrs["settings"] = json.dumps(_settings(identity), sort_keys=True)
     group.attrs["positions"] = json.dumps(data.positions)
     group.attrs["state_labels"] = json.dumps(data.state_labels)
     group.attrs["hidden_size"] = data.hidden_size
@@ -404,7 +489,7 @@ def _expected_metadata(identity: ProbeIdentity, data: _ProbeData) -> dict[str, o
         "fingerprint": identity.fingerprint,
         "activation_sha256": identity.activation_sha256,
         "evaluation_sha256": identity.evaluation_sha256,
-        "settings": json.dumps(_settings(identity.seed), sort_keys=True),
+        "settings": json.dumps(_settings(identity), sort_keys=True),
         "positions": json.dumps(data.positions),
         "state_labels": json.dumps(data.state_labels),
         "hidden_size": data.hidden_size,
@@ -481,6 +566,8 @@ def _fit_probe(
     seed: int,
     position: str,
     state_label: str,
+    regularization_c: float,
+    class_weight: str,
 ) -> _FittedProbe:
     if not np.isfinite(train_values).all() or not np.isfinite(validation_values).all():
         raise ProbeError(
@@ -500,8 +587,8 @@ def _fit_probe(
     validation_scaled = scaler.transform(validation_values)
     model = LogisticRegression(
         penalty="l2",
-        C=REGULARIZATION_C,
-        class_weight="balanced",
+        C=regularization_c,
+        class_weight=None if class_weight == "none" else class_weight,
         solver=SOLVER,
         max_iter=MAX_ITERATIONS,
         random_state=seed,
@@ -685,7 +772,7 @@ def validate_probe_group(
                 or group.attrs.get("activation_sha256") != identity.activation_sha256
                 or group.attrs.get("evaluation_sha256") != identity.evaluation_sha256
                 or group.attrs.get("settings")
-                != json.dumps(_settings(identity.seed), sort_keys=True)
+                != json.dumps(_settings(identity), sort_keys=True)
                 or not bool(group.attrs.get("completed", False))
                 or not np.asarray(group["completed_candidates"][...]).all()
             ):
@@ -1196,8 +1283,12 @@ def evaluate_frozen_test(
         selection_identity,
         identity.selection_sha256,
     )
-    validation_ids, validation_labels = _split_records(evaluations, "validation")
-    test_ids, test_labels = _split_records(evaluations, "test")
+    validation_ids, validation_labels = _split_records(
+        evaluations, "validation", probe_identity.excluded_answers
+    )
+    test_ids, test_labels = _split_records(
+        evaluations, "test", probe_identity.excluded_answers
+    )
     validation_probabilities = np.asarray(
         [answer_probability(generations[item], item) for item in validation_ids]
     )
@@ -1231,9 +1322,17 @@ def evaluate_frozen_test(
 
             position = str(selection.attrs["selected_position"])
             state = int(selection.attrs["selected_state_index"])
+            selected_state = tuple(_json_attr(training, "state_labels"))[state]
+            activation_states = tuple(_json_attr(activations, "state_labels"))
+            try:
+                activation_state = activation_states.index(selected_state)
+            except ValueError as exc:
+                raise ProbeError(
+                    f"Selected probe state is absent from activations: {selected_state}"
+                ) from exc
             probe_threshold = float(selection.attrs["selected_threshold"])
             model = training["position_models"][position]
-            test_values = _matrix(activations, test_ids, position, state)
+            test_values = _matrix(activations, test_ids, position, activation_state)
             standardized = (
                 test_values - np.asarray(model["scaler_mean"][state])
             ) / np.asarray(model["scaler_scale"][state])
@@ -1296,7 +1395,7 @@ def train_probes(
 ) -> ProbeTrainingResult:
     """Fit or resume every position-by-state probe without reading test features."""
     activation_path = activation_file_path(run_directory)
-    data = _activation_metadata(activation_path, evaluations)
+    data = _activation_metadata(activation_path, evaluations, identity)
     path = probe_file_path(run_directory)
     if path.exists() and path.stat().st_size == 0:
         path.unlink()
@@ -1325,14 +1424,16 @@ def train_probes(
             trained = 0
             for position_index, position in enumerate(data.positions):
                 model = group["position_models"][position]
-                for state, state_label in enumerate(data.state_labels):
+                for state, (state_label, source_state) in enumerate(
+                    zip(data.state_labels, data.state_indices)
+                ):
                     if bool(completed[position_index, state]):
                         continue
                     train_values = _matrix(
-                        activations, data.train_ids, position, state
+                        activations, data.train_ids, position, source_state
                     )
                     validation_values = _matrix(
-                        activations, data.validation_ids, position, state
+                        activations, data.validation_ids, position, source_state
                     )
                     fitted = _fit_probe(
                         train_values,
@@ -1341,6 +1442,8 @@ def train_probes(
                         identity.seed,
                         position,
                         state_label,
+                        identity.regularization_c,
+                        identity.class_weight,
                     )
                     _write_candidate(model, state, fitted)
                     output.flush()

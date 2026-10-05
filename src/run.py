@@ -38,6 +38,7 @@ from src.evaluation import (
     build_evaluation_identity,
     evaluate_answers,
     load_answer_matcher,
+    probe_shortages,
 )
 from src.generation import GenerationError, generation_units
 from src.generation_cache import (
@@ -397,8 +398,15 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     )
 
     if validate_completed_evaluation(directory, run_record, identity):
-        load_evaluation_records(directory, identity.evaluation_id, examples)
-        summary = run_record["evaluations"][identity.evaluation_id]["summary"]
+        records_by_id = load_evaluation_records(
+            directory, identity.evaluation_id, examples
+        )
+        summary = dict(run_record["evaluations"][identity.evaluation_id]["summary"])
+        shortages = probe_shortages(
+            list(records_by_id.values()), prepared.config.probe_excluded_answers
+        )
+        summary["probe_ready"] = not shortages
+        summary["shortages"] = list(shortages)
         print(f"Evaluation ID: {identity.evaluation_id}")
         _print_evaluation(summary, reused=True)
         return summary
@@ -429,8 +437,14 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         result.summary,
     )
     print(f"Evaluation ID: {identity.evaluation_id}")
-    _print_evaluation(result.summary, reused=False)
-    return result.summary
+    summary = dict(result.summary)
+    shortages = probe_shortages(
+        list(result.records), prepared.config.probe_excluded_answers
+    )
+    summary["probe_ready"] = not shortages
+    summary["shortages"] = list(shortages)
+    _print_evaluation(summary, reused=False)
+    return summary
 
 
 def _activation_progress(done: int, total: int, started: float, starting_done: int) -> None:
@@ -502,10 +516,13 @@ def _capture_activations(
     evaluations = load_evaluation_records(
         directory, evaluation_identity.evaluation_id, examples
     )
+    excluded_answers = set(prepared.config.probe_excluded_answers)
     eligible = [
         example
         for example in examples
         if evaluations[example["id"]]["outcome"] in ("correct", "incorrect")
+        and evaluations[example["id"]].get("normalized_answer")
+        not in excluded_answers
     ]
     if not eligible:
         raise ActivationError("No correct or incorrect predictions are available to capture.")
@@ -681,6 +698,11 @@ def _train_probes(
         capture["artifact_sha256"],
         evaluation["artifact_sha256"],
         prepared.config.probe_seed,
+        positions=prepared.config.probe_positions,
+        layers=prepared.config.probe_layers,
+        excluded_answers=prepared.config.probe_excluded_answers,
+        regularization_c=prepared.config.probe_regularization_c,
+        class_weight=prepared.config.probe_class_weight,
     )
     if validate_completed_probe_training(directory, run_record, identity):
         print(f"Probe training ID: {identity.probe_id}")

@@ -175,6 +175,35 @@ class ProbeTests(unittest.TestCase):
         with h5py.File(self.directory / PROBE_FILE, "r") as source:
             self.assertEqual(len(source["trainings"]), 2)
 
+    def test_restricts_candidates_and_excludes_normalized_answers(self):
+        evaluations = {
+            key: {**value, "normalized_answer": "none" if key in (2, 6) else "a"}
+            for key, value in self.evaluations.items()
+        }
+        identity = build_probe_identity(
+            "a" * 64,
+            "e" * 64,
+            7,
+            positions=("prompt_end",),
+            layers=(1,),
+            excluded_answers=("none",),
+            regularization_c=0.3,
+            class_weight="none",
+        )
+
+        result = train_probes(self.directory, identity, evaluations)
+
+        self.assertEqual(result.summary["candidates"], 1)
+        self.assertEqual(result.summary["positions"], ["prompt_end"])
+        self.assertEqual(result.summary["state_labels"], ["hidden_state_1"])
+        with h5py.File(self.directory / PROBE_FILE, "r") as source:
+            group = source[f"trainings/{identity.probe_id}"]
+            self.assertEqual(group["train_ids"][...].tolist(), [1, 3, 4])
+            self.assertEqual(group["validation_ids"][...].tolist(), [5, 7, 8])
+            settings = json.loads(group.attrs["settings"])
+            self.assertEqual(settings["regularization_C"], 0.3)
+            self.assertEqual(settings["class_weight"], "none")
+
     def test_interrupted_training_resumes_missing_candidates(self):
         calls = []
 

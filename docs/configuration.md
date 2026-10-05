@@ -96,6 +96,20 @@ The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the
 ## Probe training and validation selection
 
 - **`probe_seed` (optional; default: `42`)** — Seed for reproducible linear-probe fitting.
+- **`probe_positions` (optional)** — Capture positions to use for probe training,
+  such as `[prompt_end]`. When omitted, train on every captured default and
+  semantic position.
+- **`probe_layers` (optional)** — Model-state numbers to use, such as `[35]`.
+  Layer `0` is the embedding output; positive numbers identify returned
+  transformer hidden states. When omitted, use every state.
+- **`probe_excluded_answers` (optional)** — Normalized model answers to exclude
+  from activation capture, probe training, validation selection, and test gate
+  evaluation. Model Behavior reporting remains unchanged. For example,
+  `[NONE]` restricts an NER gate to actual correction proposals.
+- **`probe_regularization_c` (optional; default: `1.0`)** — Positive logistic-
+  regression `C` value.
+- **`probe_class_weight` (optional; default: `balanced`)** — `balanced` or
+  `none`.
 - **`target_tpr` (optional; default: `0.90`)** — Minimum fraction of correct validation predictions the selected gate must accept. Must be greater than `0` and at most `1`.
 
 After activation capture, the toolkit trains one probe for every captured position and saved model state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
@@ -151,6 +165,8 @@ allow_abstention: true
 generation_seed: 42
 direct_batch_size: 8
 probe_seed: 42
+probe_regularization_c: 1.0
+probe_class_weight: balanced
 target_tpr: 0.90
 split_ratios:
   train: 0.70
@@ -175,6 +191,9 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
 - `answer_matcher_path`, when supplied, must be an absolute path to an existing `.py` file. The runner loads and validates its `answer_match` function during preparation.
+- Probe position, layer, and excluded-answer lists must be nonempty and contain
+  no duplicates when supplied. Probe layers are checked against the loaded
+  model states before training.
 - Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
 - Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.

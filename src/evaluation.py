@@ -222,6 +222,24 @@ def _shortages(summary: dict) -> tuple[dict, ...]:
     return tuple(missing)
 
 
+def probe_shortages(
+    records: Sequence[dict], excluded_answers: Sequence[str] = ()
+) -> tuple[dict, ...]:
+    """Report probe-class shortages after task-specific answer exclusions."""
+    excluded = set(excluded_answers)
+    counts = {
+        split: Counter(
+            record["outcome"]
+            for record in records
+            if record.get("split") == split
+            and record.get("outcome") in ("correct", "incorrect")
+            and record.get("normalized_answer") not in excluded
+        )
+        for split in _SPLITS
+    }
+    return _shortages({"by_split": counts})
+
+
 def evaluate_answers(
     examples: Sequence[dict],
     generations: dict[int, dict],

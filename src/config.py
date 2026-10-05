@@ -44,6 +44,11 @@ class TaskConfig:
     generation_seed: int = 42
     direct_batch_size: int = 8
     probe_seed: int = 42
+    probe_positions: tuple[str, ...] | None = None
+    probe_layers: tuple[int, ...] | None = None
+    probe_excluded_answers: tuple[str, ...] = ()
+    probe_regularization_c: float = 1.0
+    probe_class_weight: Literal["balanced", "none"] = "balanced"
     target_tpr: float = 0.90
     split_ratios: SplitRatios = SplitRatios()
     split_seed: int = 42
@@ -67,6 +72,7 @@ _DEFAULTS = {
 _SPLIT_NAMES = tuple(field.name for field in fields(SplitRatios))
 _MODEL_ID = re.compile(r"[\w][\w.-]*(?:/[\w][\w.-]*)?", re.ASCII)
 _DEVICE = re.compile(r"(?:auto|cpu|cuda(?::\d+)?)", re.ASCII)
+_PROBE_POSITION = re.compile(r"(?:prompt_end|final_prompt_end|answer_tokens|span_[1-9]\d*)")
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -104,6 +110,22 @@ def _integer(value: object, field: str, minimum: int, errors: list[str]) -> None
     # bool is a subclass of int in Python, but is not a valid token limit or seed.
     if type(value) is not int or value < minimum:
         errors.append(f"{field} must be an integer >= {minimum}.")
+
+
+def _string_list(
+    value: object, field: str, errors: list[str]
+) -> tuple[str, ...] | None:
+    if not isinstance(value, list) or not value:
+        errors.append(f"{field} must be a nonempty list of strings.")
+        return None
+    if not all(isinstance(item, str) and item.strip() for item in value):
+        errors.append(f"{field} must contain only nonempty strings.")
+        return None
+    normalized = tuple(item.strip() for item in value)
+    if len(set(normalized)) != len(normalized):
+        errors.append(f"{field} must not contain duplicates.")
+        return None
+    return normalized
 
 
 def _split_ratios(value: object, errors: list[str]) -> SplitRatios | None:
@@ -257,6 +279,56 @@ def load_config(path: str | Path) -> TaskConfig:
     )
     for name, minimum in integer_fields:
         _integer(values[name], name, minimum, errors)
+
+    if "probe_positions" in raw:
+        positions = _string_list(raw["probe_positions"], "probe_positions", errors)
+        values["probe_positions"] = positions
+        if positions is not None and any(
+            not _PROBE_POSITION.fullmatch(position) for position in positions
+        ):
+            errors.append(
+                "probe_positions entries must be prompt_end, final_prompt_end, "
+                "answer_tokens, or span_N."
+            )
+
+    if "probe_layers" in raw:
+        layers = raw["probe_layers"]
+        if (
+            not isinstance(layers, list)
+            or not layers
+            or any(type(layer) is not int or layer < 0 for layer in layers)
+        ):
+            errors.append("probe_layers must be a nonempty list of integers >= 0.")
+        elif len(set(layers)) != len(layers):
+            errors.append("probe_layers must not contain duplicates.")
+        else:
+            values["probe_layers"] = tuple(layers)
+
+    if "probe_excluded_answers" in raw:
+        answers = _string_list(
+            raw["probe_excluded_answers"], "probe_excluded_answers", errors
+        )
+        if answers is not None:
+            normalized = tuple(" ".join(answer.casefold().split()) for answer in answers)
+            if len(set(normalized)) != len(normalized):
+                errors.append(
+                    "probe_excluded_answers must be unique after answer normalization."
+                )
+            else:
+                values["probe_excluded_answers"] = normalized
+
+    regularization = values["probe_regularization_c"]
+    if (
+        type(regularization) not in (int, float)
+        or not math.isfinite(regularization)
+        or regularization <= 0
+    ):
+        errors.append("probe_regularization_c must be a finite number greater than 0.")
+    else:
+        values["probe_regularization_c"] = float(regularization)
+
+    if values["probe_class_weight"] not in ("balanced", "none"):
+        errors.append("probe_class_weight must be 'balanced' or 'none'.")
 
     target_tpr = values["target_tpr"]
     if type(target_tpr) not in (int, float) or not 0 < target_tpr <= 1:

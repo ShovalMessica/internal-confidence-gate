@@ -109,6 +109,8 @@ def build_run_identity(
     }
     if config.system_prompt_sha256 is not None:
         effective["system_prompt_sha256"] = config.system_prompt_sha256
+    if config.probe_excluded_answers:
+        effective["probe_excluded_answers"] = list(config.probe_excluded_answers)
     if config.model_revision is not None:
         effective["model_revision"] = config.model_revision
     if config.reasoning_mode == "reasoning":

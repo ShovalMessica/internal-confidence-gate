@@ -10,6 +10,7 @@ from src.evaluation import (
     evaluate_answers,
     load_answer_matcher,
     normalize_answer,
+    probe_shortages,
 )
 
 
@@ -215,6 +216,15 @@ class EvaluationTests(unittest.TestCase):
         ready = evaluate_answers(examples, generations, allow_abstention=True)
         self.assertTrue(ready.summary["probe_ready"])
         self.assertEqual(ready.shortages, ())
+        excluded = probe_shortages(ready.records, ("answer",))
+        self.assertEqual(
+            [(item["split"], item["outcome"], item["actual"]) for item in excluded],
+            [
+                ("train", "correct", 0),
+                ("validation", "correct", 0),
+                ("test", "correct", 0),
+            ],
+        )
 
         generations[0] = _generation(examples[0], "UNKNOWN")
         short = evaluate_answers(examples, generations, allow_abstention=True)
