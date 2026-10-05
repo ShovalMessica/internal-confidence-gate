@@ -39,6 +39,13 @@ To validate the configuration and dataset without loading a model, run:
 python -m src.run configs/task.yaml --prepare-only
 ```
 
+To run generation and Model Behavior evaluation without capturing activations
+or training probes, run:
+
+```sh
+python -m src.run configs/task.yaml --behavior-only
+```
+
 ## Research goal
 
 Language models can produce incorrect answers even when their output probabilities are high. Applications that need to decide which predictions to accept therefore need reliable ways to assess those predictions.
@@ -232,6 +239,12 @@ To validate and register the run without loading a model:
 python -m src.run configs/task.yaml --prepare-only
 ```
 
+To stop after generation and Model Behavior evaluation:
+
+```sh
+python -m src.run configs/task.yaml --behavior-only
+```
+
 The runner reports valid and excluded examples and the final split sizes. It creates or reuses:
 
 ```text
@@ -248,7 +261,7 @@ The run ID represents the generation settings and exact dataset contents. `run.j
 
 `activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 
-`probes.h5` contains one candidate for every position and model state. Each training group stores its scaler, linear model, and train/validation scores. Validation-selection groups store every candidate's threshold, TPR, FPR, and AUROC. Frozen test groups store per-example labels, probe and probability scores, and both accept/reject decisions. Different matchers, probe seeds, or target TPRs coexist inside the same file.
+`probes.h5` contains one candidate for every configured position and model state. Each training group stores its scaler, linear model, and train/validation scores. Validation-selection groups store every candidate's threshold, TPR, FPR, and AUROC. Frozen test groups store per-example labels, probe and probability scores, and both accept/reject decisions. Different matchers, probe seeds, or target TPRs coexist inside the same file.
 
 Each report directory contains `metrics.json`, CSV data behind every plot, one validation layer graph per captured position, `validation_tpr_fpr.png`, `test_tpr_fpr.png`, and a hash-validated manifest. Reusing a completed report does not reload the model or retrain probes.
 

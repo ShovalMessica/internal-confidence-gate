@@ -489,6 +489,39 @@ class RunTests(unittest.TestCase):
         evaluate_test.assert_called_once()
         create_report.assert_called_once()
 
+    def test_behavior_only_stops_after_evaluation(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full(None, "--behavior-only")
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Model Behavior complete", stdout)
+        self.capture_mock.assert_not_called()
+        self.probe_mock.assert_not_called()
+        self.selection_mock.assert_not_called()
+        self.test_evaluation_mock.assert_not_called()
+        self.report_mock.assert_not_called()
+
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()

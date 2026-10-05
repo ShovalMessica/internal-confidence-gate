@@ -903,10 +903,16 @@ def _parser() -> argparse.ArgumentParser:
         description="Prepare and run an Internal Confidence Gate task."
     )
     parser.add_argument("config", type=Path, help="Path to the task YAML configuration.")
-    parser.add_argument(
+    stop = parser.add_mutually_exclusive_group()
+    stop.add_argument(
         "--prepare-only",
         action="store_true",
         help="Validate and register the run without loading a model.",
+    )
+    stop.add_argument(
+        "--behavior-only",
+        action="store_true",
+        help="Run generation and answer evaluation, then stop before activations.",
     )
     parser.add_argument(
         "--force-recompute",
@@ -945,29 +951,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not summary["probe_ready"]:
                 _print_shortages(summary["shortages"], sys.stderr)
                 return 1
-            _capture_activations(
-                prepared, registered, loaded, args.force_recompute
-            )
-            probe_identity, probe_sha256 = _train_probes(prepared, registered)
-            selection_identity, selection_sha256 = _select_probe(
-                prepared, registered, probe_identity, probe_sha256
-            )
-            test_identity, test_sha256 = _evaluate_frozen_test(
-                prepared,
-                registered,
-                probe_identity,
-                selection_identity,
-                selection_sha256,
-            )
-            _create_report(
-                prepared,
-                registered,
-                probe_identity,
-                selection_identity,
-                selection_sha256,
-                test_identity,
-                test_sha256,
-            )
+            if args.behavior_only:
+                print(
+                    "Model Behavior complete. Activation capture and probe stages "
+                    "were not run."
+                )
+            else:
+                _capture_activations(
+                    prepared, registered, loaded, args.force_recompute
+                )
+                probe_identity, probe_sha256 = _train_probes(prepared, registered)
+                selection_identity, selection_sha256 = _select_probe(
+                    prepared, registered, probe_identity, probe_sha256
+                )
+                test_identity, test_sha256 = _evaluate_frozen_test(
+                    prepared,
+                    registered,
+                    probe_identity,
+                    selection_identity,
+                    selection_sha256,
+                )
+                _create_report(
+                    prepared,
+                    registered,
+                    probe_identity,
+                    selection_identity,
+                    selection_sha256,
+                    test_identity,
+                    test_sha256,
+                )
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1
