@@ -7,7 +7,7 @@
 6. **Train probes across semantic positions, layers, and supported representation types.**
 7. **Use validation data to select probes and acceptance thresholds.**
 8. **Evaluate frozen selections on test data and compare them with output probabilities.**
-9. Produce metrics, logs, graphs, and representation comparisons. Decide the exact reports later, potentially including head-level analysis within relevant layers.
+9. **Produce metrics, logs, graphs, and representation comparisons. Decide the exact reports later, potentially including head-level analysis within relevant layers.**
 10. Run NER and speaker attribution as sanity checks that the generic pipeline reproduces the earlier process.
 11. Add PEAP later as an optional extension.
 
