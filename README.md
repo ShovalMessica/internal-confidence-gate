@@ -17,6 +17,28 @@ Task-adaptable toolkit for building confidence gates from internal model activat
 
 The toolkit is under development. Items marked **TODO** identify specifications or implementation details that are not yet finalized.
 
+## Quick start
+
+1. Install the dependencies:
+
+   ```sh
+   python -m pip install -r requirements.txt
+   ```
+
+2. Prepare your data using the required [JSONL format](docs/dataset-format.md).
+3. Fill in [configs/task.yaml](configs/task.yaml).
+4. Run the complete pipeline:
+
+   ```sh
+   python -m src.run configs/task.yaml
+   ```
+
+To validate the configuration and dataset without loading a model, run:
+
+```sh
+python -m src.run configs/task.yaml --prepare-only
+```
+
 ## Research goal
 
 Language models can produce incorrect answers even when their output probabilities are high. Applications that need to decide which predictions to accept therefore need reliable ways to assess those predictions.
