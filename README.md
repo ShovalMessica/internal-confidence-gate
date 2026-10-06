@@ -162,7 +162,7 @@ Probe training uses mean-pooled hidden states, training-only standardization, an
 
 Validation then selects one probe and acceptance threshold. For each candidate, the toolkit chooses the strictest threshold that retains at least the configured fraction of correct validation predictions, then selects the candidate with the lowest validation FPR. AUROC is reported for context but does not determine the winner.
 
-On test data, the selected probe and threshold are frozen. The output-probability baseline receives its own validation threshold at the same target TPR. For multi-token answers, its confidence is the geometric mean of the generated tokens' probabilities; for a one-token answer, this is simply that token's probability.
+On test data, the selected probe and threshold are frozen. The output-probability baseline receives its own validation threshold at the same target TPR. For multi-token answers, its confidence is the geometric mean of the generated tokens' probabilities; for a one-token answer, this is simply that token's probability. These probabilities come from the model's raw next-token logits, before sampling filters such as temperature, top-k, or top-p are applied.
 
 The final report uses four gate metrics:
 

@@ -177,7 +177,7 @@ All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID 
 
 After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, and AUROC.
 
-The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability.
+The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability. Token probabilities are calculated from the model's raw next-token logits, before temperature, top-k, top-p, or other sampling filters are applied.
 
 Per-example test labels, scores, and accept/reject decisions are stored in the existing `<run_dir>/probes.h5`; `run.json` stores the summary. Neither method uses test data to select a representation or threshold.
 

@@ -84,7 +84,12 @@ class _Model:
         sequences = torch.stack(rows)
         steps = len(generated_rows[0])
         scores = tuple(torch.zeros(len(rows), 1) for _ in range(steps))
-        return SimpleNamespace(sequences=sequences, scores=scores, beam_indices=None)
+        return SimpleNamespace(
+            sequences=sequences,
+            scores=scores,
+            logits=scores,
+            beam_indices=None,
+        )
 
     def compute_transition_scores(self, sequences, scores, beam_indices, normalize_logits):
         return torch.tensor(
@@ -160,6 +165,57 @@ class GenerationTests(unittest.TestCase):
             self.assertNotIn("do_sample", call)
             self.assertNotIn("temperature", call)
             self.assertTrue(call["output_scores"])
+            self.assertTrue(call["output_logits"])
+
+    def test_answer_probabilities_use_unprocessed_logits(self):
+        tokenizer = _Tokenizer()
+        answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
+
+        class LogitModel(_Model):
+            def generate(self, **kwargs):
+                output = super().generate(**kwargs)
+                output.scores = (torch.tensor([[100.0, -100.0]]),) * len(output.scores)
+                output.logits = (torch.tensor([[1.0, 2.0]]),) * len(output.logits)
+                return output
+
+            def compute_transition_scores(
+                self, sequences, scores, beam_indices, normalize_logits
+            ):
+                self.transition_input = scores
+                return torch.full((sequences.shape[0], len(scores)), -0.25)
+
+        model = LogitModel([[answer]])
+        record = next(
+            generation_units(
+                _loaded(model, tokenizer),
+                [{"id": 1, "input": "Task", "split": "test"}],
+                _config(),
+            )
+        ).records[0]
+
+        self.assertEqual(model.transition_input[0].tolist(), [[1.0, 2.0]])
+        self.assertEqual(record["answer"]["token_logprobs"], [-0.25])
+
+    def test_effective_generation_eos_is_removed_from_answer(self):
+        tokenizer = _Tokenizer()
+        additional_eos = 7
+        answer = tokenizer.encode("A") + [additional_eos]
+        model = _Model([[answer]])
+        model.generation_config = SimpleNamespace(
+            do_sample=False,
+            eos_token_id=[tokenizer.eos_token_id, additional_eos],
+        )
+
+        record = next(
+            generation_units(
+                _loaded(model, tokenizer),
+                [{"id": 1, "input": "Task", "split": "test"}],
+                _config(),
+            )
+        ).records[0]
+
+        self.assertEqual(record["answer"]["token_ids"], tokenizer.encode("A"))
+        self.assertEqual(record["answer"]["stop_reason"], "eos")
 
     def test_direct_abstention_disabled_uses_exact_sentence(self):
         tokenizer = _Tokenizer()

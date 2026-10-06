@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 5
+GENERATION_PROTOCOL_VERSION = 6
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -190,6 +190,20 @@ def _decoding_kwargs(strategy: str) -> dict[str, object]:
     return {"do_sample": False, "temperature": None, "top_p": None, "top_k": None}
 
 
+def _effective_eos_ids(model: Any, tokenizer: Any) -> set[int]:
+    """Return every EOS token used by the model's effective generation config."""
+    generation_config = getattr(model, "generation_config", None)
+    value = getattr(generation_config, "eos_token_id", None)
+    if value is None:
+        value = getattr(getattr(model, "config", None), "eos_token_id", None)
+    if value is None:
+        value = getattr(tokenizer, "eos_token_id", None)
+    values = value if isinstance(value, (list, tuple)) else [value]
+    if not values or any(type(item) is not int for item in values):
+        raise GenerationError("The effective generation EOS token IDs are invalid.")
+    return set(values)
+
+
 def _pad_contexts(tokenizer: Any, contexts: Sequence[Sequence[int]], model: Any) -> dict:
     previous_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
@@ -223,24 +237,26 @@ def _answer_outputs(
                 pad_token_id=tokenizer.pad_token_id,
                 return_dict_in_generate=True,
                 output_scores=True,
+                output_logits=True,
                 **_decoding_kwargs(decoding_strategy),
             )
     except Exception as exc:
         raise GenerationError(f"Answer generation failed: {exc}") from exc
 
-    scores = tuple(getattr(output, "scores", ()))
+    logits = tuple(getattr(output, "logits", ()))
+    if not logits:
+        raise GenerationError("Generation did not return unprocessed model logits.")
     try:
         transition_scores = model.compute_transition_scores(
             output.sequences,
-            scores,
+            logits,
             getattr(output, "beam_indices", None),
             normalize_logits=True,
         )
     except Exception as exc:
         raise GenerationError(f"Could not compute answer token probabilities: {exc}") from exc
 
-    eos = tokenizer.eos_token_id
-    eos_ids = set(eos if isinstance(eos, list) else [eos])
+    eos_ids = _effective_eos_ids(model, tokenizer)
     results = []
     for index in range(len(contexts)):
         generated = [int(item) for item in output.sequences[index, prompt_length:].tolist()]
@@ -318,8 +334,7 @@ def _reasoning_output(
     if boundary_index is not None:
         return generated[:boundary_index], "thinking_boundary", False
 
-    eos = tokenizer.eos_token_id
-    eos_ids = set(eos if isinstance(eos, list) else [eos])
+    eos_ids = _effective_eos_ids(model, tokenizer)
     reasoning_ids, stop_reason = _termination(generated, eos_ids, max_new_tokens)
     return reasoning_ids, stop_reason, True
 
