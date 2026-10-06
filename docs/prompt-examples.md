@@ -120,7 +120,7 @@ Complete the FINAL: line with only the answer, without reasoning or explanation.
 If you cannot determine the answer, return UNKNOWN.
 ```
 
-The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Illustrative reply:** `FINAL: I`.
+The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Illustrative reply:** `FINAL: J`.
 
 ## Speaker attribution — with reasoning
 

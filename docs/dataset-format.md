@@ -1,6 +1,6 @@
 # Dataset format
 
-Provide a UTF-8 `.jsonl` file with one JSON object per line. **TODO** marks unresolved later-stage details.
+Provide a UTF-8 `.jsonl` file with one JSON object per line.
 
 ```text
 Example

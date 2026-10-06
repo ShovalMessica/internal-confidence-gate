@@ -86,6 +86,8 @@ After generation, the runner compares each saved answer with its dataset target.
 
 Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
 
+Every other task-defined answer, including labels such as `NONE`, is a concrete prediction. It is matched against the target and participates in probe training and gate evaluation. Gate coverage is calculated only over eligible correct and incorrect concrete predictions; invalid outputs and enabled `UNKNOWN` abstentions are excluded.
+
 The runner prints and stores a Model Behavior summary overall and by split. For `N` examples in the reported scope:
 
 - **Correct prediction:** a concrete answer accepted by `answer_match`; rate `N_correct / N`.
@@ -175,7 +177,7 @@ All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID 
 
 ## Frozen test evaluation
 
-After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, AUROC, coverage, and accepted-error rate. Coverage is the accepted fraction; accepted-error rate is the incorrect fraction among accepted predictions.
+After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, AUROC, coverage, and accepted-error rate. Coverage is the accepted fraction of these eligible concrete predictions; accepted-error rate is the incorrect fraction among accepted predictions. Invalid outputs and enabled abstentions are excluded from both denominators.
 
 The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability. Token probabilities are calculated from the model's raw next-token logits, before temperature, top-k, top-p, or other sampling filters are applied.
 

@@ -51,6 +51,10 @@ python -m src.run configs/task.yaml --behavior-only
 This mode saves and reports behavior results even when the correct/incorrect
 class counts are too small for probe training.
 
+**Adding a new task?** Follow the complete
+[new-task walkthrough](docs/add-your-own-task.md), from prompt and JSONL design
+through probe training and report interpretation.
+
 ## Research goal
 
 Language models can produce incorrect answers even when their output probabilities are high. Applications that need to decide which predictions to accept therefore need reliable ways to assess those predictions.
@@ -184,7 +188,7 @@ The final report uses four gate metrics:
 - **Balanced accuracy:** `(TPR + (1 - FPR)) / 2`.
 - **AUROC:** threshold-independent ranking quality.
 
-Machine-readable test results also include **coverage** (the fraction of predictions accepted) and **accepted-error rate** (incorrect accepted predictions divided by all accepted predictions).
+Machine-readable test results also include **coverage** (the fraction of eligible concrete predictions accepted) and **accepted-error rate** (incorrect accepted predictions divided by all accepted predictions). Invalid outputs and enabled `UNKNOWN` abstentions are outside this gate-evaluation population.
 
 For every captured position, a validation graph shows balanced accuracy from Layer 0—the initial token embedding—through every transformer layer. A validation TPR-FPR graph contains one representative per position: the layer with the lowest FPR while meeting `target_tpr`. The overall winner and output-probability baseline are highlighted. A separate test graph compares only the frozen overall winner with the probability baseline.
 
@@ -242,9 +246,9 @@ python -m src.run configs/task.yaml --force-recompute
 ## Worked example
 
 The [simple classification example](examples/simple-classification/README.md)
-generates a valid dataset and task configuration, then walks through preparation
-and Model Behavior execution. It requires no model download for its
-`--prepare-only` check.
+generates a mixed-difficulty arithmetic dataset and task configuration. It can
+run through preparation, Model Behavior, probe training, and reporting. Its
+`--prepare-only` check requires no model download.
 
 ## Development
 

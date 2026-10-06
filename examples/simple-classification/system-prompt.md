@@ -1,3 +1,3 @@
-Classify the supplied integer as EVEN or ODD.
+Decide whether the supplied arithmetic equality is true.
 
-Return the correct label for the integer. The toolkit supplies the required final-answer format.
+Return TRUE if it is correct or FALSE if it is incorrect. The toolkit supplies the required final-answer format.
