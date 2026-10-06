@@ -4,7 +4,7 @@ dataset_path: null        # Absolute path to your JSONL dataset
 reasoning_mode: null      # direct or reasoning
 
 # Optional fixed system message shared by every example.
-# system_prompt_path: "C:/path/to/system-prompt.md"
+# system_prompt_path: "C:/path/to/system-prompt.txt"
 
 # Model loading defaults
 # model_revision: "abc123" # Optional Hub revision; required local checkpoint version

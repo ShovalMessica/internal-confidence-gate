@@ -302,14 +302,14 @@ def main() -> None:
         generated / "task.yaml",
         model=args.model,
         dataset=dataset,
-        system_prompt=root / "system-prompt.md",
+        system_prompt=root / "system-prompt.txt",
         output_dir=generated / "outputs",
     )
     write_config(
         generated / "dev-task.yaml",
         model=args.model,
         dataset=root / "dev-sample.jsonl",
-        system_prompt=root / "system-prompt.md",
+        system_prompt=root / "system-prompt.txt",
         output_dir=generated / "dev-outputs",
     )
     print(f"Wrote {len(records)} disjoint examples to {dataset}")
