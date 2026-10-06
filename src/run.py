@@ -669,14 +669,19 @@ def _capture_activations(
         artifact_hash = finalize_activation_file(
             directory, identity, context, expected, records
         )
+        summary = _activation_summary(records, expected)
         complete_activation_capture(
             directory,
             identity,
             artifact_hash,
-            _activation_summary(records, expected),
+            summary,
         )
         print(f"Activation capture ID: {identity.capture_id}")
         print("Activation capture complete from cached records; model not loaded.")
+        print(
+            "Replay diagnostic: maximum answer-token log-probability difference "
+            f"{summary['max_logprob_difference']:.6g}."
+        )
         return
 
     if loaded is None:
@@ -718,16 +723,21 @@ def _capture_activations(
     artifact_hash = finalize_activation_file(
         directory, identity, context, expected, records
     )
+    summary = _activation_summary(records, expected)
     complete_activation_capture(
         directory,
         identity,
         artifact_hash,
-        _activation_summary(records, expected),
+        summary,
     )
     print(f"Activation capture ID: {identity.capture_id}")
     print(
         f"Activation capture complete: {starting_done} reused, "
         f"{total - starting_done} captured."
+    )
+    print(
+        "Replay diagnostic: maximum answer-token log-probability difference "
+        f"{summary['max_logprob_difference']:.6g}."
     )
 
 

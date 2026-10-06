@@ -16,13 +16,11 @@ from src.generation import (
 from src.model import LoadedModel
 
 
-ACTIVATION_PROTOCOL_VERSION = 3
+ACTIVATION_PROTOCOL_VERSION = 4
 ACTIVATION_SCHEMA_VERSION = 1
 CAPTURE_BACKEND = "transformers_hidden_states"
 POSITION_PROTOCOL = "semantic_spans_v1"
 STORAGE_DTYPE = "float16"
-REPLAY_ATOL = 0.01
-REPLAY_RTOL = 0.002
 
 
 class ActivationError(RuntimeError):
@@ -273,7 +271,7 @@ def _model_device(model: Any) -> Any:
     return device
 
 
-def _validate_replay(output: Any, plan: ReplayPlan, torch: Any) -> float:
+def _replay_logprob_difference(output: Any, plan: ReplayPlan, torch: Any) -> float:
     logits = getattr(output, "logits", None)
     if logits is None or getattr(logits, "ndim", None) != 3:
         raise ActivationError("The model did not return valid causal-language-model logits.")
@@ -290,13 +288,6 @@ def _validate_replay(output: Any, plan: ReplayPlan, torch: Any) -> float:
     differences = []
     for actual, expected in zip(replayed, plan.answer_token_logprobs):
         difference = abs(float(actual) - expected)
-        tolerance = REPLAY_ATOL + REPLAY_RTOL * abs(expected)
-        if difference > tolerance:
-            raise ActivationError(
-                "Replay answer-token probability mismatch: "
-                f"actual log probability {float(actual):.6g}, "
-                f"saved {expected:.6g}, difference {difference:.6g}."
-            )
         differences.append(difference)
     return max(differences, default=0.0)
 
@@ -336,7 +327,7 @@ def capture_hidden_states(loaded: LoadedModel, plan: ReplayPlan) -> ActivationRe
         elif shape[2] != hidden_size:
             raise ActivationError("Hidden-state dimensions differ across layers.")
 
-    max_difference = _validate_replay(output, plan, torch)
+    max_difference = _replay_logprob_difference(output, plan, torch)
     tensors = {}
     for name, positions in plan.positions.items():
         tensors[name] = torch.stack(

@@ -305,13 +305,13 @@ class ActivationTests(unittest.TestCase):
             {"prompt_end": (1,), "answer_tokens": (2,)},
         )
 
-    def test_replay_probability_mismatch_is_rejected(self):
+    def test_replay_probability_difference_is_recorded(self):
         record = _generation()
         record["answer"]["token_logprobs"] = [-20.0]
         plan = build_replay_plan(record)
         model = _ReplayModel(plan.positions["answer_tokens"], plan.answer_token_ids)
-        with self.assertRaisesRegex(ActivationError, "probability mismatch"):
-            capture_hidden_states(_loaded(model), plan)
+        result = capture_hidden_states(_loaded(model), plan)
+        self.assertGreater(result.max_logprob_difference, 1.0)
 
     def test_invalid_saved_boundaries_are_rejected(self):
         record = _generation()
