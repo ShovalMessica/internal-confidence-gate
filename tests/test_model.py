@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -141,12 +142,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.resolved_revision, "resolved-commit")
 
     def test_local_checkpoint_version_is_recorded_but_not_forwarded(self):
-        source = str(Path("C:/models/local-checkpoint"))
-        config = self.config(
-            model_name_or_path=source,
-            model_revision="checkpoint-v3",
-        )
-        loaded, (_, auto_config, auto_model, auto_tokenizer) = self.load(config)
+        with tempfile.TemporaryDirectory() as temporary:
+            source = str(Path(temporary).resolve())
+            config = self.config(
+                model_name_or_path=source,
+                model_revision="checkpoint-v3",
+            )
+            loaded, (_, auto_config, auto_model, auto_tokenizer) = self.load(config)
 
         auto_config.from_pretrained.assert_called_once_with(
             source, trust_remote_code=False
@@ -158,8 +160,10 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.resolved_revision, "checkpoint-v3")
 
     def test_local_checkpoint_requires_version_even_for_direct_api_use(self):
-        with self.assertRaisesRegex(ModelLoadError, "requires model_revision"):
-            self.load(self.config(model_name_or_path="C:/models/local-checkpoint"))
+        with tempfile.TemporaryDirectory() as temporary:
+            source = str(Path(temporary).resolve())
+            with self.assertRaisesRegex(ModelLoadError, "requires model_revision"):
+                self.load(self.config(model_name_or_path=source))
 
     def test_pinned_revision_overrides_a_moving_requested_tag(self):
         dependencies = self.dependencies()
