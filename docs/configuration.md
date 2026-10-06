@@ -7,7 +7,7 @@ The fields below are accepted by the configuration loader.
 ## Model and paths
 
 - **`model_name_or_path`** — Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
-- **`model_revision` (optional)** — Hub commit, tag, or branch. When omitted, the loader resolves the current Hub version and returns its exact commit for later provenance recording. Local checkpoint paths do not accept this setting.
+- **`model_revision`** — Optional Hub commit, tag, or branch. When omitted for a Hub model, the loader resolves and records the exact commit. For a local checkpoint, this field is required as a stable version string; change it whenever any checkpoint file changes. It identifies caches but is not passed to Transformers.
 - **`device` (optional; default: `auto`)** — `auto`, `cpu`, `cuda`, or a numbered CUDA device such as `cuda:1`.
 - **`dtype` (optional; default: `auto`)** — `auto`, `float16`, `bfloat16`, or `float32`. `auto` uses the dtype stored with the checkpoint.
 - **`dataset_path`** — Required absolute path to the JSONL dataset.
@@ -244,7 +244,7 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
 - Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Decoding strategy must use the choices documented above.
-- `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
+- `model_revision`, when supplied, must be a nonempty string. It is optional for a Hub model and required for a local checkpoint. Device and dtype values must use the supported choices above.
 - `answer_matcher_path` and `custom_metrics_path`, when supplied, must be
   absolute paths to existing `.py` files. The runner loads and validates their
   required functions during preparation.
@@ -263,7 +263,7 @@ After validation, the runner creates a small `run.json` record. The run ID is de
 
 Model revision, device, dtype, generation seed, active generation settings, and pipeline protocol versions affect run identity. Inactive settings are excluded. For example, `reasoning_max_new_tokens` does not affect a direct-mode run, and split settings do not affect a dataset with supplied splits. Folder existence alone is not treated as completed work.
 
-When `model_revision` is omitted, the model loader resolves one exact Hub commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoint paths are treated as immutable for now; stronger local-checkpoint identity remains **TODO**.
+When `model_revision` is omitted for a Hub model, the model loader resolves one exact commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoints require an explicit version string, which participates in run and cache identity; users must change it whenever the local files change.
 
 Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
 

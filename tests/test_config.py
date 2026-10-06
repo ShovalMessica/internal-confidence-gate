@@ -74,7 +74,8 @@ class ConfigTests(unittest.TestCase):
         metrics = self.root / "metrics.py"
         metrics.write_text("def compute_metrics(records):\n    return {}\n")
         output = self.root / "custom-results"
-        values = dict(self.required, model_name_or_path=str(checkpoint), output_dir=str(output),
+        values = dict(self.required, model_name_or_path=str(checkpoint),
+                      model_revision="checkpoint-v1", output_dir=str(output),
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
                       answer_max_new_tokens=16, allow_abstention=False,
                       answer_matcher_path=str(matcher),
@@ -88,6 +89,7 @@ class ConfigTests(unittest.TestCase):
                       split_ratios={"train": 0.8, "validation": 0.1, "test": 0.1})
         config = load_config(self.write(values))
         self.assertEqual(config.model_name_or_path, str(checkpoint))
+        self.assertEqual(config.model_revision, "checkpoint-v1")
         self.assertEqual(config.reasoning_mode, "reasoning")
         self.assertEqual(config.output_dir, output)
         self.assertEqual(config.device, "cuda:1")
@@ -182,18 +184,23 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(reasoning.decoding_strategy, "greedy")
 
-    def test_hub_revision_is_optional_but_local_revision_is_rejected(self):
+    def test_hub_revision_is_optional_and_local_revision_is_required(self):
         config = load_config(self.write(dict(self.required, model_revision="abc123")))
         self.assertEqual(config.model_revision, "abc123")
 
         checkpoint = self.root / "checkpoint"
         checkpoint.mkdir()
-        with self.assertRaisesRegex(ConfigurationError, "model_revision"):
+        with self.assertRaisesRegex(ConfigurationError, "model_revision is required"):
             load_config(self.write(dict(
                 self.required,
                 model_name_or_path=str(checkpoint),
-                model_revision="abc123",
             )))
+        local = load_config(self.write(dict(
+            self.required,
+            model_name_or_path=str(checkpoint),
+            model_revision="checkpoint-v1",
+        )))
+        self.assertEqual(local.model_revision, "checkpoint-v1")
 
     def test_unknown_fields_and_other_errors_are_combined(self):
         values = dict(self.required, answer_max_new_token=99, temperature=0.8, split_seed=-1)

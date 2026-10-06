@@ -7,7 +7,7 @@ reasoning_mode: null      # direct or reasoning
 # system_prompt_path: "C:/path/to/system-prompt.md"
 
 # Model loading defaults
-# model_revision: "abc123" # Optional Hub commit, tag, or branch
+# model_revision: "abc123" # Optional Hub revision; required local checkpoint version
 device: auto               # auto, cpu, cuda, or cuda:N
 dtype: auto                # auto, float16, bfloat16, or float32
 

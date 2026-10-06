@@ -80,7 +80,12 @@ def _resolve_model(
     config: TaskConfig, pinned_revision: str | None, auto_config: Any
 ) -> tuple[Any, str | None, dict[str, object]]:
     source = config.model_name_or_path
-    requested_revision = pinned_revision or config.model_revision
+    is_local = Path(source).is_absolute()
+    if is_local and not config.model_revision:
+        raise ModelLoadError(
+            "A local checkpoint requires model_revision for safe cache identity."
+        )
+    requested_revision = None if is_local else pinned_revision or config.model_revision
     revision_kwargs = {"revision": requested_revision} if requested_revision else {}
     common = {"trust_remote_code": False, **revision_kwargs}
 
@@ -98,8 +103,11 @@ def _resolve_model(
     if getattr(model_config, "vision_config", None) is not None:
         raise ModelLoadError("The model is multimodal; v1 supports text-only models.")
 
-    is_local = Path(source).is_absolute()
-    resolved_revision = None if is_local else getattr(model_config, "_commit_hash", None)
+    resolved_revision = (
+        config.model_revision
+        if is_local
+        else getattr(model_config, "_commit_hash", None)
+    )
     if not is_local and (
         not isinstance(resolved_revision, str) or not resolved_revision.strip()
     ):
@@ -112,7 +120,7 @@ def _resolve_model(
             f"revision '{pinned_revision}'."
         )
     load_common: dict[str, object] = {"trust_remote_code": False}
-    if resolved_revision:
+    if resolved_revision and not is_local:
         load_common["revision"] = resolved_revision
     return model_config, resolved_revision, load_common
 

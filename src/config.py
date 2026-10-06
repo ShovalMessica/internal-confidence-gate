@@ -217,8 +217,15 @@ def load_config(path: str | Path) -> TaskConfig:
         not isinstance(revision, str) or not revision.strip()
     ):
         errors.append("model_revision must be a nonempty string when supplied.")
-    if isinstance(model, str) and Path(model).is_absolute() and revision is not None:
-        errors.append("model_revision cannot be used with a local checkpoint path.")
+    if (
+        isinstance(model, str)
+        and Path(model).is_absolute()
+        and (not isinstance(revision, str) or not revision.strip())
+    ):
+        errors.append(
+            "model_revision is required for a local checkpoint; use a stable "
+            "version string and change it whenever the checkpoint files change."
+        )
 
     device = values["device"]
     if not isinstance(device, str) or not _DEVICE.fullmatch(device):
