@@ -1,3 +1,0 @@
-model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
-dataset_path: C:\Users\t-smessica\Projects\internal-confidence-gate\tmp\dummy-dataset.jsonl
-reasoning_mode: direct

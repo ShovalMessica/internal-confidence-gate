@@ -115,15 +115,12 @@ def build_run_identity(
     }
     if config.system_prompt_sha256 is not None:
         effective["system_prompt_sha256"] = config.system_prompt_sha256
-    if config.probe_excluded_answers:
-        effective["probe_excluded_answers"] = list(config.probe_excluded_answers)
     if config.model_revision is not None:
         effective["model_revision"] = config.model_revision
     if config.reasoning_mode == "reasoning":
         effective["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
         effective["direct_batch_size"] = config.direct_batch_size
-        effective["direct_output_format"] = config.direct_output_format
     if split_source == "automatic":
         effective["split_ratios"] = {
             "train": config.split_ratios.train,
@@ -169,6 +166,7 @@ def _record(
             ),
         },
         "completed_stages": ["preparation"],
+        "execution_log": "execution.log",
         "preparation": preparation,
     }
 

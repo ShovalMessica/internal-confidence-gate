@@ -4,7 +4,7 @@ Design and refine the task prompt you supply so the model reliably answers in th
 
 Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined. Fixed instructions may be supplied once as an optional system prompt; each dataset `input` is always the complete user message for its example.
 
-The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the default `direct_output_format: final_prefix` [generation behavior](configuration.md#generation). Direct tasks that select `raw_answer` instead send the system and user messages unchanged.
+The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the toolkit's fixed [generation behavior](configuration.md#generation).
 
 ## Named-entity correction — no reasoning
 

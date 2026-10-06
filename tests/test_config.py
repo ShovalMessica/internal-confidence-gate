@@ -52,12 +52,10 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(config.custom_metrics_path)
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
-        self.assertEqual(config.direct_output_format, "final_prefix")
         self.assertEqual(config.decoding_strategy, "model_default")
         self.assertEqual(config.probe_seed, 42)
         self.assertIsNone(config.probe_positions)
         self.assertIsNone(config.probe_layers)
-        self.assertEqual(config.probe_excluded_answers, ())
         self.assertEqual(config.probe_regularization_c, 1.0)
         self.assertEqual(config.probe_class_weight, "balanced")
         self.assertEqual(config.target_tpr, 0.90)
@@ -83,7 +81,6 @@ class ConfigTests(unittest.TestCase):
                       custom_metrics_path=str(metrics),
                       generation_seed=7, direct_batch_size=4, probe_seed=11,
                       probe_positions=["prompt_end"], probe_layers=[35],
-                      probe_excluded_answers=["NONE"],
                       probe_regularization_c=0.3, probe_class_weight="none",
                       target_tpr=0.95,
                       split_seed=0,
@@ -103,7 +100,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.probe_seed, 11)
         self.assertEqual(config.probe_positions, ("prompt_end",))
         self.assertEqual(config.probe_layers, (35,))
-        self.assertEqual(config.probe_excluded_answers, ("none",))
         self.assertEqual(config.probe_regularization_c, 0.3)
         self.assertEqual(config.probe_class_weight, "none")
         self.assertEqual(config.target_tpr, 0.95)
@@ -149,12 +145,10 @@ class ConfigTests(unittest.TestCase):
             "answer_max_new_tokens": [None, 0, False, "64"],
             "generation_seed": [None, -1, True, 1.5, "42"],
             "direct_batch_size": [None, 0, -1, True, 1.5, "8"],
-            "direct_output_format": [None, "raw", True],
             "decoding_strategy": [None, "sample", True],
             "probe_seed": [None, -1, True, 1.5, "42"],
             "probe_positions": [None, [], ["unknown"], ["prompt_end", "prompt_end"]],
             "probe_layers": [None, [], [-1], [True], [35, 35]],
-            "probe_excluded_answers": [None, [], [""], ["NONE", " none "]],
             "probe_regularization_c": [None, 0, -1, True, "0.3", float("nan")],
             "probe_class_weight": [None, "auto", True],
             "target_tpr": [None, 0, -0.1, 1.01, True, "0.9", float("nan"), float("inf")],
@@ -172,29 +166,21 @@ class ConfigTests(unittest.TestCase):
                         load_config(self.write(dict(self.required, **{field: value})))
                     self.assertIn(field, str(caught.exception))
 
-    def test_raw_answers_and_greedy_decoding_are_direct_only_options(self):
+    def test_greedy_decoding_is_supported_in_both_modes(self):
         config = load_config(
+            self.write(dict(self.required, decoding_strategy="greedy"))
+        )
+        self.assertEqual(config.decoding_strategy, "greedy")
+        reasoning = load_config(
             self.write(
                 dict(
                     self.required,
-                    direct_output_format="raw_answer",
+                    reasoning_mode="reasoning",
                     decoding_strategy="greedy",
                 )
             )
         )
-        self.assertEqual(config.direct_output_format, "raw_answer")
-        self.assertEqual(config.decoding_strategy, "greedy")
-
-        with self.assertRaisesRegex(ConfigurationError, "direct_output_format"):
-            load_config(
-                self.write(
-                    dict(
-                        self.required,
-                        reasoning_mode="reasoning",
-                        direct_output_format="raw_answer",
-                    )
-                )
-            )
+        self.assertEqual(reasoning.decoding_strategy, "greedy")
 
     def test_hub_revision_is_optional_but_local_revision_is_rejected(self):
         config = load_config(self.write(dict(self.required, model_revision="abc123")))

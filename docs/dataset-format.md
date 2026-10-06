@@ -25,9 +25,8 @@ Example
   configured, put shared task instructions in that file and only the
   example-specific user content here. Otherwise, include all task instructions
   directly in every `input`. Do not supply unresolved placeholders. With the
-  default `direct_output_format: final_prefix`, generation adds its output
-  instruction and `FINAL:` prefix; with `raw_answer`, your prompt must request
-  the complete answer format. See [Generation](configuration.md#generation).
+  generation adds its output instruction and `FINAL:` prefix. See
+  [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
@@ -62,8 +61,7 @@ As explained in the [README](../README.md), probes use internal activations to e
 Default capture uses the Hugging Face hidden states at three locations:
 
 - `prompt_end`: the final token of the rendered chat prompt before generation.
-- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker;
-  unavailable in direct `raw_answer` mode.
+- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker.
 - `answer_tokens`: every generated answer token.
 
 The toolkit saves the embedding output and every returned layer state. When a

@@ -177,7 +177,7 @@ class GenerationTests(unittest.TestCase):
             [f"Task\n\n{ANSWER_INSTRUCTION}\n{DISALLOW_ABSTENTION_INSTRUCTION}"],
         )
 
-    def test_raw_direct_answers_leave_prompt_unchanged_and_support_greedy_batches(self):
+    def test_greedy_direct_generation_keeps_fixed_final_prefix(self):
         tokenizer = _Tokenizer()
         answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
         model = _Model([[[*answer]] * 2])
@@ -191,23 +191,26 @@ class GenerationTests(unittest.TestCase):
             generation_units(
                 _loaded(model, tokenizer),
                 examples,
-                _config(
-                    direct_output_format="raw_answer",
-                    decoding_strategy="greedy",
-                ),
+                _config(decoding_strategy="greedy"),
             )
         )
 
         self.assertEqual([len(unit.records) for unit in units], [2])
-        self.assertEqual(tokenizer.rendered_contents, ["first", "second"])
+        self.assertEqual(
+            tokenizer.rendered_contents,
+            [
+                f"first\n\n{ANSWER_INSTRUCTION}\n{ALLOW_ABSTENTION_INSTRUCTION}",
+                f"second\n\n{ANSWER_INSTRUCTION}\n{ALLOW_ABSTENTION_INSTRUCTION}",
+            ],
+        )
         self.assertFalse(model.calls[0]["do_sample"])
         self.assertIsNone(model.calls[0]["temperature"])
         self.assertIsNone(model.calls[0]["top_p"])
         self.assertIsNone(model.calls[0]["top_k"])
         control = units[0].records[0]["final_control"]
-        self.assertEqual(control["token_ids"], [])
-        self.assertIsNone(control["final_marker_span"])
-        self.assertIsNone(control["answer_instruction"])
+        self.assertTrue(control["token_ids"])
+        self.assertEqual(control["final_marker_span"], [0, len(control["token_ids"])])
+        self.assertIn(ANSWER_INSTRUCTION, control["answer_instruction"])
 
     def test_fixed_system_prompt_precedes_example_user_message(self):
         tokenizer = _Tokenizer()

@@ -157,7 +157,11 @@ class RunTests(unittest.TestCase):
         self.assertEqual(record["preparation"]["split_sizes"], {
             "train": 490, "validation": 105, "test": 105,
         })
-        self.assertEqual(set(run_directories[0].iterdir()), {run_directories[0] / "run.json"})
+        self.assertEqual(
+            set(run_directories[0].iterdir()),
+            {run_directories[0] / "run.json", run_directories[0] / "execution.log"},
+        )
+        self.assertIn("Configuration valid.", (run_directories[0] / "execution.log").read_text())
 
     def test_user_splits_are_preserved(self):
         splits = ["train"] * 500 + ["validation"] * 100 + ["test"] * 100
@@ -354,7 +358,6 @@ class RunTests(unittest.TestCase):
             {},
             {"generation_seed": 7},
             {"direct_batch_size": 4},
-            {"direct_output_format": "raw_answer"},
             {"decoding_strategy": "greedy"},
         ):
             self.write_config(**changes)
@@ -364,7 +367,7 @@ class RunTests(unittest.TestCase):
                 prepared.dataset.content_sha256,
                 prepared.split_source,
             ).run_id)
-        self.assertEqual(len(set(identities)), 5)
+        self.assertEqual(len(set(identities)), 4)
 
         self.write_config(reasoning_mode="reasoning", direct_batch_size=2)
         first = prepare_run(self.config)
@@ -928,6 +931,9 @@ class RunTests(unittest.TestCase):
         self.assertIn("train needs 100 correct predictions", stderr)
         self.capture_mock.assert_not_called()
         run_directory = self.run_directories()[0]
+        execution_log = (run_directory / "execution.log").read_text(encoding="utf-8")
+        self.assertIn("Evaluation artifact: created", execution_log)
+        self.assertIn("train needs 100 correct predictions", execution_log)
         run_record = json.loads(
             (run_directory / "run.json").read_text(encoding="utf-8")
         )
@@ -1018,16 +1024,16 @@ class RunTests(unittest.TestCase):
 
     def test_custom_metrics_run_reuse_and_do_not_change_generation(self):
         records = [
-            self.record(index) | {"metadata": {"example_type": "corrupted"}}
+            self.record(index) | {"metadata": {"subset": "priority"}}
             for index in range(700)
         ]
         self.write_dataset(records)
         metrics = self.root / "metrics.py"
         source = (
             "def compute_metrics(records):\n"
-            "    chosen = [r for r in records if r['metadata'].get('example_type') == 'corrupted']\n"
+            "    chosen = [r for r in records if r['metadata'].get('subset') == 'priority']\n"
             "    correct = sum(r['is_correct'] is True for r in chosen)\n"
-            "    return {'correction_recall': {\n"
+            "    return {'subset_accuracy': {\n"
             "        'numerator': correct, 'denominator': len(chosen)}}\n"
         )
         metrics.write_text(source, encoding="utf-8")
@@ -1055,7 +1061,7 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Custom metrics: created", stdout)
-        self.assertIn("correction_recall", stdout)
+        self.assertIn("subset_accuracy", stdout)
 
         with patch("src.run.load_model") as load_model:
             code, stdout, stderr = self.invoke_full()

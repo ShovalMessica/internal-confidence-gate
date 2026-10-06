@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 4
+GENERATION_PROTOCOL_VERSION = 5
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -331,9 +331,8 @@ def _direct_unit(
 ) -> GenerationUnit:
     _, _, set_seed = _runtime()
     tokenizer, model = loaded.tokenizer, loaded.model
-    uses_final_prefix = config.direct_output_format == "final_prefix"
-    marker_ids = _encode(tokenizer, FINAL_MARKER) if uses_final_prefix else []
-    instruction = answer_instruction(config.allow_abstention) if uses_final_prefix else None
+    marker_ids = _encode(tokenizer, FINAL_MARKER)
+    instruction = answer_instruction(config.allow_abstention)
     limit = _context_limit(model, tokenizer)
     prepared: list[tuple[int, dict, list[int], list[int], dict]] = []
     records: list[dict] = []
@@ -362,25 +361,14 @@ def _direct_unit(
                 )
             )
             continue
-        control = (
-            {
-                "text": FINAL_MARKER,
-                "token_ids": marker_ids,
-                "answer_instruction": instruction,
-                "answer_instruction_token_ids": _encode(tokenizer, instruction),
-                "final_marker_token_ids": marker_ids,
-                "final_marker_span": [0, len(marker_ids)],
-            }
-            if uses_final_prefix
-            else {
-                "text": "",
-                "token_ids": [],
-                "answer_instruction": None,
-                "answer_instruction_token_ids": [],
-                "final_marker_token_ids": [],
-                "final_marker_span": None,
-            }
-        )
+        control = {
+            "text": FINAL_MARKER,
+            "token_ids": marker_ids,
+            "answer_instruction": instruction,
+            "answer_instruction_token_ids": _encode(tokenizer, instruction),
+            "final_marker_token_ids": marker_ids,
+            "final_marker_span": [0, len(marker_ids)],
+        }
         prepared.append((position, example, chat_ids, answer_context, control))
 
     if prepared:

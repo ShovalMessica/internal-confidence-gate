@@ -16,7 +16,7 @@ import numpy as np
 from src.activation_store import activation_file_path
 
 
-PROBE_PROTOCOL_VERSION = 1
+PROBE_PROTOCOL_VERSION = 2
 PROBE_STORE_SCHEMA_VERSION = 1
 SELECTION_PROTOCOL_VERSION = 1
 TEST_EVALUATION_PROTOCOL_VERSION = 1
@@ -50,7 +50,6 @@ class ProbeIdentity:
     seed: int
     positions: tuple[str, ...] | None
     layers: tuple[int, ...] | None
-    excluded_answers: tuple[str, ...]
     regularization_c: float
     class_weight: str
 
@@ -131,7 +130,6 @@ def _settings_values(
     seed: int,
     positions: tuple[str, ...] | None,
     layers: tuple[int, ...] | None,
-    excluded_answers: tuple[str, ...],
     regularization_c: float,
     class_weight: str,
 ) -> dict[str, object]:
@@ -149,7 +147,6 @@ def _settings_values(
         "seed": seed,
         "positions": list(positions) if positions is not None else None,
         "layers": list(layers) if layers is not None else None,
-        "excluded_answers": list(excluded_answers),
     }
 
 
@@ -158,7 +155,6 @@ def _settings(identity: ProbeIdentity) -> dict[str, object]:
         identity.seed,
         identity.positions,
         identity.layers,
-        identity.excluded_answers,
         identity.regularization_c,
         identity.class_weight,
     )
@@ -171,7 +167,6 @@ def build_probe_identity(
     *,
     positions: tuple[str, ...] | None = None,
     layers: tuple[int, ...] | None = None,
-    excluded_answers: tuple[str, ...] = (),
     regularization_c: float = REGULARIZATION_C,
     class_weight: str = "balanced",
 ) -> ProbeIdentity:
@@ -180,7 +175,6 @@ def build_probe_identity(
         seed,
         positions,
         layers,
-        excluded_answers,
         float(regularization_c),
         class_weight,
     )
@@ -199,7 +193,6 @@ def build_probe_identity(
         seed,
         positions,
         layers,
-        excluded_answers,
         float(regularization_c),
         class_weight,
     )
@@ -287,15 +280,12 @@ def _labels(records: Sequence[Mapping[str, object]]) -> np.ndarray:
 def _split_records(
     evaluations: Mapping[int, Mapping[str, object]],
     split: str,
-    excluded_answers: Sequence[str] = (),
 ) -> tuple[tuple[int, ...], np.ndarray]:
-    excluded = set(excluded_answers)
     records = [
         record
         for record in evaluations.values()
         if record.get("split") == split
         and record.get("outcome") in ("correct", "incorrect")
-        and record.get("normalized_answer") not in excluded
     ]
     ids = tuple(int(record["id"]) for record in records)
     labels = _labels(records)
@@ -311,12 +301,8 @@ def _activation_metadata(
     evaluations: Mapping[int, Mapping[str, object]],
     identity: ProbeIdentity,
 ) -> _ProbeData:
-    train_ids, train_labels = _split_records(
-        evaluations, "train", identity.excluded_answers
-    )
-    validation_ids, validation_labels = _split_records(
-        evaluations, "validation", identity.excluded_answers
-    )
+    train_ids, train_labels = _split_records(evaluations, "train")
+    validation_ids, validation_labels = _split_records(evaluations, "validation")
     selected_ids = train_ids + validation_ids
     try:
         with _h5py().File(activation_path, "r") as source:
@@ -1283,12 +1269,8 @@ def evaluate_frozen_test(
         selection_identity,
         identity.selection_sha256,
     )
-    validation_ids, validation_labels = _split_records(
-        evaluations, "validation", probe_identity.excluded_answers
-    )
-    test_ids, test_labels = _split_records(
-        evaluations, "test", probe_identity.excluded_answers
-    )
+    validation_ids, validation_labels = _split_records(evaluations, "validation")
+    test_ids, test_labels = _split_records(evaluations, "test")
     validation_probabilities = np.asarray(
         [answer_probability(generations[item], item) for item in validation_ids]
     )

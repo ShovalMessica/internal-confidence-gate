@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -119,6 +120,50 @@ class PreparedRun:
     custom_metrics: CustomMetrics | None
 
 
+class _Tee:
+    """Write runner output to both the terminal and the run log."""
+
+    def __init__(self, terminal: TextIO, log: TextIO):
+        self.terminal = terminal
+        self.log = log
+
+    def write(self, value: str) -> int:
+        self.terminal.write(value)
+        self.log.write(value)
+        return len(value)
+
+    def flush(self) -> None:
+        self.terminal.flush()
+        self.log.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self.terminal, name)
+
+
+def _start_execution_log(directory: Path) -> tuple[TextIO, TextIO, TextIO]:
+    path = directory / "execution.log"
+    try:
+        log = path.open("a", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise RunStoreError(f"Cannot open execution log: {path}") from exc
+    terminal_out, terminal_err = sys.stdout, sys.stderr
+    sys.stdout = _Tee(terminal_out, log)
+    sys.stderr = _Tee(terminal_err, log)
+    started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    print(f"\n=== Execution started {started} ===")
+    print(f"Execution log: {path}")
+    return log, terminal_out, terminal_err
+
+
+def _stop_execution_log(log: TextIO, stdout: TextIO, stderr: TextIO) -> None:
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    finally:
+        sys.stdout, sys.stderr = stdout, stderr
+        log.close()
+
+
 def prepare_run(config_path: str | Path) -> PreparedRun:
     """Load configuration and return validated, split-assigned examples."""
     config = load_config(config_path)
@@ -199,7 +244,6 @@ def _generation_settings(config: TaskConfig) -> dict:
         settings["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
         settings["direct_batch_size"] = config.direct_batch_size
-        settings["direct_output_format"] = config.direct_output_format
     return settings
 
 
@@ -428,9 +472,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
             directory, identity.evaluation_id, examples
         )
         summary = dict(run_record["evaluations"][identity.evaluation_id]["summary"])
-        shortages = probe_shortages(
-            list(records_by_id.values()), prepared.config.probe_excluded_answers
-        )
+        shortages = probe_shortages(list(records_by_id.values()))
         summary["probe_ready"] = not shortages
         summary["shortages"] = list(shortages)
         print(f"Evaluation ID: {identity.evaluation_id}")
@@ -464,9 +506,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     )
     print(f"Evaluation ID: {identity.evaluation_id}")
     summary = dict(result.summary)
-    shortages = probe_shortages(
-        list(result.records), prepared.config.probe_excluded_answers
-    )
+    shortages = probe_shortages(list(result.records))
     summary["probe_ready"] = not shortages
     summary["shortages"] = list(shortages)
     _print_evaluation(summary, reused=False)
@@ -566,6 +606,20 @@ def _activation_summary(
     }
 
 
+def _print_replay_diagnostic(summary: dict) -> None:
+    difference = float(summary["max_logprob_difference"])
+    print(
+        "Replay diagnostic: maximum answer-token log-probability difference "
+        f"{difference:.6g}."
+    )
+    if difference > 0.01:
+        print(
+            "Replay warning: saved tokens and model provenance match, but replay "
+            "numerics differ from generation. Captured activations represent the "
+            "documented per-example replay computation."
+        )
+
+
 def _capture_activations(
     prepared: PreparedRun,
     registered: RegisteredRun,
@@ -587,13 +641,10 @@ def _capture_activations(
     evaluations = load_evaluation_records(
         directory, evaluation_identity.evaluation_id, examples
     )
-    excluded_answers = set(prepared.config.probe_excluded_answers)
     eligible = [
         example
         for example in examples
         if evaluations[example["id"]]["outcome"] in ("correct", "incorrect")
-        and evaluations[example["id"]].get("normalized_answer")
-        not in excluded_answers
     ]
     if not eligible:
         raise ActivationError("No correct or incorrect predictions are available to capture.")
@@ -678,10 +729,7 @@ def _capture_activations(
         )
         print(f"Activation capture ID: {identity.capture_id}")
         print("Activation capture complete from cached records; model not loaded.")
-        print(
-            "Replay diagnostic: maximum answer-token log-probability difference "
-            f"{summary['max_logprob_difference']:.6g}."
-        )
+        _print_replay_diagnostic(summary)
         return
 
     if loaded is None:
@@ -735,10 +783,7 @@ def _capture_activations(
         f"Activation capture complete: {starting_done} reused, "
         f"{total - starting_done} captured."
     )
-    print(
-        "Replay diagnostic: maximum answer-token log-probability difference "
-        f"{summary['max_logprob_difference']:.6g}."
-    )
+    _print_replay_diagnostic(summary)
 
 
 def _probe_progress(done: int, total: int, started: float, starting_done: int) -> None:
@@ -781,7 +826,6 @@ def _train_probes(
         prepared.config.probe_seed,
         positions=prepared.config.probe_positions,
         layers=prepared.config.probe_layers,
-        excluded_answers=prepared.config.probe_excluded_answers,
         regularization_c=prepared.config.probe_regularization_c,
         class_weight=prepared.config.probe_class_weight,
     )
@@ -1008,6 +1052,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.prepare_only and args.force_recompute:
         print("--force-recompute cannot be used with --prepare-only.", file=sys.stderr)
         return 2
+    log: TextIO | None = None
+    terminal_out: TextIO | None = None
+    terminal_err: TextIO | None = None
     try:
         prepared = prepare_run(args.config)
         identity = build_run_identity(
@@ -1021,6 +1068,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.config,
             _preparation_summary(prepared),
         )
+        log, terminal_out, terminal_err = _start_execution_log(registered.directory)
         _print_preparation(prepared, registered, sys.stdout)
         if args.prepare_only:
             print("Preparation complete. No model was run.")
@@ -1096,6 +1144,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunStoreError as error:
         print(f"Run storage error: {error}", file=sys.stderr)
         return 1
+    finally:
+        if log is not None and terminal_out is not None and terminal_err is not None:
+            _stop_execution_log(log, terminal_out, terminal_err)
     return 0
 
 

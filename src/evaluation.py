@@ -304,13 +304,13 @@ def _evaluate_one(
         raise EvaluationError(
             f"Generation for ID {example['id']} has no valid answer text."
         )
-    raw_answer = answer["text"]
-    normalized = normalize_answer(raw_answer)
+    answer_text = answer["text"]
+    normalized = normalize_answer(answer_text)
     if not normalized:
         return _invalid(example, "empty_answer")
-    if "final:" in raw_answer.casefold():
+    if "final:" in answer_text.casefold():
         return _invalid(example, "repeated_final_marker")
-    if sum(bool(line.strip()) for line in raw_answer.splitlines()) > 1:
+    if sum(bool(line.strip()) for line in answer_text.splitlines()) > 1:
         return _invalid(example, "multiple_nonempty_lines")
 
     if allow_abstention and normalized == "unknown":
@@ -318,7 +318,7 @@ def _evaluate_one(
         is_correct = None
     else:
         try:
-            is_correct = matcher.match(raw_answer, example["target_answer"])
+            is_correct = matcher.match(answer_text, example["target_answer"])
         except EvaluationError as exc:
             raise EvaluationError(
                 f"Answer matcher failed for example ID {example['id']}: {exc}"
@@ -373,18 +373,14 @@ def _shortages(summary: dict) -> tuple[dict, ...]:
     return tuple(missing)
 
 
-def probe_shortages(
-    records: Sequence[dict], excluded_answers: Sequence[str] = ()
-) -> tuple[dict, ...]:
-    """Report probe-class shortages after task-specific answer exclusions."""
-    excluded = set(excluded_answers)
+def probe_shortages(records: Sequence[dict]) -> tuple[dict, ...]:
+    """Report correct/incorrect class shortages for probe training."""
     counts = {
         split: Counter(
             record["outcome"]
             for record in records
             if record.get("split") == split
             and record.get("outcome") in ("correct", "incorrect")
-            and record.get("normalized_answer") not in excluded
         )
         for split in _SPLITS
     }

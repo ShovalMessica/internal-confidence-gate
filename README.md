@@ -1,21 +1,8 @@
-# TODO List:
-1. **Complete the generic task and model configuration.**
-2. **Implement model loading and both generation modes.**
-3. **Extract and evaluate answers for any supported task.**
-4. **Map semantic spans to tokens and capture activations through an extensible capture interface.**
-5. **Save and reuse generation and activation artifacts.**
-6. **Train probes across semantic positions, layers, and supported representation types.**
-7. **Use validation data to select probes and acceptance thresholds.**
-8. **Evaluate frozen selections on test data and compare them with output probabilities.**
-9. **Produce metrics, logs, graphs, and representation comparisons. Decide the exact reports later, potentially including head-level analysis within relevant layers.**
-10. Run NER and speaker attribution as sanity checks that the generic pipeline reproduces the earlier process.
-11. Add PEAP later as an optional extension.
-
 # Internal Confidence Gate
 
 Task-adaptable toolkit for building confidence gates from internal model activations.
 
-The toolkit is under development. Items marked **TODO** identify specifications or implementation details that are not yet finalized.
+The toolkit is under active development.
 
 ## Quick start
 
@@ -32,6 +19,11 @@ The toolkit is under development. Items marked **TODO** identify specifications 
    ```sh
    python -m src.run configs/task.yaml
    ```
+
+The command validates the inputs, generates and evaluates answers, captures
+activations, trains and selects a probe, evaluates it on test data, and creates
+a report. Results and an `execution.log` are saved under
+`<output_dir>/<run_id>/`; rerunning the same task reuses validated artifacts.
 
 To validate the configuration and dataset without loading a model, run:
 
@@ -125,25 +117,20 @@ The toolkit supplies both the output instruction and the `FINAL:` marker. The mo
 
 In direct-answer mode, the toolkit supplies the marker before generation. In reasoning mode, it first lets the model reason, closes reasoning if needed, then inserts the answer instruction and marker before resuming generation. Reasoning and answer generation have separate token limits.
 
-Direct mode also supports `direct_output_format: raw_answer` for tasks whose
-own prompt already requests one complete answer. This sends the system and user
-messages unchanged and does not create `final_prompt_end`. The default remains
-`final_prefix`. Decoding can preserve model defaults or use greedy generation;
-see [Generation](docs/configuration.md#generation).
+Decoding can preserve model defaults or use greedy generation; see
+[Generation](docs/configuration.md#generation).
 
 See [Generation](docs/configuration.md#generation) for the exact injected instructions and token flow. The evaluation stage checks each saved answer against its dataset target.
 
-With the default final-prefix format, the model may decline to answer using
-`FINAL: UNKNOWN`. In raw-answer mode it returns `UNKNOWN`. This behavior is
-called **abstention** and is enabled by default:
+The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called
+**abstention** and is enabled by default:
 
 ```yaml
 allow_abstention: true
 ```
 
 This is a shared run setting, not a dataset field. Users can disable it. The
-toolkit’s appended instruction reflects the setting when that instruction is
-used; raw-answer prompts must express the desired behavior themselves.
+toolkit’s appended instruction reflects the setting.
 
 When abstention is enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR. `UNKNOWN` cannot then be a target answer. When abstention is disabled, it may be used as a normal target answer.
 
@@ -265,6 +252,7 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 ```text
 <output_dir>/.cache/generations/<context_id>/...
 <output_dir>/<run_id>/run.json
+<output_dir>/<run_id>/execution.log
 <output_dir>/<run_id>/generation-manifest.jsonl
 <output_dir>/<run_id>/evaluations/<evaluation_id>.jsonl
 <output_dir>/<run_id>/activations.h5
@@ -272,7 +260,7 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 <output_dir>/<run_id>/reports/<report_id>/...
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, optional custom metric summaries, activation summaries, probe-training and selection summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, optional custom metric summaries, activation summaries, probe-training and selection summaries, and completed stages. `execution.log` contains the terminal output from every invocation of that run. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
 
 `activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 

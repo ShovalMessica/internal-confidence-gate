@@ -25,7 +25,7 @@ from src.probe import (
 )
 
 
-REPORT_PROTOCOL_VERSION = 1
+REPORT_PROTOCOL_VERSION = 2
 REPORT_SCHEMA_VERSION = 1
 REPORTS_DIR = "reports"
 
@@ -100,6 +100,16 @@ def report_directory(run_directory: Path, report_id: str) -> Path:
 
 def _balanced_accuracy(tpr: float, fpr: float) -> float:
     return (float(tpr) + 1.0 - float(fpr)) / 2.0
+
+
+def _layer_number(state: str) -> int:
+    """Return the model layer represented by a saved hidden-state label."""
+    if state == "embedding":
+        return 0
+    match = re.fullmatch(r"hidden_state_([1-9]\d*)", state)
+    if match is None:
+        raise ReportingError(f"Unsupported hidden-state label: {state}")
+    return int(match.group(1))
 
 
 def _roc(labels: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -374,7 +384,7 @@ def create_report(
                 for index, state in enumerate(states):
                     row = {
                         "position": position,
-                        "layer": index,
+                        "layer": _layer_number(state),
                         "state": state,
                         "threshold": float(
                             selection["thresholds"][position_index, index]
@@ -405,7 +415,8 @@ def create_report(
             representative_series = {}
             for position_index, position in enumerate(positions):
                 state_index = representatives[position]
-                series = f"{position} (layer {state_index})"
+                layer = _layer_number(states[state_index])
+                series = f"{position} (layer {layer})"
                 representative_series[position] = series
                 scores = np.asarray(
                     training["position_models"][position]["validation_scores"][
@@ -419,7 +430,7 @@ def create_report(
                 fpr = float(selection["fpr"][position_index, state_index])
                 validation_points[series] = (tpr, fpr)
                 representative_metrics[position] = {
-                    "layer": state_index,
+                    "layer": layer,
                     "state": states[state_index],
                     "threshold": float(
                         selection["thresholds"][position_index, state_index]

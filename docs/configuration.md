@@ -2,7 +2,7 @@
 
 Edit [configs/task.yaml](../configs/task.yaml) to supply shared settings. Replace its required `null` placeholders with your values; optional settings already contain the agreed defaults. Example-specific data belongs in the [dataset](dataset-format.md).
 
-The fields below are accepted by the configuration loader. Later pipeline behavior remains under design; **TODO** marks unresolved details.
+The fields below are accepted by the configuration loader.
 
 ## Model and paths
 
@@ -33,7 +33,7 @@ assistant generation boundary.
 
 - **`reasoning_mode`** — Required: `direct` or `reasoning`.
 
-  - **Direct:** Disable thinking when the model's chat template supports that option, then follow `direct_output_format`.
+  - **Direct:** Disable thinking when the model's chat template supports that option, append the answer instruction and `FINAL:`, then generate the answer.
   - **Reasoning:** Enable thinking when supported and append:
 
     > Reason about the task first. A separate final-answer instruction will follow.
@@ -46,31 +46,17 @@ assistant generation boundary.
 
   **The toolkit supplies `FINAL:`; the model generates the answer after it.** Extraction uses this known boundary.
 
-- **`direct_output_format` (optional; default: `final_prefix`)** — Direct-mode
-  answer protocol:
-
-  - `final_prefix`: append the toolkit answer instruction and inject `FINAL:`
-    before generating the answer.
-  - `raw_answer`: send the configured system and user messages unchanged and
-    treat the complete generated response as the answer. Use this only when
-    your own prompt reliably requests one answer in the required format.
-
-  Reasoning mode always uses `final_prefix`. In `raw_answer` mode,
-  `final_prompt_end` is unavailable because no final marker is injected.
-
 - **`reasoning_max_new_tokens` (optional; default: `1024`)** — Reasoning-token limit. Reaching it triggers the answer stage. Applies only in reasoning mode.
 
 - **`answer_max_new_tokens` (optional; default: `64`)** — Separate answer-token limit, used in both modes.
 
-- **`allow_abstention` (optional; default: `true`)** — In `final_prefix`
-  mode, add the applicable sentence to the answer instruction:
+- **`allow_abstention` (optional; default: `true`)** — Add the applicable sentence to the answer instruction:
 
   - Enabled: “If you cannot determine the answer, return UNKNOWN.”
   - Disabled: “Provide your best answer. Do not return UNKNOWN.”
 
-  In `raw_answer` mode, your prompt controls whether the model may return
-  `UNKNOWN`. Enabled UNKNOWN predictions are reported separately and excluded
-  from probe training and gate TPR/FPR in either format.
+  Enabled UNKNOWN predictions are reported separately and excluded from probe
+  training and gate TPR/FPR.
 
 - **`generation_seed` (optional; default: `42`)** — Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 
@@ -173,10 +159,6 @@ the function above as a minimal template.
 - **`probe_layers` (optional)** — Model-state numbers to use, such as `[35]`.
   Layer `0` is the embedding output; positive numbers identify returned
   transformer hidden states. When omitted, use every state.
-- **`probe_excluded_answers` (optional)** — Normalized model answers to exclude
-  from activation capture, probe training, validation selection, and test gate
-  evaluation. Model Behavior reporting remains unchanged. For example,
-  `[NONE]` restricts an NER gate to actual correction proposals.
 - **`probe_regularization_c` (optional; default: `1.0`)** — Positive logistic-
   regression `C` value.
 - **`probe_class_weight` (optional; default: `balanced`)** — `balanced` or
@@ -185,7 +167,7 @@ the function above as a minimal template.
 
 After activation capture, the toolkit trains one probe for every captured position and saved model state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
 
-Each probe is an L2 logistic regression with `C=1`, balanced correct/incorrect class weights, and training-only feature standardization. Its score is `P(correct)`, so larger values indicate greater estimated reliability. Training saves train and validation scores without reading test activations.
+Each probe is an L2 logistic regression using the configured regularization and class weighting, with training-only feature standardization. Its score is `P(correct)`, so larger values indicate greater estimated reliability. Training saves train and validation scores without reading test activations.
 
 For each candidate, validation selection chooses the highest observed `P(correct)` threshold whose acceptance rule, `score >= threshold`, retains at least `target_tpr` of correct validation predictions. Tied scores are accepted together, so achieved TPR may be higher than requested. The candidate with the lowest validation FPR is selected; exact FPR ties use position name and then saved state order. AUROC is saved and reported but is not a selection criterion.
 
@@ -236,7 +218,6 @@ allow_abstention: true
 # custom_metrics_path: "C:/tasks/my-task/custom_metrics.py"
 generation_seed: 42
 direct_batch_size: 8
-direct_output_format: final_prefix
 decoding_strategy: model_default
 probe_seed: 42
 probe_regularization_c: 1.0
@@ -262,14 +243,14 @@ config = load_config("configs/task.yaml")
 The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the runner displays them.
 
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
-- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Direct output format and decoding strategy must use the choices documented above.
+- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Decoding strategy must use the choices documented above.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
 - `answer_matcher_path` and `custom_metrics_path`, when supplied, must be
   absolute paths to existing `.py` files. The runner loads and validates their
   required functions during preparation.
-- Probe position, layer, and excluded-answer lists must be nonempty and contain
-  no duplicates when supplied. Probe layers are checked against the loaded
-  model states before training.
+- Probe position and layer lists must be nonempty and contain no duplicates
+  when supplied. Probe layers are checked against the loaded model states
+  before training.
 - Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
 - Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
@@ -286,7 +267,7 @@ When `model_revision` is omitted, the model loader resolves one exact Hub commit
 
 Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
 
-After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the exact saved token sequence and stores float16 Hugging Face hidden states for `prompt_end`, every `answer_tokens` position, any configured semantic spans, and `final_prompt_end` when a final marker exists. The toolkit records the difference between saved generation log probabilities and replayed log probabilities as a diagnostic; padded generation batches and unpadded per-example replay can produce different floating-point values. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
+After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the exact saved token sequence and stores float16 Hugging Face hidden states for `prompt_end`, every `answer_tokens` position, any configured semantic spans, and `final_prompt_end`. The toolkit verifies token and model provenance and records the difference between generation and replay log probabilities. If the difference exceeds the diagnostic tolerance, it prints a warning that the stored activations represent the per-example replay computation. Padded generation batches and unpadded replay can differ numerically in reduced precision. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
 
 Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection and frozen test evaluation have their own IDs, so downstream setting changes reuse completed upstream work. All groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
 
@@ -298,6 +279,4 @@ reusable from the shared generation cache.
 
 Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Greedy direct generation may use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
 
-Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
-
-**TODO:** Complete the configuration for later pipeline stages. The example above is not yet a complete configuration for the full pipeline.
+Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs. Every invocation is also appended to `<run_dir>/execution.log` while remaining visible in the terminal.

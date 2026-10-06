@@ -23,12 +23,10 @@ allow_abstention: true
 # custom_metrics_path: "C:/path/to/custom_metrics.py"
 generation_seed: 42
 direct_batch_size: 8       # Used only in direct mode
-direct_output_format: final_prefix  # final_prefix or raw_answer; direct mode only
 decoding_strategy: model_default    # model_default or greedy
 probe_seed: 42
 # probe_positions: [prompt_end]  # Omit to train every captured position
 # probe_layers: [35]             # 0 is the embedding output; omit for every state
-# probe_excluded_answers: [NONE] # Exclude these predictions from probe stages
 probe_regularization_c: 1.0
 probe_class_weight: balanced     # balanced or none
 target_tpr: 0.90           # Retain at least this fraction of correct validation predictions
