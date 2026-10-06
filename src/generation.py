@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 6
+GENERATION_PROTOCOL_VERSION = 7
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -185,9 +185,21 @@ def _move_inputs(inputs: dict, model: Any) -> dict:
 def _decoding_kwargs(strategy: str) -> dict[str, object]:
     if strategy != "greedy":
         return {}
-    # Sampling-only checkpoint defaults are inactive under greedy decoding. Passing
-    # nulls prevents Transformers from warning about those ignored values.
-    return {"do_sample": False, "temperature": None, "top_p": None, "top_k": None}
+    # A checkpoint may store sampling, beam, contrastive, constrained, or DoLa
+    # defaults. Greedy means one unmodified argmax path regardless of those values.
+    return {
+        "do_sample": False,
+        "num_beams": 1,
+        "num_beam_groups": 1,
+        "diversity_penalty": 0.0,
+        "penalty_alpha": None,
+        "constraints": None,
+        "force_words_ids": None,
+        "dola_layers": None,
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+    }
 
 
 def _effective_eos_ids(model: Any, tokenizer: Any) -> set[int]:
@@ -204,7 +216,9 @@ def _effective_eos_ids(model: Any, tokenizer: Any) -> set[int]:
     return set(values)
 
 
-def _uses_beam_search(model: Any) -> bool:
+def _uses_beam_search(model: Any, decoding_strategy: str) -> bool:
+    if decoding_strategy == "greedy":
+        return False
     generation_config = getattr(model, "generation_config", None)
     return int(getattr(generation_config, "num_beams", 1) or 1) > 1
 
@@ -243,7 +257,7 @@ def _answer_outputs(
                 return_dict_in_generate=True,
                 # Raw logits provide the confidence baseline. Processed scores
                 # are needed only to retain beam ancestry under beam search.
-                output_scores=_uses_beam_search(model),
+                output_scores=_uses_beam_search(model, decoding_strategy),
                 output_logits=True,
                 **_decoding_kwargs(decoding_strategy),
             )

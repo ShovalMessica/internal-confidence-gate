@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import torch
-from transformers import StoppingCriteriaList
+from transformers import GPT2Config, GPT2LMHeadModel, StoppingCriteriaList
 
 from src.config import TaskConfig
 from src.generation import (
@@ -17,6 +17,7 @@ from src.generation import (
     REASONING_INSTRUCTION,
     THINKING_BOUNDARY,
     _stable_seed,
+    _decoding_kwargs,
     generation_units,
 )
 from src.model import LoadedModel
@@ -277,6 +278,9 @@ class GenerationTests(unittest.TestCase):
             ],
         )
         self.assertFalse(model.calls[0]["do_sample"])
+        self.assertEqual(model.calls[0]["num_beams"], 1)
+        self.assertEqual(model.calls[0]["num_beam_groups"], 1)
+        self.assertIsNone(model.calls[0]["penalty_alpha"])
         self.assertIsNone(model.calls[0]["temperature"])
         self.assertIsNone(model.calls[0]["top_p"])
         self.assertIsNone(model.calls[0]["top_k"])
@@ -284,6 +288,32 @@ class GenerationTests(unittest.TestCase):
         self.assertTrue(control["token_ids"])
         self.assertEqual(control["final_marker_span"], [0, len(control["token_ids"])])
         self.assertIn(ANSWER_INSTRUCTION, control["answer_instruction"])
+
+    def test_greedy_overrides_real_transformers_beam_default(self):
+        torch.manual_seed(0)
+        model = GPT2LMHeadModel(
+            GPT2Config(
+                vocab_size=32,
+                n_positions=16,
+                n_embd=8,
+                n_layer=1,
+                n_head=1,
+                bos_token_id=1,
+                eos_token_id=2,
+                pad_token_id=0,
+            )
+        ).eval()
+        model.generation_config.num_beams = 3
+
+        output = model.generate(
+            torch.tensor([[1, 4, 5]]),
+            max_new_tokens=2,
+            return_dict_in_generate=True,
+            **_decoding_kwargs("greedy"),
+        )
+
+        self.assertFalse(hasattr(output, "sequences_scores"))
+        self.assertEqual(output.sequences.shape, (1, 5))
 
     def test_fixed_system_prompt_precedes_example_user_message(self):
         tokenizer = _Tokenizer()

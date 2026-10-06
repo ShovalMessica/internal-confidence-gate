@@ -17,6 +17,7 @@ import yaml
 
 from src.activation import ActivationError, ActivationResult
 from src.config import TaskConfig
+from src.model import ModelLoadError
 from src.run import _capture_activations, main, prepare_run
 from src.generation import (
     ALLOW_ABSTENTION_INSTRUCTION,
@@ -26,6 +27,7 @@ from src.generation import (
     GenerationUnit,
     render_initial_prompt,
 )
+from src.generation_cache import generation_runtime_versions
 from src.run_store import build_run_identity
 
 
@@ -423,8 +425,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -482,8 +483,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -526,8 +526,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -562,8 +561,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -595,8 +593,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -627,8 +624,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
 
@@ -744,8 +740,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "FastTokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
 
@@ -847,6 +842,7 @@ class RunTests(unittest.TestCase):
             "model": {
                 "identifier": "organization/model",
                 "resolved_revision": "commit",
+                **generation_runtime_versions(),
             },
         }
         slow_tokenizer = SimpleNamespace(is_fast=False)
@@ -886,8 +882,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         patches = (
@@ -915,6 +910,88 @@ class RunTests(unittest.TestCase):
             prepared.config, pinned_revision="resolved-commit"
         )
 
+    def test_force_recompute_validates_model_before_removing_artifacts(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            **generation_runtime_versions(),
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        run_directory = self.run_directories()[0]
+        manifest = run_directory / "generation-manifest.jsonl"
+        before = manifest.read_bytes()
+        with patch(
+            "src.run.load_model",
+            side_effect=ModelLoadError("replacement is incompatible"),
+        ):
+            code, _, stderr = self.invoke_full(None, "--force-recompute")
+
+        self.assertEqual(code, 1)
+        self.assertIn("replacement is incompatible", stderr)
+        self.assertEqual(manifest.read_bytes(), before)
+        run_record = json.loads(
+            (run_directory / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("generation", run_record["completed_stages"])
+
+    def test_completed_generation_reuses_recorded_runtime_after_upgrade(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            **generation_runtime_versions(),
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        upgraded = {
+            "torch_version": "99.0.0",
+            "transformers_version": "99.0.0",
+        }
+        with (
+            patch(
+                "src.generation_cache.generation_runtime_versions",
+                return_value=upgraded,
+            ),
+            patch("src.run.load_model") as load_model,
+        ):
+            code, stdout, stderr = self.invoke_full()
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation artifact: reused", stdout)
+        load_model.assert_not_called()
+
     def test_extended_dataset_reuses_unchanged_generations(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
@@ -926,8 +1003,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -1000,8 +1076,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -1046,8 +1121,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -1134,8 +1208,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -1182,8 +1255,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (
@@ -1218,8 +1290,7 @@ class RunTests(unittest.TestCase):
             "tokenizer_class": "Tokenizer",
             "dtype": "float32",
             "device": "cpu",
-            "torch_version": "test",
-            "transformers_version": "test",
+            **generation_runtime_versions(),
             "generation_config": {},
         }
         with (

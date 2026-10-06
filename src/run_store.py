@@ -790,6 +790,7 @@ def complete_probe_training(
         "fingerprint": identity.fingerprint,
         "protocol_version": PROBE_PROTOCOL_VERSION,
         "seed": identity.seed,
+        "runtime_versions": dict(identity.runtime_versions),
         "activation_sha256": identity.activation_sha256,
         "evaluation_sha256": identity.evaluation_sha256,
         "artifact": PROBE_FILE,
@@ -824,6 +825,7 @@ def validate_completed_probe_training(
         or training.get("fingerprint") != identity.fingerprint
         or training.get("protocol_version") != PROBE_PROTOCOL_VERSION
         or training.get("seed") != identity.seed
+        or training.get("runtime_versions") != dict(identity.runtime_versions)
         or training.get("activation_sha256") != identity.activation_sha256
         or training.get("evaluation_sha256") != identity.evaluation_sha256
         or training.get("artifact") != PROBE_FILE

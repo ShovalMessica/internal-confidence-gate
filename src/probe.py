@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from importlib.metadata import version
 import json
 import math
 from pathlib import Path
@@ -27,7 +28,7 @@ from src.probe_math import (
 )
 
 
-PROBE_PROTOCOL_VERSION = 3
+PROBE_PROTOCOL_VERSION = 4
 PROBE_STORE_SCHEMA_VERSION = 1
 SELECTION_PROTOCOL_VERSION = 1
 TEST_EVALUATION_PROTOCOL_VERSION = 1
@@ -57,6 +58,7 @@ class ProbeIdentity:
     layers: tuple[int, ...] | None
     regularization_c: float
     class_weight: str
+    runtime_versions: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,7 @@ def _settings_values(
     layers: tuple[int, ...] | None,
     regularization_c: float,
     class_weight: str,
+    runtime_versions: Mapping[str, str],
 ) -> dict[str, object]:
     return {
         "protocol_version": PROBE_PROTOCOL_VERSION,
@@ -141,6 +144,7 @@ def _settings_values(
         "seed": seed,
         "positions": list(positions) if positions is not None else None,
         "layers": list(layers) if layers is not None else None,
+        "runtime_versions": dict(runtime_versions),
     }
 
 
@@ -151,7 +155,17 @@ def _settings(identity: ProbeIdentity) -> dict[str, object]:
         identity.layers,
         identity.regularization_c,
         identity.class_weight,
+        identity.runtime_versions,
     )
+
+
+def probe_runtime_versions() -> dict[str, str]:
+    """Return library versions that can affect fitted probes."""
+
+    return {
+        "numpy_version": version("numpy"),
+        "scikit_learn_version": version("scikit-learn"),
+    }
 
 
 def build_probe_identity(
@@ -163,14 +177,23 @@ def build_probe_identity(
     layers: tuple[int, ...] | None = None,
     regularization_c: float = REGULARIZATION_C,
     class_weight: str = "balanced",
+    runtime_versions: Mapping[str, str] | None = None,
 ) -> ProbeIdentity:
     """Identify one downstream probe training without changing upstream identity."""
+    runtime = dict(
+        probe_runtime_versions() if runtime_versions is None else runtime_versions
+    )
+    if set(runtime) != {"numpy_version", "scikit_learn_version"} or not all(
+        isinstance(value, str) and value for value in runtime.values()
+    ):
+        raise ProbeError("Probe runtime versions are invalid.")
     settings = _settings_values(
         seed,
         positions,
         layers,
         float(regularization_c),
         class_weight,
+        runtime,
     )
     payload = {
         "schema_version": PROBE_STORE_SCHEMA_VERSION,
@@ -189,6 +212,7 @@ def build_probe_identity(
         layers,
         float(regularization_c),
         class_weight,
+        runtime,
     )
 
 
@@ -560,6 +584,7 @@ def _summary(group) -> dict[str, object]:
         "validation_examples": int(group["validation_ids"].shape[0]),
         "score": PROBE_SCORE,
         "token_pooling": TOKEN_POOLING,
+        "runtime_versions": dict(_json_attr(group, "settings")["runtime_versions"]),
     }
 
 

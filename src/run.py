@@ -48,6 +48,7 @@ from src.evaluation import (
 from src.generation import GenerationError, generation_units
 from src.generation_cache import (
     GenerationCacheError,
+    GenerationContext,
     build_generation_context,
     generation_record_sha256,
     load_context_model,
@@ -339,6 +340,32 @@ def _model_metadata(config: TaskConfig, loaded: LoadedModel) -> dict:
     }
 
 
+def _generation_context_from_model(
+    config: TaskConfig, model: dict
+) -> GenerationContext:
+    """Rebuild the cache context used by recorded model provenance."""
+
+    runtime_versions = {
+        key: model.get(key)
+        for key in ("torch_version", "transformers_version")
+    }
+    try:
+        return build_generation_context(config, runtime_versions=runtime_versions)
+    except GenerationCacheError as exc:
+        raise RunStoreError(
+            "Recorded model provenance has invalid generation runtime versions."
+        ) from exc
+
+
+def _recorded_generation_context(
+    config: TaskConfig, record: dict
+) -> GenerationContext:
+    model = record.get("model")
+    if not isinstance(model, dict):
+        raise RunStoreError("Generation has no recorded model provenance.")
+    return _generation_context_from_model(config, model)
+
+
 def _generate(
     prepared: PreparedRun,
     registered: RegisteredRun,
@@ -348,19 +375,46 @@ def _generate(
     directory = registered.directory
     examples = prepared.dataset.examples
     examples_by_id = {example["id"]: example for example in examples}
-    context = build_generation_context(prepared.config)
+    current_context = build_generation_context(prepared.config)
     record = load_run_record(directory)
+    stored_model = record.get("model")
+    recorded_context = (
+        _generation_context_from_model(prepared.config, stored_model)
+        if isinstance(stored_model, dict)
+        else None
+    )
 
     pinned_revision = None
+    loaded = None
+    metadata = None
     if force_recompute:
-        pinned_revision = reset_generation(directory)
+        if isinstance(stored_model, dict):
+            pinned_revision = stored_model.get("resolved_revision")
+        # Validate the replacement before deleting current run artifacts.
+        loaded = load_model(prepared.config, pinned_revision=pinned_revision)
+        metadata = _model_metadata(prepared.config, loaded)
+        context = _generation_context_from_model(prepared.config, metadata)
+        save_context_model(context, metadata)
+        reset_generation(directory)
         record = load_run_record(directory)
-    elif validate_completed_generation(directory, record, context):
+        stored_model = None
+    elif recorded_context is not None and validate_completed_generation(
+        directory, record, recorded_context
+    ):
+        context = recorded_context
         records, _ = load_generation_records(directory, context, examples)
         if set(records) != {example["id"] for example in examples}:
             raise RunStoreError("Completed generation does not contain every example.")
         print("Generation artifact: reused (model not loaded).")
         return None
+    else:
+        context = recorded_context or current_context
+        if recorded_context is not None and recorded_context != current_context:
+            raise RunStoreError(
+                "Incomplete generation was created with different Torch or "
+                "Transformers versions. Use --force-recompute to restart it "
+                "with the current runtime."
+            )
 
     records, recovered = load_generation_records(directory, context, examples)
     if recovered:
@@ -400,9 +454,19 @@ def _generate(
     if pinned_revision is None and isinstance(stored_model, dict):
         pinned_revision = stored_model.get("resolved_revision")
 
-    loaded = load_model(prepared.config, pinned_revision=pinned_revision)
-    metadata = _model_metadata(prepared.config, loaded)
-    save_context_model(context, metadata)
+    if loaded is None:
+        loaded = load_model(prepared.config, pinned_revision=pinned_revision)
+        metadata = _model_metadata(prepared.config, loaded)
+        loaded_context = _generation_context_from_model(prepared.config, metadata)
+        if records and loaded_context != context:
+            raise RunStoreError(
+                "Loaded model runtime conflicts with existing generation records."
+            )
+        context = loaded_context
+        save_context_model(context, metadata)
+    else:
+        if metadata is None:
+            raise RunStoreError("Loaded model metadata is unavailable.")
     save_model_metadata(
         directory,
         metadata,
@@ -489,8 +553,8 @@ def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
 def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     directory = registered.directory
     examples = prepared.dataset.examples
-    context = build_generation_context(prepared.config)
     run_record = load_run_record(directory)
+    context = _recorded_generation_context(prepared.config, run_record)
     if not validate_completed_generation(directory, run_record, context):
         raise RunStoreError("Evaluation requires completed generation.")
     generation_hash = run_record["generation"]["artifact_sha256"]
@@ -575,7 +639,7 @@ def _evaluate_custom_metrics(
         _print_custom_metrics(identity.metrics_id, saved, reused=True)
         return
 
-    context = build_generation_context(prepared.config)
+    context = _recorded_generation_context(prepared.config, run_record)
     generations, _ = load_generation_records(
         directory, context, prepared.dataset.examples
     )
@@ -659,8 +723,8 @@ def _capture_activations(
 ) -> None:
     directory = registered.directory
     examples = prepared.dataset.examples
-    generation_context = build_generation_context(prepared.config)
     run_record = load_run_record(directory)
+    generation_context = _recorded_generation_context(prepared.config, run_record)
     generation = run_record.get("generation")
     model_metadata = run_record.get("model")
     if not isinstance(generation, dict) or not isinstance(model_metadata, dict):
@@ -990,7 +1054,7 @@ def _evaluate_frozen_test(
     evaluations = load_evaluation_records(
         directory, evaluation_identity.evaluation_id, prepared.dataset.examples
     )
-    generation_context = build_generation_context(prepared.config)
+    generation_context = _recorded_generation_context(prepared.config, run_record)
     generations, _ = load_generation_records(
         directory, generation_context, prepared.dataset.examples
     )
@@ -1033,7 +1097,7 @@ def _create_report(
         print(f"Report: reused ({registered.directory / 'reports' / identity.report_id}).")
         return
 
-    context = build_generation_context(prepared.config)
+    context = _recorded_generation_context(prepared.config, run_record)
     generations, _ = load_generation_records(
         registered.directory, context, prepared.dataset.examples
     )

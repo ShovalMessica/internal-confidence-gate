@@ -169,6 +169,33 @@ class RunStoreTests(unittest.TestCase):
         save_context_model(self.context, metadata)
         self.assertEqual(load_context_model(self.context), metadata)
 
+    def test_runtime_versions_use_separate_cache_contexts(self):
+        config = TaskConfig(
+            model_name_or_path="organization/model",
+            dataset_path=self.directory / "data.jsonl",
+            reasoning_mode="direct",
+            output_dir=self.directory / "outputs",
+        )
+        old = build_generation_context(
+            config,
+            runtime_versions={
+                "torch_version": "2.5.0",
+                "transformers_version": "4.51.3",
+            },
+        )
+        new = build_generation_context(
+            config,
+            runtime_versions={
+                "torch_version": "2.6.0",
+                "transformers_version": "4.52.0",
+            },
+        )
+        self.assertNotEqual(old.context_id, new.context_id)
+        save_context_model(old, {"resolved_revision": "commit", "runtime": "old"})
+        save_context_model(new, {"resolved_revision": "commit", "runtime": "new"})
+        self.assertEqual(load_context_model(old)["runtime"], "old")
+        self.assertEqual(load_context_model(new)["runtime"], "new")
+
     def test_evaluation_artifact_validation_and_hash_detection(self):
         examples = [_example(1), _example(2)]
         records = [_evaluation(1), _evaluation(2, "incorrect")]

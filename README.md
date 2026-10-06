@@ -19,6 +19,10 @@ python -m src.run configs/task.yaml --prepare-only
 python -m src.run configs/task.yaml
 ```
 
+[`requirements-tested.txt`](requirements-tested.txt) records the exact top-level
+versions used by the offline test suite; choose the Torch wheel appropriate for
+your CPU or CUDA environment.
+
 First prepare a [JSONL dataset](docs/dataset-format.md) and fill in
 [`configs/task.yaml`](configs/task.yaml). The complete command validates the
 inputs, generates and evaluates predictions, captures activations, trains and

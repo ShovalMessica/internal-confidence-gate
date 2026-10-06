@@ -121,6 +121,10 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.summary["candidates"], 4)
         self.assertEqual(result.summary["score"], "reliability_score")
         self.assertEqual(result.summary["token_pooling"], "mean")
+        self.assertEqual(
+            set(result.summary["runtime_versions"]),
+            {"numpy_version", "scikit_learn_version"},
+        )
 
         with h5py.File(self.directory / PROBE_FILE, "r") as source:
             group = source[f"trainings/{identity.probe_id}"]
@@ -130,6 +134,9 @@ class ProbeTests(unittest.TestCase):
             settings = json.loads(group.attrs["settings"])
             self.assertEqual(settings["class_weight"], "balanced")
             self.assertEqual(settings["regularization_C"], 1.0)
+            self.assertEqual(
+                settings["runtime_versions"], result.summary["runtime_versions"]
+            )
 
             answer = group["position_models/answer_tokens"]
             # The first state averages [1, 0] and [3, 2] for example 1.

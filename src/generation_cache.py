@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ from src.config import TaskConfig
 from src.generation import GENERATION_PROTOCOL_VERSION
 
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 _CACHE_ROOT = ".cache/generations"
 _CONTEXT_RECORD = "context.json"
 
@@ -43,8 +44,30 @@ def _encoded(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def build_generation_context(config: TaskConfig) -> GenerationContext:
+def generation_runtime_versions() -> dict[str, str]:
+    """Return runtime versions that can change generated tokens or scores."""
+
+    return {
+        "torch_version": version("torch"),
+        "transformers_version": version("transformers"),
+    }
+
+
+def build_generation_context(
+    config: TaskConfig,
+    *,
+    runtime_versions: dict[str, str] | None = None,
+) -> GenerationContext:
     """Identify model work independently of any particular dataset version."""
+    runtime = (
+        generation_runtime_versions()
+        if runtime_versions is None
+        else runtime_versions
+    )
+    if set(runtime) != {"torch_version", "transformers_version"} or not all(
+        isinstance(value, str) and value for value in runtime.values()
+    ):
+        raise GenerationCacheError("Generation runtime versions are invalid.")
     settings = {
         "model_name_or_path": config.model_name_or_path,
         "model_revision": config.model_revision,
@@ -56,6 +79,7 @@ def build_generation_context(config: TaskConfig) -> GenerationContext:
         "generation_seed": config.generation_seed,
         "decoding_strategy": config.decoding_strategy,
         "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
+        "runtime_versions": dict(runtime),
     }
     if config.system_prompt_sha256 is not None:
         settings["system_prompt_sha256"] = config.system_prompt_sha256
