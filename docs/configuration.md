@@ -96,7 +96,7 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 - **Invalid output:** the response could not be evaluated structurally; rate `N_invalid / N`.
 - **Token-limit output:** answer generation reached its token limit; rate `N_token_limit / N`. This is an independent diagnostic, so the same example also appears in one of the four outcomes above.
 
-The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
+The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. In a full run, insufficient correct or incorrect counts produce exit code `1` after saving the results. `--behavior-only` saves and reports the same counts without enforcing probe-readiness minimums.
 
 ## Custom task metrics
 
@@ -167,7 +167,7 @@ the function above as a minimal template.
   `none`.
 - **`target_tpr` (optional; default: `0.90`)** — Minimum fraction of correct validation predictions the selected gate must accept. Must be greater than `0` and at most `1`.
 
-After activation capture, the toolkit trains one probe for every captured position and saved model state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
+After activation capture, the toolkit trains one probe for every position and model state selected by `probe_positions` and `probe_layers`. When those settings are omitted, it uses every captured position and saved state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
 
 Each probe is an L2 logistic regression using the configured regularization and class weighting, with training-only feature standardization. Larger scores indicate greater estimated reliability. With class weighting, the score is not assumed to be a calibrated probability; it is used only for ranking and thresholding. Training saves train and validation scores without reading test activations.
 

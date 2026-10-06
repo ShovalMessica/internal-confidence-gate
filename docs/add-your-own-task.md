@@ -1,59 +1,71 @@
 # Add your own task
 
-This walkthrough uses the executable arithmetic-classification example to take
-one task from prompt design through a trained confidence gate and final report.
-The exact dataset and configuration contracts remain in
-[Dataset format](dataset-format.md) and [Configuration](configuration.md).
+This walkthrough uses the executable synthetic
+[name-correction example](../examples/ner/README.md). It first checks a prompt
+on a small development sample, then runs a separate full dataset through probe
+training and reporting.
 
-## 1. Define one objectively scored answer
+Use [Dataset format](dataset-format.md) and
+[Configuration](configuration.md) as the exact references.
 
-Each example must have one final answer that can be marked correct or incorrect.
-The example asks whether an arithmetic equality is true and uses `TRUE` or
-`FALSE` as its complete answer.
+## 1. Define the task
 
-Shared task instructions live in
-[`system-prompt.md`](../examples/simple-classification/system-prompt.md):
+Each example needs one final answer that can be evaluated as correct or
+incorrect. In the example, the task answer is a participant label (`A`-`J`),
+`NONE`, or `UNKNOWN`.
 
-```text
-Decide whether the supplied arithmetic equality is true.
+Fixed rules and demonstrations are in
+[`system-prompt.md`](../examples/ner/system-prompt.md). Each dataset `input`
+contains the participant list and utterance for one example. Do not include
+`FINAL:` in either place; the toolkit supplies its answer instruction and marker.
 
-Return TRUE if it is correct or FALSE if it is incorrect. The toolkit supplies the required final-answer format.
-```
+## 2. Check the prompt on development data
 
-Do not include `FINAL:` in this prompt. The toolkit adds its answer instruction,
-opens the assistant response, and supplies the marker automatically.
-
-Before building a large dataset, test prompt wording and any demonstrations on a
-small development sample. Keep the final prompt fixed once data collection and
-gate evaluation begin.
-
-## 2. Create the JSONL dataset
-
-Each line supplies a unique integer ID, the complete example-specific user
-message, its target answer, and optionally its split:
-
-```json
-{"id":0,"input":"Is this arithmetic equality true or false?\n100003 * 100019 = 10002200057","target_answer":"TRUE","split":"train"}
-```
-
-The target answer is used only to evaluate predictions and train the reliability
-probe. It is never sent to the model or used as a probe feature.
-
-Generate the complete example from the repository root:
+The repository includes a small [`dev-sample.jsonl`](../examples/ner/dev-sample.jsonl)
+for prompt development. Generate configurations and the separate full dataset:
 
 ```sh
-python examples/simple-classification/prepare.py
+python examples/ner/prepare.py
 ```
 
-This writes `dataset.jsonl` and `task.yaml` under the Git-ignored `generated/`
-directory. The default 2,000 examples include balanced labels and explicit
-train, validation, and test splits. Most equalities are deliberately difficult,
-so a small model is likely to produce both correct and incorrect predictions.
+Validate the development configuration without loading a model:
 
-## 3. Review the generated configuration
+```sh
+python -m src.run examples/ner/generated/dev-task.yaml --prepare-only
+```
 
-The generated YAML contains the model, absolute data and output paths, direct
-generation mode, and a short answer limit:
+Then inspect actual model answers:
+
+```sh
+python -m src.run examples/ner/generated/dev-task.yaml --behavior-only
+```
+
+Revise the task instructions, demonstrations, or decision rules if the model
+misunderstands the task or output contract. The development sample is separate
+from the final test split. Once behavior is satisfactory, freeze the prompt
+before the full run.
+
+## 3. Understand one record
+
+A record contains a unique integer ID, the complete example-specific user
+message, its target answer, and its split:
+
+```json
+{"id":0,"input":"<PARTICIPANTS>\nA Katherine Smith\n...\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<1000><David Brown>Please send the agenda to Kate.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train"}
+```
+
+The target answer is never sent to the model or used as a probe feature. It is
+used only to decide whether the saved model prediction is correct.
+
+Do not confuse **task answers** with **probe labels**. `A` and `NONE` are task
+answers. The probe label is whether the model's answer matched the target:
+`correct` or `incorrect`. Balancing task answers does not guarantee enough
+correct and incorrect model predictions for probe training.
+
+## 4. Review the configuration
+
+`prepare.py` writes `generated/task.yaml` with absolute paths and these central
+settings:
 
 ```yaml
 model_name_or_path: Qwen/Qwen3-0.6B
@@ -62,92 +74,105 @@ system_prompt_path: <absolute path>/system-prompt.md
 reasoning_mode: direct
 decoding_strategy: greedy
 answer_max_new_tokens: 4
-allow_abstention: false
+allow_abstention: true
 output_dir: <absolute path>/outputs
 ```
 
-Choose another supported chat model with:
+The generated dataset has 2,000 examples with fixed train, validation, and test
+splits. All people and utterances are synthetic.
+
+## 5. Run Model Behavior
+
+Run generation and correctness evaluation before spending time on activation
+capture:
 
 ```sh
-python examples/simple-classification/prepare.py --model <hugging-face-model-id>
+python -m src.run examples/ner/generated/task.yaml --behavior-only
 ```
 
-## 4. Validate before loading a model
-
-Run preparation first:
-
-```sh
-python -m src.run examples/simple-classification/generated/task.yaml --prepare-only
-```
-
-Check the valid and excluded record counts, split source, and split sizes. This
-command creates the run record but does not download or load a model. Small
-datasets are accepted in this mode while a prompt is still being developed.
-
-## 5. Inspect Model Behavior
-
-Generate and evaluate answers without collecting activations:
-
-```sh
-python -m src.run examples/simple-classification/generated/task.yaml --behavior-only
-```
-
-The Model Behavior table reports correct, wrong, abstained, invalid, and
-token-limit outputs overall and by split. Inspect `execution.log` and `run.json`
-under the printed run directory. If formatting failures are common, revise the
-prompt and repeat the smoke check before training probes.
-
-The full pipeline requires enough correct and incorrect concrete predictions in
-every split. The runner reports any shortage precisely. `UNKNOWN` abstentions and
-invalid outputs do not count toward these classes.
+The terminal and `run.json` report correct, wrong, abstained, invalid, and
+token-limit outputs overall and by split. The full pipeline requires enough
+correct and incorrect concrete predictions in every split. The runner reports
+the exact shortage when this requirement is not met.
 
 ## 6. Train and evaluate the gate
 
-Once behavior is suitable, run the same configuration without a stopping flag:
+Run the same configuration without a stopping flag:
 
 ```sh
-python -m src.run examples/simple-classification/generated/task.yaml
+python -m src.run examples/ner/generated/task.yaml
 ```
 
-Saved generations are reused. The runner then:
+The toolkit reuses saved generations, then captures activations, trains probe
+candidates on train, chooses a probe and threshold on validation, and compares
+the frozen probe with output probability on test.
 
-1. Captures hidden states at `prompt_end`, `final_prompt_end`, and
-   `answer_tokens`.
-2. Trains a linear probe for every configured position and model state.
-3. Selects a probe and threshold on validation data at `target_tpr`.
-4. Applies that frozen choice to test data and compares it with raw output
-   probability.
-5. Creates machine-readable metrics, CSV plot data, and PNG figures.
+The printed run directory contains:
 
-## 7. Interpret the report
+```text
+run.json
+execution.log
+generation-manifest.jsonl
+evaluations/<evaluation_id>.jsonl
+activations.h5
+probes.h5
+reports/<report_id>/
+```
 
-Open `<run_dir>/reports/<report_id>/metrics.json` and the generated figures.
+Read `reports/<report_id>/metrics.json` for exact values and the PNG files for
+layer comparisons and TPR-FPR curves. The main gate metrics are:
 
-- **TPR** is the fraction of correct predictions accepted.
-- **FPR** is the fraction of incorrect predictions accepted.
-- **Balanced accuracy** averages TPR and `1 - FPR`.
-- **AUROC** measures score ranking across all thresholds.
-- **Coverage** is the accepted fraction of eligible concrete predictions.
-- **Accepted-error rate** is the incorrect fraction among accepted predictions.
+- **TPR:** fraction of correct predictions accepted.
+- **FPR:** fraction of incorrect predictions accepted.
+- **Balanced accuracy:** `(TPR + 1 - FPR) / 2`.
+- **AUROC:** ranking quality across all thresholds.
+- **Coverage:** fraction of eligible concrete predictions accepted.
+- **Accepted-error rate:** fraction of accepted predictions that are wrong.
 
-Validation chooses the representation and thresholds. Test data only evaluates
-the frozen choices. Invalid outputs and enabled `UNKNOWN` abstentions are
-excluded from gate metrics. Any other task label, including `NONE`, is a normal
-concrete answer and participates in probing.
+Invalid outputs and enabled `UNKNOWN` abstentions are outside the gate's
+eligible population.
+
+## 7. Adapt the files to another task
+
+Replace these parts:
+
+1. **Shared instructions:** rewrite `system-prompt.md` with the task, valid
+   answers, decision rules, and useful demonstrations.
+2. **Example inputs:** put each complete example-specific user message in
+   `input`.
+3. **Target answers:** supply the expected final answer for every record.
+4. **Splits:** assign train, validation, and test, or omit every assignment and
+   let the toolkit split reproducibly.
+5. **Configuration:** choose the model, direct or reasoning mode, token limits,
+   abstention behavior, and output directory.
+
+For example, a sentiment task could replace the prompt with “Classify the review
+as POSITIVE or NEGATIVE” and use records such as:
+
+```json
+{"id":1,"input":"Review: The battery lasts all day.","target_answer":"POSITIVE","split":"train"}
+```
+
+The pipeline and probe labels remain unchanged.
 
 ## Optional task-specific behavior
 
-Start with the default complete-answer matcher and default capture positions.
-Add customization only when the task needs it:
+Use these only when the default contract is insufficient:
 
-- Use [`answer_matcher_path`](configuration.md#answer-evaluation) for aliases,
-  punctuation rules, or other task-specific answer equivalence.
-- Add [`semantic_spans`](dataset-format.md#capture-locations) when a meaningful
-  input region should be compared with the default positions.
-- Use [`custom_metrics_path`](configuration.md#custom-task-metrics) for
-  task-specific behavior summaries. These metrics do not change correctness or
-  probe labels.
+- **Custom answer matching:** configure `answer_matcher_path` when normalized
+  complete-answer equality is not the right correctness rule.
+- **Semantic spans:** add `semantic_spans` to every example to capture an
+  additional role-specific input location. The NER generator marks the name
+  mention as `span_1`.
+- **Custom metrics:** attach free-form `metadata` and configure
+  `custom_metrics_path` for task-specific count-based summaries.
 
-Changing a prompt or input creates new generation work. Changing only matching,
-metrics, or downstream probe settings reuses compatible upstream artifacts as
-described in [Run identity and reuse](configuration.md#run-identity-and-reuse).
+Their exact interfaces, validation rules, and reuse behavior are documented in
+[Configuration](configuration.md) and [Dataset format](dataset-format.md).
+
+## Reproducibility
+
+Keep the model revision, prompt, dataset, generation settings, and split
+assignments fixed for the final run. The toolkit records hashes and provenance,
+resumes interrupted stages, and reuses validated artifacts. A changed prompt or
+dataset creates a distinct run rather than silently overwriting the earlier one.
