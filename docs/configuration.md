@@ -167,15 +167,15 @@ the function above as a minimal template.
 
 After activation capture, the toolkit trains one probe for every captured position and saved model state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
 
-Each probe is an L2 logistic regression using the configured regularization and class weighting, with training-only feature standardization. Its score is `P(correct)`, so larger values indicate greater estimated reliability. Training saves train and validation scores without reading test activations.
+Each probe is an L2 logistic regression using the configured regularization and class weighting, with training-only feature standardization. Larger scores indicate greater estimated reliability. With class weighting, the score is not assumed to be a calibrated probability; it is used only for ranking and thresholding. Training saves train and validation scores without reading test activations.
 
-For each candidate, validation selection chooses the highest observed `P(correct)` threshold whose acceptance rule, `score >= threshold`, retains at least `target_tpr` of correct validation predictions. Tied scores are accepted together, so achieved TPR may be higher than requested. The candidate with the lowest validation FPR is selected; exact FPR ties use position name and then saved state order. AUROC is saved and reported but is not a selection criterion.
+For each candidate, validation selection chooses the highest observed reliability-score threshold whose acceptance rule, `score >= threshold`, retains at least `target_tpr` of correct validation predictions. Tied scores are accepted together, so achieved TPR may be higher than requested. The candidate with the lowest validation FPR is selected; exact FPR ties use position name and then saved state order. AUROC is saved and reported but is not a selection criterion.
 
 All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID depends on the activation artifact, evaluation artifact, fixed training protocol, and `probe_seed`. The selection ID depends on that completed probe group and `target_tpr`. Changing the target therefore reuses trained probes and creates another small selection group without rerunning the model.
 
 ## Frozen test evaluation
 
-After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, and AUROC.
+After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, AUROC, coverage, and accepted-error rate. Coverage is the accepted fraction; accepted-error rate is the incorrect fraction among accepted predictions.
 
 The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability. Token probabilities are calculated from the model's raw next-token logits, before temperature, top-k, top-p, or other sampling filters are applied.
 

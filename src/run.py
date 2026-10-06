@@ -917,7 +917,9 @@ def _print_test_evaluation(test_id: str, summary: dict, reused: bool) -> None:
             f"{label}: threshold {metrics['threshold']:.6f} | "
             f"TPR {metrics['tpr']:.4f} | FPR {metrics['fpr']:.4f} | "
             f"balanced accuracy {balanced_accuracy:.4f} | "
-            f"AUROC {metrics['auroc']:.4f}"
+            f"AUROC {metrics['auroc']:.4f} | "
+            f"coverage {_format_rate(metrics['coverage'])} | "
+            f"accepted error {_format_rate(metrics['accepted_error_rate'])}"
         )
 
 

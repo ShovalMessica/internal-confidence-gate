@@ -38,6 +38,8 @@ Example
 
   If omitted, the toolkit randomly assigns 70%/15%/15% using seed 42. Both proportions and seed are configurable. Fractions are rounded down, then remaining examples go to the splits with the largest fractional remainders. Ties follow train, validation, test order.
 
+  Automatic splitting treats records independently. If several records come from the same source, conversation, document, or template instance, assign splits yourself so related examples cannot cross split boundaries.
+
 - **`metadata` (optional)** — Free-form JSON object passed to a configured
   [custom metric function](configuration.md#custom-task-metrics). You choose
   its inner field names and values; they may differ between examples. Metadata

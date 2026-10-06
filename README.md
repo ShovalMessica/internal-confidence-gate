@@ -161,7 +161,7 @@ For eligible predictions:
 - **Gate TPR:** accepted correct predictions divided by all correct predictions.
 - **Gate FPR:** accepted incorrect predictions divided by all incorrect predictions.
 
-Probe training uses mean-pooled hidden states, training-only standardization, and balanced L2 logistic regression. It saves `P(correct)` scores for train and validation while leaving test activations untouched.
+Probe training uses mean-pooled hidden states, training-only standardization, and balanced L2 logistic regression. It saves a reliability score for train and validation while leaving test activations untouched. Because class weighting can alter the fitted class prior, this score is used for ranking and thresholding and is not presented as a calibrated probability.
 
 Validation then selects one probe and acceptance threshold. For each candidate, the toolkit chooses the strictest threshold that retains at least the configured fraction of correct validation predictions, then selects the candidate with the lowest validation FPR. AUROC is reported for context but does not determine the winner.
 
@@ -173,6 +173,8 @@ The final report uses four gate metrics:
 - **FPR:** fraction of incorrect predictions accepted.
 - **Balanced accuracy:** `(TPR + (1 - FPR)) / 2`.
 - **AUROC:** threshold-independent ranking quality.
+
+Machine-readable test results also include **coverage** (the fraction of predictions accepted) and **accepted-error rate** (incorrect accepted predictions divided by all accepted predictions).
 
 For every captured position, a validation graph shows balanced accuracy from Layer 0—the initial token embedding—through every transformer layer. A validation TPR-FPR graph contains one representative per position: the layer with the lowest FPR while meeting `target_tpr`. The overall winner and output-probability baseline are highlighted. A separate test graph compares only the frozen overall winner with the probability baseline.
 

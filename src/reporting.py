@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import Mapping
+import warnings
 
 import numpy as np
 
@@ -18,14 +19,14 @@ from src.probe import (
     ProbeIdentity,
     SelectionIdentity,
     TestEvaluationIdentity,
-    answer_probability,
     probe_file_path,
     validate_selection_group,
     validate_test_evaluation_group,
 )
+from src.probe_math import answer_probability
 
 
-REPORT_PROTOCOL_VERSION = 2
+REPORT_PROTOCOL_VERSION = 3
 REPORT_SCHEMA_VERSION = 1
 REPORTS_DIR = "reports"
 
@@ -128,11 +129,16 @@ def _roc(labels: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, ...]:
 
 def _matplotlib():
     try:
-        import matplotlib
+        # Some Matplotlib releases import older pyparsing APIs and emit
+        # third-party deprecation warnings. Keep CLI output focused on toolkit
+        # diagnostics while preserving all runtime warnings from our code.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            import matplotlib
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from matplotlib.ticker import MaxNLocator, PercentFormatter
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            from matplotlib.ticker import MaxNLocator, PercentFormatter
     except ImportError as exc:
         raise ReportingError(
             "Plot generation is unavailable; install requirements.txt."
@@ -502,6 +508,7 @@ def create_report(
                 )
         summary = {
             "metrics": ["tpr", "fpr", "balanced_accuracy", "auroc"],
+            "operational_metrics": ["coverage", "accepted_error_rate"],
             "validation": {
                 "representatives": representative_metrics,
                 "overall_winner": {
@@ -523,13 +530,15 @@ def create_report(
                 "probe": {
                     key: test_summary["probe"][key]
                     for key in (
-                        "threshold", "tpr", "fpr", "balanced_accuracy", "auroc"
+                        "threshold", "tpr", "fpr", "balanced_accuracy", "auroc",
+                        "coverage", "accepted_error_rate",
                     )
                 },
                 "output_probability": {
                     key: test_summary["output_probability"][key]
                     for key in (
-                        "threshold", "tpr", "fpr", "balanced_accuracy", "auroc"
+                        "threshold", "tpr", "fpr", "balanced_accuracy", "auroc",
+                        "coverage", "accepted_error_rate",
                     )
                 },
             },

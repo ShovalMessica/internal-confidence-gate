@@ -119,7 +119,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.trained_candidates, 4)
         self.assertEqual(progress[-1], (4, 4, 0))
         self.assertEqual(result.summary["candidates"], 4)
-        self.assertEqual(result.summary["score"], "probability_correct")
+        self.assertEqual(result.summary["score"], "reliability_score")
         self.assertEqual(result.summary["token_pooling"], "mean")
 
         with h5py.File(self.directory / PROBE_FILE, "r") as source:
@@ -396,6 +396,8 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(baseline["aggregation"], "geometric_mean_token_probability")
         self.assertAlmostEqual(baseline["threshold"], 0.8)
         self.assertEqual((baseline["tpr"], baseline["fpr"]), (0.0, 0.0))
+        self.assertEqual(baseline["coverage"], 0.0)
+        self.assertIsNone(baseline["accepted_error_rate"])
         with h5py.File(self.directory / PROBE_FILE, "r") as source:
             group = source[f"test_evaluations/{identity.test_id}"]
             np.testing.assert_allclose(group["probability_scores"][...], [0.4, 0.3])
@@ -482,6 +484,11 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(
             metrics["metrics"], ["tpr", "fpr", "balanced_accuracy", "auroc"]
         )
+        self.assertEqual(
+            metrics["operational_metrics"], ["coverage", "accepted_error_rate"]
+        )
+        self.assertIn("coverage", metrics["test"]["probe"])
+        self.assertIn("accepted_error_rate", metrics["test"]["probe"])
         self.assertEqual(
             set(metrics["validation"]["representatives"]),
             {"answer_tokens", "prompt_end"},

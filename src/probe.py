@@ -9,24 +9,33 @@ import math
 from pathlib import Path
 import time
 from typing import Callable, Mapping, Sequence
-import warnings
 
 import numpy as np
 
 from src.activation_store import activation_file_path
+from src.probe_math import (
+    FittedProbe as _FittedProbe,
+    MAX_ITERATIONS,
+    SOLVER,
+    ProbeError,
+    answer_probability,
+    auroc as _auroc,
+    candidate_metrics as _candidate_metrics,
+    fit_probe as _fit_probe,
+    frozen_metrics as _frozen_metrics,
+    sigmoid as _sigmoid,
+)
 
 
-PROBE_PROTOCOL_VERSION = 2
+PROBE_PROTOCOL_VERSION = 3
 PROBE_STORE_SCHEMA_VERSION = 1
 SELECTION_PROTOCOL_VERSION = 1
 TEST_EVALUATION_PROTOCOL_VERSION = 1
 PROBE_FILE = "probes.h5"
-PROBE_SCORE = "probability_correct"
+PROBE_SCORE = "reliability_score"
 PROBABILITY_AGGREGATION = "geometric_mean_token_probability"
 TOKEN_POOLING = "mean"
 REGULARIZATION_C = 1.0
-MAX_ITERATIONS = 5_000
-SOLVER = "liblinear"
 SELECTION_METRICS = (
     "thresholds",
     "accepted_correct",
@@ -35,10 +44,6 @@ SELECTION_METRICS = (
     "fpr",
     "auroc",
 )
-
-
-class ProbeError(ValueError):
-    """Probe inputs, fitting, or saved artifacts are invalid."""
 
 
 @dataclass(frozen=True)
@@ -104,17 +109,6 @@ class _ProbeData:
     state_labels: tuple[str, ...]
     state_indices: tuple[int, ...]
     hidden_size: int
-
-
-@dataclass(frozen=True)
-class _FittedProbe:
-    scaler_mean: np.ndarray
-    scaler_scale: np.ndarray
-    coefficients: np.ndarray
-    intercept: float
-    iterations: int
-    train_scores: np.ndarray
-    validation_scores: np.ndarray
 
 
 ProgressCallback = Callable[[int, int, float, int], None]
@@ -545,69 +539,6 @@ def _matrix(source, ids: Sequence[int], position: str, state: int) -> np.ndarray
     return np.stack(rows)
 
 
-def _fit_probe(
-    train_values: np.ndarray,
-    train_labels: np.ndarray,
-    validation_values: np.ndarray,
-    seed: int,
-    position: str,
-    state_label: str,
-    regularization_c: float,
-    class_weight: str,
-) -> _FittedProbe:
-    if not np.isfinite(train_values).all() or not np.isfinite(validation_values).all():
-        raise ProbeError(
-            f"Probe features contain nonfinite values at '{position}', {state_label}."
-        )
-    try:
-        from sklearn.exceptions import ConvergenceWarning
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-    except ImportError as exc:
-        raise ProbeError(
-            "Probe training is unavailable; install requirements.txt."
-        ) from exc
-
-    scaler = StandardScaler().fit(train_values)
-    train_scaled = scaler.transform(train_values)
-    validation_scaled = scaler.transform(validation_values)
-    model = LogisticRegression(
-        penalty="l2",
-        C=regularization_c,
-        class_weight=None if class_weight == "none" else class_weight,
-        solver=SOLVER,
-        max_iter=MAX_ITERATIONS,
-        random_state=seed,
-    )
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", ConvergenceWarning)
-            model.fit(train_scaled, train_labels)
-    except ConvergenceWarning as exc:
-        raise ProbeError(
-            f"Probe did not converge at '{position}', {state_label}."
-        ) from exc
-    except ValueError as exc:
-        raise ProbeError(
-            f"Probe fitting failed at '{position}', {state_label}: {exc}"
-        ) from exc
-    classes = model.classes_.tolist()
-    if classes != [0, 1] or model.coef_.shape != (1, train_values.shape[1]):
-        raise ProbeError(
-            f"Probe produced invalid classes at '{position}', {state_label}."
-        )
-    correct_index = classes.index(1)
-    return _FittedProbe(
-        np.asarray(scaler.mean_, dtype=np.float64),
-        np.asarray(scaler.scale_, dtype=np.float64),
-        np.asarray(model.coef_[0], dtype=np.float64),
-        float(model.intercept_[0]),
-        int(model.n_iter_[0]),
-        np.asarray(model.predict_proba(train_scaled)[:, correct_index]),
-        np.asarray(model.predict_proba(validation_scaled)[:, correct_index]),
-    )
-
-
 def _write_candidate(model, state: int, fitted: _FittedProbe) -> None:
     model["scaler_mean"][state, :] = fitted.scaler_mean
     model["scaler_scale"][state, :] = fitted.scaler_scale
@@ -776,97 +707,6 @@ def validate_probe_group(
         raise
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ProbeError(f"Probe artifact is invalid: {path}") from exc
-
-
-def _candidate_metrics(
-    scores: np.ndarray, labels: np.ndarray, target_tpr: float
-) -> tuple[float, int, int, float, float, float]:
-    if (
-        scores.ndim != 1
-        or scores.shape != labels.shape
-        or not np.isfinite(scores).all()
-        or np.any((scores < 0) | (scores > 1))
-        or set(labels.tolist()) != {0, 1}
-    ):
-        raise ProbeError("Validation probe scores or labels are invalid.")
-    correct = scores[labels == 1]
-    incorrect = scores[labels == 0]
-    required_correct = math.ceil(target_tpr * correct.size)
-    threshold = np.sort(correct)[-required_correct]
-    accepted_correct = int(np.count_nonzero(correct >= threshold))
-    accepted_incorrect = int(np.count_nonzero(incorrect >= threshold))
-    return (
-        float(threshold),
-        accepted_correct,
-        accepted_incorrect,
-        accepted_correct / correct.size,
-        accepted_incorrect / incorrect.size,
-        _auroc(labels, scores),
-    )
-
-
-def _auroc(labels: np.ndarray, scores: np.ndarray) -> float:
-    try:
-        from sklearn.metrics import roc_auc_score
-    except ImportError as exc:
-        raise ProbeError(
-            "Probe evaluation is unavailable; install requirements.txt."
-        ) from exc
-    return float(roc_auc_score(labels, scores))
-
-
-def _frozen_metrics(
-    labels: np.ndarray, scores: np.ndarray, threshold: float
-) -> dict[str, object]:
-    accepted = scores >= threshold
-    correct = labels == 1
-    incorrect = labels == 0
-    accepted_correct = int(np.count_nonzero(accepted & correct))
-    accepted_incorrect = int(np.count_nonzero(accepted & incorrect))
-    total_correct = int(np.count_nonzero(correct))
-    total_incorrect = int(np.count_nonzero(incorrect))
-    return {
-        "threshold": threshold,
-        "accepted_correct": accepted_correct,
-        "total_correct": total_correct,
-        "tpr": accepted_correct / total_correct,
-        "accepted_incorrect": accepted_incorrect,
-        "total_incorrect": total_incorrect,
-        "fpr": accepted_incorrect / total_incorrect,
-        "accepted": int(np.count_nonzero(accepted)),
-        "total": int(labels.size),
-        "acceptance_rate": float(np.mean(accepted)),
-        "auroc": _auroc(labels, scores),
-    }
-
-
-def answer_probability(record: Mapping[str, object], example_id: int) -> float:
-    """Aggregate saved answer-token probabilities into one confidence score."""
-    answer = record.get("answer")
-    logprobs = answer.get("token_logprobs") if isinstance(answer, Mapping) else None
-    if (
-        not isinstance(logprobs, (list, tuple))
-        or not logprobs
-        or any(type(value) not in (int, float) for value in logprobs)
-    ):
-        raise ProbeError(
-            f"Answer token probabilities are invalid for example ID {example_id}."
-        )
-    values = np.asarray(logprobs, dtype=np.float64)
-    if not np.isfinite(values).all() or np.any(values > 1e-6):
-        raise ProbeError(
-            f"Answer token probabilities are invalid for example ID {example_id}."
-        )
-    return float(np.exp(values.mean()))
-
-
-def _sigmoid(values: np.ndarray) -> np.ndarray:
-    result = np.empty_like(values, dtype=np.float64)
-    positive = values >= 0
-    result[positive] = 1 / (1 + np.exp(-values[positive]))
-    exp_values = np.exp(values[~positive])
-    result[~positive] = exp_values / (1 + exp_values)
-    return result
 
 
 def _selection_summary(group) -> dict[str, object]:
