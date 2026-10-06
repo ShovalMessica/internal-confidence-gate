@@ -7,14 +7,20 @@ training and reporting.
 The synthetic task demonstrates the workflow rather than supporting a research
 claim about gate quality.
 
+Install the repository dependencies first, and run every command below from
+the repository root. `--prepare-only` validates files without loading a model.
+`--behavior-only` loads and runs the model, downloading Hub weights when they
+are not already available, then stops after answer evaluation.
+
 Use [Dataset format](dataset-format.md) and
 [Configuration](configuration.md) as the exact references.
 
 ## 1. Define the task
 
 Each example needs one final answer that can be evaluated as correct or
-incorrect. In the example, the task answer is a participant label (`A`-`J`),
-`NONE`, or `UNKNOWN`.
+incorrect. In the example, dataset targets are a participant label (`A`-`J`) or
+`NONE`. With abstention enabled, `UNKNOWN` is reserved for a model that cannot
+decide and cannot be a dataset target.
 
 Fixed rules and demonstrations are in
 [`system-prompt.md`](../examples/ner/system-prompt.md). It uses one text code
@@ -29,7 +35,7 @@ The repository includes a small [`dev-sample.jsonl`](../examples/ner/dev-sample.
 for prompt development. Generate configurations and the separate full dataset:
 
 ```sh
-python examples/ner/prepare.py
+python examples/ner/prepare.py --model Qwen/Qwen3-4B-Instruct-2507 --seed 91337 --examples 1000
 ```
 
 Validate the development configuration without loading a model:
@@ -38,16 +44,18 @@ Validate the development configuration without loading a model:
 python -m src.run examples/ner/generated/dev-task.yaml --prepare-only
 ```
 
-Then inspect actual model answers:
+Then inspect the first 20 inputs, raw model answers, targets, and outcomes:
 
 ```sh
-python -m src.run examples/ner/generated/dev-task.yaml --behavior-only
+python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-examples 20
 ```
 
 Revise the task instructions, demonstrations, or decision rules if the model
-misunderstands the task or output contract. The development sample is separate
-from the final test split. Once behavior is satisfactory, freeze the prompt
-before the full run.
+misunderstands the task or output contract. After editing `system-prompt.md`,
+rerun the same `prepare.py` command—with the same model, seed, and example
+count—before the next behavior check. This regenerates the text file referenced
+by the YAML. The development sample is separate from the final test split. Once
+behavior is satisfactory, freeze the prompt before the full run.
 
 ## 3. Understand one record
 

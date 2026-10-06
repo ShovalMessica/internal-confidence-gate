@@ -14,7 +14,7 @@ extracts it without the surrounding code fence before model use.
 From the repository root:
 
 ```sh
-python examples/ner/prepare.py
+python examples/ner/prepare.py --model Qwen/Qwen3-4B-Instruct-2507 --seed 91337 --examples 1000
 python -m src.run examples/ner/generated/dev-task.yaml --prepare-only
 ```
 
@@ -22,8 +22,11 @@ The committed `dev-sample.jsonl` is for prompt and output-format checks only.
 To run its model behavior check:
 
 ```sh
-python -m src.run examples/ner/generated/dev-task.yaml --behavior-only
+python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-examples 20
 ```
+
+After editing `system-prompt.md`, rerun the same `prepare.py` command before
+the next behavior check so `generated/system-prompt.txt` is updated.
 
 After the prompt is stable, use the separately generated full dataset:
 

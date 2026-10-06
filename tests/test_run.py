@@ -612,6 +612,43 @@ class RunTests(unittest.TestCase):
         self.assertIn("Model Behavior complete", stdout)
         self.capture_mock.assert_not_called()
 
+    def test_behavior_only_can_print_individual_prediction_examples(self):
+        self.write_dataset(self.record(index) for index in range(3))
+        self.write_config()
+        prepared = prepare_run(self.config, enforce_probe_sizes=False)
+        records = tuple(
+            self.generation_record(example, "Positive")
+            for example in prepared.dataset.examples
+        )
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            **generation_runtime_versions(),
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full(
+                None, "--behavior-only", "--show-examples", "1"
+            )
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Prediction examples (first 1):", stdout)
+        self.assertIn("Input:\nClassify example 0.", stdout)
+        self.assertIn("Prediction: 'Positive'", stdout)
+        self.assertIn("Target: 'Positive'", stdout)
+        self.assertIn("Outcome: correct", stdout)
+        self.assertNotIn("Classify example 1.", stdout)
+
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()

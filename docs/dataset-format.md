@@ -24,8 +24,8 @@ Example
   optional fixed [`system_prompt_path`](configuration.md#model-and-paths) is
   configured, put shared task instructions in that file and only the
   example-specific user content here. Otherwise, include all task instructions
-  directly in every `input`. Do not supply unresolved placeholders. With the
-  generation adds its output instruction and `FINAL:` prefix. See
+  directly in every `input`. Do not supply unresolved placeholders. During
+  generation, the toolkit adds its output instruction and `FINAL:` prefix. See
   [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.

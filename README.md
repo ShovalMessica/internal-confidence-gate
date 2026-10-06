@@ -15,8 +15,6 @@ Transformers text-only, decoder-only chat models through
 
 ```sh
 python -m pip install -r requirements.txt
-python -m src.run configs/task.yaml --prepare-only
-python -m src.run configs/task.yaml
 ```
 
 [`requirements-tested.txt`](requirements-tested.txt) records the exact top-level
@@ -24,7 +22,14 @@ versions used by the offline test suite; choose the Torch wheel appropriate for
 your CPU or CUDA environment.
 
 First prepare a [JSONL dataset](docs/dataset-format.md) and fill in
-[`configs/task.yaml`](configs/task.yaml). The complete command validates the
+[`configs/task.yaml`](configs/task.yaml). Then run:
+
+```sh
+python -m src.run configs/task.yaml --prepare-only
+python -m src.run configs/task.yaml
+```
+
+The complete command validates the
 inputs, generates and evaluates predictions, captures activations, trains and
 selects a probe, evaluates the frozen gate on test data, and creates a report.
 Results are saved under `<output_dir>/<run_id>/`.

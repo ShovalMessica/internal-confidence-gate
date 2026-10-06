@@ -18,6 +18,7 @@ Given a participant list and a transcript chunk, output exactly one of:
 - The participant's label (`A`-`J`) ONLY if a name is MISSPELLED (does not match any participant's spelling) but sounds like one participant.
 - Your job is to catch a SPELLING error, not to identify who is speaking or who is mentioned. A correctly-written participant name is not an error.
 - `NONE` if no correction should be made.
+- `UNKNOWN` if the evidence is ambiguous.
 
 Each participant in the list is identified by a single letter label (A through J); answer with that label.
 
@@ -42,7 +43,7 @@ Read the utterance text and compare any person mention to the participant list.
 - To judge whether a word is a mis-heard name, compare how the two sound out loud: a shared beginning consonant sound, similar vowels, and similar overall shape. If a word shares most of a participant's sounds (for example debit and David, cattie and Kathy, braien and Brian), treat it as that participant's mis-heard name and output that participant.
 - When a name IS clearly mis-spelled or mis-heard, DO output the participant it sounds like; do not be over-cautious about corrupted names.
 - Remember: nicknames (Kate for Katherine) and sound-alike garbles (march for Mark, nickel for Nicole) ARE mis-spellings -- correct those to the participant.
-- If unsure, output `NONE`.
+- If unsure, output `UNKNOWN`.
 
 # Example 1 Input
 <PARTICIPANTS>
@@ -87,7 +88,7 @@ J David Burns
 I
 
 # Output Rule
-Output exactly `NONE` or one participant label like `E`.
+Output exactly `NONE`, `UNKNOWN`, or one participant label like `E`.
 Output only that single token.
 No explanation. No reasoning. No quoted phrase. No markdown. No transcript rewrite.
 ```
@@ -126,7 +127,7 @@ The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Ill
 
 **Example prompt:**
 
-*`{target_speaker}`, `{candidate_list}`, and `{transcript}` change between examples. `{unknown_label}` is the configured abstention label.*
+*`{target_speaker}`, `{candidate_list}`, and `{transcript}` change between examples. The toolkit uses the fixed abstention label `UNKNOWN` when abstention is enabled.*
 
 ```text
 Identify the named participant hidden behind the anonymous label
@@ -149,7 +150,7 @@ Use the ordinary transcript to infer the identity:
   normally names another person rather than the target.
 - If a speaker refers to a named person as `he`, `she`, or `they` in the same
   statement, that person is being discussed rather than directly addressed.
-- Choose {unknown_label} when there is no sufficient identity evidence, several
+- Choose `UNKNOWN` when there is no sufficient identity evidence, several
   people are addressed, another speaker intervenes, or the evidence conflicts.
 
 Consecutive rows from one anonymous speaker are one turn.
@@ -161,12 +162,8 @@ identity is unambiguously established, state only
 TRANSCRIPT:
 {transcript}
 
-OUTPUT FORMAT:
-After `</think>`, output exactly one line:
-
-FINAL: <candidate ID or {unknown_label}>
-
-Output only the candidate ID after `FINAL:`, never the participant name.
+The final answer must be one candidate ID or `UNKNOWN`, never the participant
+name.
 ```
 
 **Toolkit-added instruction before reasoning:**

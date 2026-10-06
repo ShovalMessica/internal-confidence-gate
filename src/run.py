@@ -539,6 +539,43 @@ def _print_custom_metrics(metrics_id: str, results: dict, *, reused: bool) -> No
             )
 
 
+def _print_prediction_examples(
+    prepared: PreparedRun, registered: RegisteredRun, limit: int
+) -> None:
+    """Print dataset inputs beside their saved predictions and evaluations."""
+
+    run_record = load_run_record(registered.directory)
+    generation = run_record.get("generation")
+    if not isinstance(generation, dict):
+        raise RunStoreError("Prediction inspection requires completed generation.")
+    evaluation_identity = build_evaluation_identity(
+        generation["artifact_sha256"], prepared.answer_matcher
+    )
+    context = _recorded_generation_context(prepared.config, run_record)
+    generations, _ = load_generation_records(
+        registered.directory, context, prepared.dataset.examples
+    )
+    evaluations = load_evaluation_records(
+        registered.directory,
+        evaluation_identity.evaluation_id,
+        prepared.dataset.examples,
+    )
+
+    print(f"Prediction examples (first {min(limit, len(prepared.dataset.examples))}):")
+    for example in prepared.dataset.examples[:limit]:
+        example_id = example["id"]
+        generated = generations[example_id]
+        evaluation = evaluations[example_id]
+        answer = generated.get("answer")
+        prediction = answer.get("text") if isinstance(answer, dict) else None
+        print(f"--- ID {example_id} | split {example['split']} ---")
+        print("Input:")
+        print(example["input"])
+        print(f"Prediction: {prediction!r}")
+        print(f"Target: {example['target_answer']!r}")
+        print(f"Outcome: {evaluation['outcome']}")
+
+
 def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
     print("Probe-readiness requirements are not met:", file=stream)
     for shortage in shortages:
@@ -1141,6 +1178,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Discard saved generations and rerun them with the pinned model revision.",
     )
+    parser.add_argument(
+        "--show-examples",
+        type=int,
+        metavar="N",
+        help="Print the first N inputs, predictions, targets, and outcomes.",
+    )
     return parser
 
 
@@ -1148,6 +1191,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.prepare_only and args.force_recompute:
         print("--force-recompute cannot be used with --prepare-only.", file=sys.stderr)
+        return 2
+    if args.show_examples is not None and args.show_examples <= 0:
+        print("--show-examples must be a positive integer.", file=sys.stderr)
+        return 2
+    if args.prepare_only and args.show_examples is not None:
+        print("--show-examples cannot be used with --prepare-only.", file=sys.stderr)
         return 2
     log: TextIO | None = None
     terminal_out: TextIO | None = None
@@ -1178,6 +1227,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             summary = _evaluate(prepared, registered)
             _evaluate_custom_metrics(prepared, registered)
+            if args.show_examples is not None:
+                _print_prediction_examples(prepared, registered, args.show_examples)
             if args.behavior_only:
                 print(
                     "Model Behavior complete. Activation capture and probe stages "
