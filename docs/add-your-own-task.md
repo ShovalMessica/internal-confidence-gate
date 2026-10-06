@@ -151,19 +151,25 @@ layer comparisons and TPR-FPR curves. The main gate metrics are:
 Invalid outputs and enabled `UNKNOWN` abstentions are outside the gate's
 eligible population.
 
-## 7. Adapt the files to another task
+## 7. Create files for your own task
 
-Replace these parts:
+`examples/ner/prepare.py` creates only the synthetic NER example. Do not use it
+to prepare another task. Create these files yourself:
 
-1. **Shared instructions:** rewrite the text block in `system-prompt.md` with the task, valid
-   answers, decision rules, and useful demonstrations.
-2. **Example inputs:** put each complete example-specific user message in
-   `input`.
-3. **Target answers:** supply the expected final answer for every record.
-4. **Splits:** assign train, validation, and test, or omit every assignment and
-   let the toolkit split reproducibly.
-5. **Configuration:** choose the model, direct or reasoning mode, token limits,
+1. **Prompt:** optionally create a plain UTF-8 text file containing fixed task
+   instructions, valid answers, decision rules, and demonstrations. Set its
+   absolute path as `system_prompt_path`. If you omit it, include the task
+   instructions in every dataset `input`.
+2. **Dataset:** create a JSONL file with one object per example. Put the complete
+   example-specific user message in `input` and the plain expected answer in
+   `target_answer`. Never add `FINAL:`. Assign every record to train,
+   validation, or test, or omit all split assignments for automatic splitting.
+3. **Configuration:** copy [`configs/task.yaml`](../configs/task.yaml), fill in
+   the model, absolute dataset and prompt paths, reasoning mode, token limits,
    abstention behavior, and output directory.
+
+Use the same preparation, behavior, and full-run commands shown above, replacing
+the NER YAML path with your configuration path.
 
 For example, a sentiment task could replace the prompt with “Classify the review
 as POSITIVE or NEGATIVE” and use records such as:

@@ -1,11 +1,10 @@
 # Internal Confidence Gate
 
-Task-adaptable toolkit for building confidence gates from internal model
-activations.
-
-The toolkit tests whether a lightweight probe over hidden states can separate a
-model's correct and incorrect predictions better than output probability alone.
-It does not modify the model or generate replacement answers.
+Can a model's internal states identify incorrect answers better than output
+probability alone? This toolkit lets you test that question on your own task.
+You provide a model, task prompt, and examples with target answers; it trains a
+confidence gate and reports how reliably it accepts correct predictions while
+rejecting incorrect ones. It does not modify the model or replace its answers.
 
 ## Quick start
 
@@ -21,30 +20,31 @@ python -m pip install -r requirements.txt
 versions used by the offline test suite; choose the Torch wheel appropriate for
 your CPU or CUDA environment.
 
-First prepare a [JSONL dataset](docs/dataset-format.md) and fill in
-[`configs/task.yaml`](configs/task.yaml). Then run:
+**New task? Start with [Add your own task](docs/add-your-own-task.md)** to create
+the prompt, [JSONL dataset](docs/dataset-format.md), and configuration.
+
+Validate those inputs without loading the model:
 
 ```sh
 python -m src.run configs/task.yaml --prepare-only
+```
+
+Run the model and inspect its answers before training probes:
+
+```sh
+python -m src.run configs/task.yaml --behavior-only --show-examples 10
+```
+
+Then run the full pipeline:
+
+```sh
 python -m src.run configs/task.yaml
 ```
 
-The complete command validates the
-inputs, generates and evaluates predictions, captures activations, trains and
-selects a probe, evaluates the frozen gate on test data, and creates a report.
-Results are saved under `<output_dir>/<run_id>/`.
-
-For a complete worked example and instructions for adapting the toolkit, start
-with [Add your own task](docs/add-your-own-task.md).
-
-To inspect model behavior without capturing activations or training probes:
-
-```sh
-python -m src.run configs/task.yaml --behavior-only
-```
-
-Preparation and behavior-only commands accept small development samples. A
-full probe run enforces the data minimums listed below.
+The full command captures activations, trains and selects a probe, evaluates
+the frozen gate on test data, and creates a report under
+`<output_dir>/<run_id>/`. Preparation and behavior checks accept small
+development samples; the full run enforces the data minimums listed below.
 
 ## Research goal
 
