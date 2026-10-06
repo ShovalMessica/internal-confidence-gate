@@ -141,11 +141,11 @@ Return a nonempty mapping from metric names to integer counts:
 def compute_metrics(records):
     relevant = [
         record for record in records
-        if record["metadata"].get("example_type") == "corrupted"
+        if record["metadata"].get("group") == "priority"
     ]
     correct = sum(record["is_correct"] is True for record in relevant)
     return {
-        "correction_recall": {
+        "priority_accuracy": {
             "numerator": correct,
             "denominator": len(relevant),
         }
@@ -162,8 +162,7 @@ stored under `custom_metrics` in `run.json`, identified by the dataset,
 generation, evaluation, implementation, and protocol hashes. Changing only
 the custom code recalculates these summaries without rerunning the model or
 changing saved evaluations and probes. See
-[examples/custom_metrics.py](../examples/custom_metrics.py) for a complete NER
-recall and false-discovery-rate example.
+the function above as a minimal template.
 
 ## Probe training and validation selection
 

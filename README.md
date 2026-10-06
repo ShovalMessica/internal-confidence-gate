@@ -162,8 +162,8 @@ By default, answer matching ignores case, trims surrounding whitespace, collapse
 Before probe training, the runner reports model behavior overall and by split: correct predictions, wrong predictions, missed predictions (`UNKNOWN`), invalid outputs, and token-limit outputs. Every rate uses all examples in its scope as the denominator.
 
 Tasks can also attach free-form `metadata` to dataset examples and configure
-`custom_metrics_path` to add task-specific count-based metrics, such as NER
-correction recall and false discovery rate. These summaries do not alter
+`custom_metrics_path` to add task-specific count-based metrics, such as
+performance on a metadata-defined subset. These summaries do not alter
 correctness labels or probes; see [Custom task metrics](docs/configuration.md#custom-task-metrics).
 
 For eligible predictions:
