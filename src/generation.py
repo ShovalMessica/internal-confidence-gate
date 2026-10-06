@@ -204,6 +204,11 @@ def _effective_eos_ids(model: Any, tokenizer: Any) -> set[int]:
     return set(values)
 
 
+def _uses_beam_search(model: Any) -> bool:
+    generation_config = getattr(model, "generation_config", None)
+    return int(getattr(generation_config, "num_beams", 1) or 1) > 1
+
+
 def _pad_contexts(tokenizer: Any, contexts: Sequence[Sequence[int]], model: Any) -> dict:
     previous_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
@@ -236,7 +241,9 @@ def _answer_outputs(
                 num_return_sequences=1,
                 pad_token_id=tokenizer.pad_token_id,
                 return_dict_in_generate=True,
-                output_scores=True,
+                # Raw logits provide the confidence baseline. Processed scores
+                # are needed only to retain beam ancestry under beam search.
+                output_scores=_uses_beam_search(model),
                 output_logits=True,
                 **_decoding_kwargs(decoding_strategy),
             )

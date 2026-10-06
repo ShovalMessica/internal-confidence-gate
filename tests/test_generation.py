@@ -164,8 +164,25 @@ class GenerationTests(unittest.TestCase):
         for call in model.calls:
             self.assertNotIn("do_sample", call)
             self.assertNotIn("temperature", call)
-            self.assertTrue(call["output_scores"])
+            self.assertFalse(call["output_scores"])
             self.assertTrue(call["output_logits"])
+
+    def test_answer_generation_keeps_scores_only_for_beam_ancestry(self):
+        tokenizer = _Tokenizer()
+        answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
+        model = _Model([[answer]])
+        model.generation_config = SimpleNamespace(num_beams=3)
+
+        list(
+            generation_units(
+                _loaded(model, tokenizer),
+                [{"id": 1, "input": "Task", "split": "test"}],
+                _config(),
+            )
+        )
+
+        self.assertTrue(model.calls[0]["output_scores"])
+        self.assertTrue(model.calls[0]["output_logits"])
 
     def test_answer_probabilities_use_unprocessed_logits(self):
         tokenizer = _Tokenizer()
