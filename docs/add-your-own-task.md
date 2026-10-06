@@ -48,11 +48,15 @@ before the full run.
 ## 3. Understand one record
 
 A record contains a unique integer ID, the complete example-specific user
-message, its target answer, and its split:
+message, its target answer, its split, and optional annotations:
 
 ```json
-{"id":0,"input":"<PARTICIPANTS>\nA Katherine Smith\n...\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<1000><David Brown>Please send the agenda to Kate.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train"}
+{"id":1000000,"input":"<PARTICIPANTS>\nA William Gonzalez\nB Taylor Allen\nC Thomas Moore\nD Christopher Lopez\nE Isabella Jones\nF Olivia Harris\nG Knox Smith\nH Kenneth Scott\nI Edward Thompson\nJ Teresa Thomas\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<1000000><Speaker 14>We still need feedback from Will about hiring.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train","semantic_spans":{"span_1":{"start_char":267,"end_char":271}},"metadata":{"case_family":"dev_00000","example_type":"corrupted"}}
 ```
+
+Here `span_1` selects characters `[267, 271)`, the complete substring `Will`.
+The span marks an additional task-specific activation location; it does not
+reveal whether the model's answer is correct.
 
 The target answer is never sent to the model or used as a probe feature. It is
 used only to decide whether the saved model prediction is correct.
@@ -68,7 +72,7 @@ correct and incorrect model predictions for probe training.
 settings:
 
 ```yaml
-model_name_or_path: Qwen/Qwen3-0.6B
+model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
 dataset_path: <absolute path>/dataset.jsonl
 system_prompt_path: <absolute path>/system-prompt.md
 reasoning_mode: direct
@@ -78,8 +82,11 @@ allow_abstention: true
 output_dir: <absolute path>/outputs
 ```
 
-The generated dataset has 2,000 examples with fixed train, validation, and test
-splits. All people and utterances are synthetic.
+The generated dataset has 1,000 examples with fixed 600/200/200 train,
+validation, and test splits. Seeded sampling varies names, participant order,
+speaker metadata, and utterance context. Each clean/corrupted pair remains in
+one split, and generation stops if task content overlaps development or another
+split.
 
 ## 5. Run Model Behavior
 
