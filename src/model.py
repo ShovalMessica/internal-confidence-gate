@@ -136,6 +136,23 @@ def _prepare_tokenizer(tokenizer: Any) -> Any:
     return tokenizer
 
 
+def _validate_probe_layers(config: TaskConfig, model_config: Any) -> None:
+    if config.probe_layers is None:
+        return
+    layer_count = getattr(model_config, "num_hidden_layers", None)
+    if type(layer_count) is not int or layer_count < 1:
+        raise ModelLoadError(
+            "The model configuration does not expose a valid num_hidden_layers "
+            "value required by probe_layers."
+        )
+    unavailable = [layer for layer in config.probe_layers if layer > layer_count]
+    if unavailable:
+        raise ModelLoadError(
+            "probe_layers contains states outside the model range "
+            f"0..{layer_count}: {unavailable}"
+        )
+
+
 def _load_tokenizer(source: str, load_common: dict[str, object], factory: Any) -> Any:
     try:
         return _prepare_tokenizer(factory.from_pretrained(source, **load_common))
@@ -169,6 +186,7 @@ def load_model(
     model_config, resolved_revision, load_common = _resolve_model(
         config, pinned_revision, auto_config
     )
+    _validate_probe_layers(config, model_config)
 
     source = config.model_name_or_path
     tokenizer = (

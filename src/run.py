@@ -118,6 +118,7 @@ class PreparedRun:
     split_source: Literal["dataset", "automatic"]
     answer_matcher: AnswerMatcher
     custom_metrics: CustomMetrics | None
+    probe_size_requirements_enforced: bool
 
 
 class _Tee:
@@ -164,7 +165,9 @@ def _stop_execution_log(log: TextIO, stdout: TextIO, stderr: TextIO) -> None:
         log.close()
 
 
-def prepare_run(config_path: str | Path) -> PreparedRun:
+def prepare_run(
+    config_path: str | Path, *, enforce_probe_sizes: bool = True
+) -> PreparedRun:
     """Load configuration and return validated, split-assigned examples."""
     config = load_config(config_path)
     matcher = load_answer_matcher(config.answer_matcher_path)
@@ -173,8 +176,34 @@ def prepare_run(config_path: str | Path) -> PreparedRun:
         config.dataset_path, allow_abstention=config.allow_abstention
     )
     split_source = "dataset" if "split" in dataset.examples[0] else "automatic"
-    dataset = assign_splits(dataset, config.split_ratios, config.split_seed)
-    return PreparedRun(config, dataset, split_source, matcher, custom_metrics)
+    dataset = assign_splits(
+        dataset,
+        config.split_ratios,
+        config.split_seed,
+        enforce_minimums=enforce_probe_sizes,
+    )
+    available_positions = {
+        "prompt_end",
+        "final_prompt_end",
+        "answer_tokens",
+        *dataset.examples[0].get("semantic_spans", {}).keys(),
+    }
+    unavailable = sorted(set(config.probe_positions or ()) - available_positions)
+    if unavailable:
+        raise ConfigurationError(
+            [
+                "probe_positions contains positions absent from the dataset: "
+                + ", ".join(unavailable)
+            ]
+        )
+    return PreparedRun(
+        config,
+        dataset,
+        split_source,
+        matcher,
+        custom_metrics,
+        enforce_probe_sizes,
+    )
 
 
 def _print_exclusions(excluded: list[dict], stream: TextIO) -> None:
@@ -227,6 +256,8 @@ def _print_preparation(
     print(f"Split source: {source}", file=stream)
     for name, count in _split_counts(dataset).items():
         print(f"  {name}: {count}", file=stream)
+    if not prepared.probe_size_requirements_enforced:
+        print("Probe-size minimums: deferred for this smoke run.", file=stream)
     _print_exclusions(dataset.excluded, stream)
 
 
@@ -1058,7 +1089,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     terminal_out: TextIO | None = None
     terminal_err: TextIO | None = None
     try:
-        prepared = prepare_run(args.config)
+        prepared = prepare_run(
+            args.config,
+            enforce_probe_sizes=not (args.prepare_only or args.behavior_only),
+        )
         identity = build_run_identity(
             prepared.config,
             prepared.dataset.content_sha256,

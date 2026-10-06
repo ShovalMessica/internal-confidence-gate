@@ -207,17 +207,38 @@ class RunTests(unittest.TestCase):
         self.assertNotIn("Traceback", stderr)
         self.assertFalse((self.root / "outputs").exists())
 
-    def test_dataset_error_returns_one_without_traceback(self):
+    def test_prepare_only_allows_a_small_smoke_dataset(self):
         self.write_dataset(self.record(index) for index in range(10))
         self.write_config()
 
         code, stdout, stderr = self.invoke()
 
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Valid examples: 10", stdout)
+        self.assertIn("Probe-size minimums: deferred", stdout)
+        self.assertIn("Preparation complete. No model was run.", stdout)
+
+    def test_full_run_keeps_probe_dataset_minimums(self):
+        self.write_dataset(self.record(index) for index in range(10))
+        self.write_config()
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main([str(self.config)])
+
         self.assertEqual(code, 1)
-        self.assertEqual(stdout, "")
-        self.assertIn("at least 700", stderr)
-        self.assertNotIn("Traceback", stderr)
+        self.assertIn("at least 700", stderr.getvalue())
         self.assertFalse((self.root / "outputs").exists())
+
+    def test_unavailable_probe_position_fails_before_model_loading(self):
+        self.write_dataset(self.record(index) for index in range(10))
+        self.write_config(probe_positions=["span_1"])
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(code, 1)
+        self.assertIn("probe_positions", stderr)
+        self.assertIn("span_1", stderr)
 
     def test_equivalent_config_and_dataset_paths_reuse_without_rewriting(self):
         self.write_dataset(self.record(index) for index in range(700))
@@ -558,6 +579,40 @@ class RunTests(unittest.TestCase):
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Model Behavior complete", stdout)
         self.assertNotIn("Probe training cannot begin", stdout)
+        self.capture_mock.assert_not_called()
+
+    def test_behavior_only_allows_a_small_smoke_dataset(self):
+        self.write_dataset(self.record(index) for index in range(10))
+        self.write_config()
+        prepared = prepare_run(self.config, enforce_probe_sizes=False)
+        records = tuple(
+            self.generation_record(example, "Positive")
+            for example in prepared.dataset.examples
+        )
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full(None, "--behavior-only")
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Valid examples: 10", stdout)
+        self.assertIn("Probe-size minimums: deferred", stdout)
+        self.assertIn("Model Behavior complete", stdout)
         self.capture_mock.assert_not_called()
 
     def test_completed_activation_capture_is_reused_without_model_loading(self):

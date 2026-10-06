@@ -37,6 +37,10 @@ To validate the configuration and dataset without loading a model, run:
 python -m src.run configs/task.yaml --prepare-only
 ```
 
+Preparation and behavior-only runs accept small development samples, which is
+useful while refining a prompt. The full probe pipeline enforces the dataset and
+split minimums listed below.
+
 To run generation and Model Behavior evaluation without capturing activations
 or training probes, run:
 
@@ -189,7 +193,7 @@ The TPR-FPR graph contains the same threshold sweep as a conventional ROC curve 
 ## Requirements and limitations
 
 - White-box access to the model’s internal activations is required.
-- Provide at least 700 valid examples. Before generation, the toolkit also requires at least 200 train, 100 validation, and 100 test examples.
+- A full probe run requires at least 700 valid examples, including at least 200 train, 100 validation, and 100 test examples. These size checks are deferred for `--prepare-only` and `--behavior-only` smoke runs.
 - After excluding `UNKNOWN` and invalid responses, each split must contain at least:
 
   - **Training:** 100 correct and 100 incorrect predictions.

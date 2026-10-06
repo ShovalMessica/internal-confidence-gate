@@ -204,6 +204,20 @@ class ModelTests(unittest.TestCase):
                     self.load(dependencies=dependencies)
                 dependencies[2].from_pretrained.assert_not_called()
 
+    def test_rejects_out_of_range_probe_layers_before_tokenizer_or_weights(self):
+        dependencies = self.dependencies(
+            model_config=SimpleNamespace(
+                is_encoder_decoder=False,
+                vision_config=None,
+                _commit_hash="resolved-commit",
+                num_hidden_layers=2,
+            )
+        )
+        with self.assertRaisesRegex(ModelLoadError, "0..2"):
+            self.load(self.config(probe_layers=(3,)), dependencies)
+        dependencies[3].from_pretrained.assert_not_called()
+        dependencies[2].from_pretrained.assert_not_called()
+
     def test_requires_an_exact_hub_revision(self):
         model_config = SimpleNamespace(
             is_encoder_decoder=False,

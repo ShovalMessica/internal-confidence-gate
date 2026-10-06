@@ -218,7 +218,11 @@ def _check_split_sizes(total: int, sizes: dict[str, int], excluded: list[dict]) 
 
 
 def assign_splits(
-    dataset: DatasetResult, ratios: SplitRatios, seed: int
+    dataset: DatasetResult,
+    ratios: SplitRatios,
+    seed: int,
+    *,
+    enforce_minimums: bool = True,
 ) -> DatasetResult:
     """Preserve supplied splits or assign deterministic splits to valid examples."""
     examples = dataset.examples
@@ -231,7 +235,8 @@ def assign_splits(
 
     if split_state == "provided":
         sizes = dict(Counter(example["split"] for example in examples))
-        _check_split_sizes(len(examples), sizes, dataset.excluded)
+        if enforce_minimums:
+            _check_split_sizes(len(examples), sizes, dataset.excluded)
         return DatasetResult(
             [dict(example) for example in examples],
             list(dataset.excluded),
@@ -239,7 +244,8 @@ def assign_splits(
         )
 
     sizes = _automatic_split_sizes(len(examples), ratios)
-    _check_split_sizes(len(examples), sizes, dataset.excluded)
+    if enforce_minimums:
+        _check_split_sizes(len(examples), sizes, dataset.excluded)
 
     shuffled = list(range(len(examples)))
     random.Random(seed).shuffle(shuffled)

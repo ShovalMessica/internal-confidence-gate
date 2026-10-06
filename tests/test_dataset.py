@@ -278,6 +278,15 @@ class SplitTests(unittest.TestCase):
             assign_splits(self.dataset(10, excluded=excluded), SplitRatios(), 42)
         self.assertEqual(caught.exception.excluded, excluded)
 
+    def test_small_smoke_split_can_defer_probe_minimums(self):
+        result = assign_splits(
+            self.dataset(10), SplitRatios(), 42, enforce_minimums=False
+        )
+        self.assertEqual(
+            Counter(row["split"] for row in result.examples),
+            {"train": 7, "validation": 2, "test": 1},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
