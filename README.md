@@ -6,6 +6,10 @@ The toolkit is under active development.
 
 ## Quick start
 
+Use Python 3.10 or newer. The first backend supports standard Hugging Face
+Transformers text-only, decoder-only chat models through
+`AutoModelForCausalLM`; CUDA is optional.
+
 1. Install the dependencies:
 
    ```sh
@@ -13,7 +17,9 @@ The toolkit is under active development.
    ```
 
 2. Prepare your data using the required [JSONL format](docs/dataset-format.md).
-3. Fill in [configs/task.yaml](configs/task.yaml).
+3. Copy and fill in [configs/task.yaml](configs/task.yaml). Put shared task
+   instructions in an optional `system_prompt_path`; each dataset `input`
+   contains the complete example-specific user message.
 4. Run the complete pipeline:
 
    ```sh
@@ -200,59 +206,9 @@ The TPR-FPR graph contains the same threshold sweep as a conventional ROC curve 
 
 Deployment is the user’s responsibility and is outside the toolkit’s training-and-testing pipeline. Applying the trained gate requires the same activation features and position-selection rules used during training, but no target answer.
 
-## Getting started
+## Outputs and reuse
 
-### Prerequisites and installation
-
-Preparation through final reporting is implemented. Use Python 3.10 or newer and, from the repository root, install the dependencies:
-
-```sh
-python -m pip install -r requirements.txt
-```
-
-Model loading currently supports standard Hugging Face Transformers text-only, decoder-only chat models through `AutoModelForCausalLM`. Models requiring custom remote code are outside the currently supported scope. CUDA is optional; model size determines the required CPU/GPU memory.
-
-### Prepare your dataset
-
-Follow the [dataset format](docs/dataset-format.md).
-
-Each example contains:
-
-- `id`: a unique identifier.
-- `input`: the complete user message for that example.
-- `target_answer`: the expected final answer.
-- Optional `split`: a training, validation, or test assignment.
-- Optional `semantic_spans`: additional character spans for activation capture.
-
-Shared task instructions may instead be supplied once through the optional
-`system_prompt_path` configuration field. That file is fixed across examples
-and contains no placeholders; each dataset `input` then contains only its
-example-specific user content. If no system prompt is configured, each `input`
-must contain all instructions needed for the task.
-
-The toolkit adds the output instruction and generates responses itself. Users do not need to supply existing model predictions.
-
-### Configure and run
-
-Fill in [configs/task.yaml](configs/task.yaml), then run the implemented pipeline stages:
-
-```sh
-python -m src.run configs/task.yaml
-```
-
-To validate and register the run without loading a model:
-
-```sh
-python -m src.run configs/task.yaml --prepare-only
-```
-
-To stop after generation and Model Behavior evaluation:
-
-```sh
-python -m src.run configs/task.yaml --behavior-only
-```
-
-The runner reports valid and excluded examples and the final split sizes. It creates or reuses:
+The runner creates or reuses:
 
 ```text
 <output_dir>/.cache/generations/<context_id>/...
@@ -265,28 +221,31 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 <output_dir>/<run_id>/reports/<report_id>/...
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, optional custom metric summaries, activation summaries, probe-training and selection summaries, and completed stages. `execution.log` contains the terminal output from every invocation of that run. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
+`run.json` is the provenance and stage registry; `execution.log` records every
+invocation. HDF5 files contain activations and trained probes, while each report
+contains `metrics.json`, plot-data CSVs, and PNG figures. See
+[Configuration and run reuse](docs/configuration.md#run-identity-and-reuse) for
+the complete artifact contract.
 
-`activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
-
-`probes.h5` contains one candidate for every configured position and model state. Each training group stores its scaler, linear model, and train/validation scores. Validation-selection groups store every candidate's threshold, TPR, FPR, and AUROC. Frozen test groups store per-example labels, probe and probability scores, and both accept/reject decisions. Different matchers, probe seeds, or target TPRs coexist inside the same file.
-
-Each report directory contains `metrics.json`, CSV data behind every plot, one validation layer graph per captured position, `validation_tpr_fpr.png`, `test_tpr_fpr.png`, and a hash-validated manifest. Reusing a completed report does not reload the model or retrain probes.
-
-Interrupted generation, activation capture, and probe training resume from saved work. If a dataset is extended, unchanged examples reuse cached generations and copy compatible activations from the earlier run without model work; only new or modified inputs require model work. Changing only a target answer reruns evaluation, while changing only the answer matcher creates another evaluation and probe group from the saved generations and activations. To discard a run's generation and downstream artifacts and recompute with the same pinned model revision:
+Interrupted expensive stages resume from saved work. Extending a dataset reuses
+unchanged generations and compatible activations. To recompute a run's
+generation and downstream artifacts while retaining its pinned model revision:
 
 ```sh
 python -m src.run configs/task.yaml --force-recompute
 ```
 
-If any split lacks the required correct or incorrect predictions, evaluation is saved and the runner exits before activation capture with a clear shortage report. Otherwise, the runner captures the configured positions, trains and selects a probe using train and validation data, then evaluates the frozen gate and probability baseline on test. Generation seeds affect initial generation; activation capture reuses the exact saved tokens and does not sample again. The probe seed affects only probe training, while `target_tpr` affects validation threshold selection.
+## Worked example
 
-Developers can run the tests without a model:
+The [simple classification example](examples/simple-classification/README.md)
+generates a valid dataset and task configuration, then walks through preparation
+and Model Behavior execution. It requires no model download for its
+`--prepare-only` check.
+
+## Development
+
+Run the complete offline test suite without loading a model:
 
 ```sh
 python -m unittest discover -s tests -v
 ```
-
-### Worked example
-
-**TODO:** Add a small, complete example demonstrating data preparation, activation capture, probe training, and test evaluation.
