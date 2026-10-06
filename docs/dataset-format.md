@@ -23,9 +23,10 @@ Example
   optional fixed [`system_prompt_path`](configuration.md#model-and-paths) is
   configured, put shared task instructions in that file and only the
   example-specific user content here. Otherwise, include all task instructions
-  directly in every `input`. Do not supply unresolved placeholders. The
-  generation stage adds its output instruction and `FINAL:` prefix; you do not
-  add them. See [Generation](configuration.md#generation).
+  directly in every `input`. Do not supply unresolved placeholders. With the
+  default `direct_output_format: final_prefix`, generation adds its output
+  instruction and `FINAL:` prefix; with `raw_answer`, your prompt must request
+  the complete answer format. See [Generation](configuration.md#generation).
 
 - **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
@@ -54,10 +55,13 @@ As explained in the [README](../README.md), probes use internal activations to e
 Default capture uses the Hugging Face hidden states at three locations:
 
 - `prompt_end`: the final token of the rendered chat prompt before generation.
-- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker.
+- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker;
+  unavailable in direct `raw_answer` mode.
 - `answer_tokens`: every generated answer token.
 
-The toolkit saves the embedding output and every returned layer state. The two prompt positions remain distinct in both generation modes, and one-token and multi-token answers use the same tensor structure.
+The toolkit saves the embedding output and every returned layer state. When a
+final marker is used, the two prompt positions remain distinct. One-token and
+multi-token answers use the same tensor structure.
 
 Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes.
 

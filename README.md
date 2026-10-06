@@ -115,7 +115,7 @@ See the [dataset specification](docs/dataset-format.md#fields) for annotation fi
 
 ### Response format and abstention
 
-Both reasoning and direct-answer generation use:
+By default, reasoning and direct-answer generation use:
 
 ```text
 FINAL: <answer>
@@ -125,15 +125,25 @@ The toolkit supplies both the output instruction and the `FINAL:` marker. The mo
 
 In direct-answer mode, the toolkit supplies the marker before generation. In reasoning mode, it first lets the model reason, closes reasoning if needed, then inserts the answer instruction and marker before resuming generation. Reasoning and answer generation have separate token limits.
 
+Direct mode also supports `direct_output_format: raw_answer` for tasks whose
+own prompt already requests one complete answer. This sends the system and user
+messages unchanged and does not create `final_prompt_end`. The default remains
+`final_prefix`. Decoding can preserve model defaults or use greedy generation;
+see [Generation](docs/configuration.md#generation).
+
 See [Generation](docs/configuration.md#generation) for the exact injected instructions and token flow. The evaluation stage checks each saved answer against its dataset target.
 
-The model may decline to answer using `FINAL: UNKNOWN`. This behavior is called **abstention** and is enabled by default:
+With the default final-prefix format, the model may decline to answer using
+`FINAL: UNKNOWN`. In raw-answer mode it returns `UNKNOWN`. This behavior is
+called **abstention** and is enabled by default:
 
 ```yaml
 allow_abstention: true
 ```
 
-This is a shared run setting, not a dataset field. Users can disable it. The toolkit’s appended instruction reflects the setting.
+This is a shared run setting, not a dataset field. Users can disable it. The
+toolkit’s appended instruction reflects the setting when that instruction is
+used; raw-answer prompts must express the desired behavior themselves.
 
 When abstention is enabled, UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR. `UNKNOWN` cannot then be a target answer. When abstention is disabled, it may be used as a normal target answer.
 

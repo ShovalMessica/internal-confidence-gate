@@ -51,6 +51,8 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(config.answer_matcher_path)
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
+        self.assertEqual(config.direct_output_format, "final_prefix")
+        self.assertEqual(config.decoding_strategy, "model_default")
         self.assertEqual(config.probe_seed, 42)
         self.assertIsNone(config.probe_positions)
         self.assertIsNone(config.probe_layers)
@@ -142,6 +144,8 @@ class ConfigTests(unittest.TestCase):
             "answer_max_new_tokens": [None, 0, False, "64"],
             "generation_seed": [None, -1, True, 1.5, "42"],
             "direct_batch_size": [None, 0, -1, True, 1.5, "8"],
+            "direct_output_format": [None, "raw", True],
+            "decoding_strategy": [None, "sample", True],
             "probe_seed": [None, -1, True, 1.5, "42"],
             "probe_positions": [None, [], ["unknown"], ["prompt_end", "prompt_end"]],
             "probe_layers": [None, [], [-1], [True], [35, 35]],
@@ -162,6 +166,30 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(ConfigurationError) as caught:
                         load_config(self.write(dict(self.required, **{field: value})))
                     self.assertIn(field, str(caught.exception))
+
+    def test_raw_answers_and_greedy_decoding_are_direct_only_options(self):
+        config = load_config(
+            self.write(
+                dict(
+                    self.required,
+                    direct_output_format="raw_answer",
+                    decoding_strategy="greedy",
+                )
+            )
+        )
+        self.assertEqual(config.direct_output_format, "raw_answer")
+        self.assertEqual(config.decoding_strategy, "greedy")
+
+        with self.assertRaisesRegex(ConfigurationError, "direct_output_format"):
+            load_config(
+                self.write(
+                    dict(
+                        self.required,
+                        reasoning_mode="reasoning",
+                        direct_output_format="raw_answer",
+                    )
+                )
+            )
 
     def test_hub_revision_is_optional_but_local_revision_is_rejected(self):
         config = load_config(self.write(dict(self.required, model_revision="abc123")))

@@ -181,6 +181,7 @@ def _generation_settings(config: TaskConfig) -> dict:
         "answer_max_new_tokens": config.answer_max_new_tokens,
         "allow_abstention": config.allow_abstention,
         "generation_seed": config.generation_seed,
+        "decoding_strategy": config.decoding_strategy,
     }
     if config.system_prompt_sha256 is not None:
         settings["system_prompt_sha256"] = config.system_prompt_sha256
@@ -188,6 +189,7 @@ def _generation_settings(config: TaskConfig) -> dict:
         settings["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
         settings["direct_batch_size"] = config.direct_batch_size
+        settings["direct_output_format"] = config.direct_output_format
     return settings
 
 

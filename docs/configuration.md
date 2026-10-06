@@ -28,13 +28,12 @@ The toolkit builds standard chat messages and lets the model tokenizer's
 `apply_chat_template` render its model-specific format. When
 `system_prompt_path` is configured, the fixed file becomes the `system`
 message and each dataset `input` becomes the `user` message. Otherwise, the
-dataset `input` is the only user message. In both cases, the toolkit appends its
-answer instruction to the user message and requests the assistant generation
-boundary from the tokenizer.
+dataset `input` is the only user message. The tokenizer then renders the
+assistant generation boundary.
 
 - **`reasoning_mode`** — Required: `direct` or `reasoning`.
 
-  - **Direct:** Disable thinking when the model's chat template supports that option, append the answer instruction below, supply `FINAL:` as the start of the model’s reply, then generate the answer.
+  - **Direct:** Disable thinking when the model's chat template supports that option, then follow `direct_output_format`.
   - **Reasoning:** Enable thinking when supported and append:
 
     > Reason about the task first. A separate final-answer instruction will follow.
@@ -47,22 +46,40 @@ boundary from the tokenizer.
 
   **The toolkit supplies `FINAL:`; the model generates the answer after it.** Extraction uses this known boundary.
 
+- **`direct_output_format` (optional; default: `final_prefix`)** — Direct-mode
+  answer protocol:
+
+  - `final_prefix`: append the toolkit answer instruction and inject `FINAL:`
+    before generating the answer.
+  - `raw_answer`: send the configured system and user messages unchanged and
+    treat the complete generated response as the answer. Use this only when
+    your own prompt reliably requests one answer in the required format.
+
+  Reasoning mode always uses `final_prefix`. In `raw_answer` mode,
+  `final_prompt_end` is unavailable because no final marker is injected.
+
 - **`reasoning_max_new_tokens` (optional; default: `1024`)** — Reasoning-token limit. Reaching it triggers the answer stage. Applies only in reasoning mode.
 
 - **`answer_max_new_tokens` (optional; default: `64`)** — Separate answer-token limit, used in both modes.
 
-- **`allow_abstention` (optional; default: `true`)** — Add the applicable sentence to the answer instruction:
+- **`allow_abstention` (optional; default: `true`)** — In `final_prefix`
+  mode, add the applicable sentence to the answer instruction:
 
   - Enabled: “If you cannot determine the answer, return UNKNOWN.”
   - Disabled: “Provide your best answer. Do not return UNKNOWN.”
 
-  Enabled UNKNOWN predictions are reported separately and excluded from probe training and gate TPR/FPR.
+  In `raw_answer` mode, your prompt controls whether the model may return
+  `UNKNOWN`. Enabled UNKNOWN predictions are reported separately and excluded
+  from probe training and gate TPR/FPR in either format.
 
 - **`generation_seed` (optional; default: `42`)** — Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 
 - **`direct_batch_size` (optional; default: `8`)** — Batch size in direct mode. Reasoning mode always processes one example at a time.
 
-Sampling uses the model’s defaults, without user overrides. Effective settings are recorded.
+- **`decoding_strategy` (optional; default: `model_default`)** —
+  `model_default` preserves the checkpoint's decoding behavior; `greedy`
+  always selects the highest-scoring next token. Low-level sampling parameters
+  are not exposed. Effective settings are recorded.
 
 Context-length and prompt-rendering failures are saved per example while generation continues. Unexpected model or runtime failures stop the run.
 
@@ -164,6 +181,8 @@ allow_abstention: true
 # answer_matcher_path: "C:/tasks/my-task/answer_matcher.py"
 generation_seed: 42
 direct_batch_size: 8
+direct_output_format: final_prefix
+decoding_strategy: model_default
 probe_seed: 42
 probe_regularization_c: 1.0
 probe_class_weight: balanced
@@ -188,7 +207,7 @@ config = load_config("configs/task.yaml")
 The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the runner displays them.
 
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
-- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean.
+- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Direct output format and decoding strategy must use the choices documented above.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
 - `answer_matcher_path`, when supplied, must be an absolute path to an existing `.py` file. The runner loads and validates its `answer_match` function during preparation.
 - Probe position, layer, and excluded-answer lists must be nonempty and contain
@@ -210,11 +229,11 @@ When `model_revision` is omitted, the model loader resolves one exact Hub commit
 
 Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
 
-After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, `final_prompt_end`, every `answer_tokens` position, and any configured semantic spans. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
+After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, every `answer_tokens` position, any configured semantic spans, and `final_prompt_end` when a final marker exists. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
 
 Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection and frozen test evaluation have their own IDs, so downstream setting changes reuse completed upstream work. All groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
 
-Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Deterministic direct generation may still use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
+Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Greedy direct generation may use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
 
 Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs.
 

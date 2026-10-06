@@ -354,6 +354,8 @@ class RunTests(unittest.TestCase):
             {},
             {"generation_seed": 7},
             {"direct_batch_size": 4},
+            {"direct_output_format": "raw_answer"},
+            {"decoding_strategy": "greedy"},
         ):
             self.write_config(**changes)
             prepared = prepare_run(self.config)
@@ -362,7 +364,7 @@ class RunTests(unittest.TestCase):
                 prepared.dataset.content_sha256,
                 prepared.split_source,
             ).run_id)
-        self.assertEqual(len(set(identities)), 3)
+        self.assertEqual(len(set(identities)), 5)
 
         self.write_config(reasoning_mode="reasoning", direct_batch_size=2)
         first = prepare_run(self.config)

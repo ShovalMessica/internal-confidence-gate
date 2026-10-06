@@ -103,6 +103,7 @@ def build_run_identity(
         "answer_max_new_tokens": config.answer_max_new_tokens,
         "allow_abstention": config.allow_abstention,
         "generation_seed": config.generation_seed,
+        "decoding_strategy": config.decoding_strategy,
         "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
         "activation_protocol_version": ACTIVATION_PROTOCOL_VERSION,
         "position_protocol": POSITION_PROTOCOL,
@@ -117,6 +118,7 @@ def build_run_identity(
         effective["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
         effective["direct_batch_size"] = config.direct_batch_size
+        effective["direct_output_format"] = config.direct_output_format
     if split_source == "automatic":
         effective["split_ratios"] = {
             "train": config.split_ratios.train,

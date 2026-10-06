@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 3
+GENERATION_PROTOCOL_VERSION = 4
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -87,14 +87,14 @@ def _decode(tokenizer: Any, token_ids: Sequence[int]) -> str:
         return tokenizer.decode(list(token_ids), skip_special_tokens=True)
 
 
-def initial_prompt_content(task_input: str, instruction: str) -> str:
-    return f"{task_input}\n\n{instruction}"
+def initial_prompt_content(task_input: str, instruction: str | None) -> str:
+    return task_input if instruction is None else f"{task_input}\n\n{instruction}"
 
 
 def render_initial_prompt(
     tokenizer: Any,
     task_input: str,
-    instruction: str,
+    instruction: str | None,
     *,
     reasoning: bool,
     tokenize: bool = True,
@@ -182,6 +182,14 @@ def _move_inputs(inputs: dict, model: Any) -> dict:
     return {name: value.to(device) for name, value in inputs.items()}
 
 
+def _decoding_kwargs(strategy: str) -> dict[str, object]:
+    if strategy != "greedy":
+        return {}
+    # Sampling-only checkpoint defaults are inactive under greedy decoding. Passing
+    # nulls prevents Transformers from warning about those ignored values.
+    return {"do_sample": False, "temperature": None, "top_p": None, "top_k": None}
+
+
 def _pad_contexts(tokenizer: Any, contexts: Sequence[Sequence[int]], model: Any) -> dict:
     previous_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
@@ -200,6 +208,7 @@ def _answer_outputs(
     loaded: LoadedModel,
     contexts: Sequence[Sequence[int]],
     max_new_tokens: int,
+    decoding_strategy: str,
 ) -> list[dict]:
     torch, _, _ = _runtime()
     model, tokenizer = loaded.model, loaded.tokenizer
@@ -214,6 +223,7 @@ def _answer_outputs(
                 pad_token_id=tokenizer.pad_token_id,
                 return_dict_in_generate=True,
                 output_scores=True,
+                **_decoding_kwargs(decoding_strategy),
             )
     except Exception as exc:
         raise GenerationError(f"Answer generation failed: {exc}") from exc
@@ -281,6 +291,7 @@ def _reasoning_output(
     initial_ids: list[int],
     boundary_ids: list[int],
     max_new_tokens: int,
+    decoding_strategy: str,
 ) -> tuple[list[int], str, bool]:
     torch, stopping_list, _ = _runtime()
     model, tokenizer = loaded.model, loaded.tokenizer
@@ -297,6 +308,7 @@ def _reasoning_output(
                 stopping_criteria=stopping,
                 return_dict_in_generate=True,
                 output_scores=False,
+                **_decoding_kwargs(decoding_strategy),
             )
     except Exception as exc:
         raise GenerationError(f"Reasoning generation failed: {exc}") from exc
@@ -319,8 +331,9 @@ def _direct_unit(
 ) -> GenerationUnit:
     _, _, set_seed = _runtime()
     tokenizer, model = loaded.tokenizer, loaded.model
-    marker_ids = _encode(tokenizer, FINAL_MARKER)
-    instruction = answer_instruction(config.allow_abstention)
+    uses_final_prefix = config.direct_output_format == "final_prefix"
+    marker_ids = _encode(tokenizer, FINAL_MARKER) if uses_final_prefix else []
+    instruction = answer_instruction(config.allow_abstention) if uses_final_prefix else None
     limit = _context_limit(model, tokenizer)
     prepared: list[tuple[int, dict, list[int], list[int], dict]] = []
     records: list[dict] = []
@@ -349,14 +362,25 @@ def _direct_unit(
                 )
             )
             continue
-        control = {
-            "text": FINAL_MARKER,
-            "token_ids": marker_ids,
-            "answer_instruction": instruction,
-            "answer_instruction_token_ids": _encode(tokenizer, instruction),
-            "final_marker_token_ids": marker_ids,
-            "final_marker_span": [0, len(marker_ids)],
-        }
+        control = (
+            {
+                "text": FINAL_MARKER,
+                "token_ids": marker_ids,
+                "answer_instruction": instruction,
+                "answer_instruction_token_ids": _encode(tokenizer, instruction),
+                "final_marker_token_ids": marker_ids,
+                "final_marker_span": [0, len(marker_ids)],
+            }
+            if uses_final_prefix
+            else {
+                "text": "",
+                "token_ids": [],
+                "answer_instruction": None,
+                "answer_instruction_token_ids": [],
+                "final_marker_token_ids": [],
+                "final_marker_span": None,
+            }
+        )
         prepared.append((position, example, chat_ids, answer_context, control))
 
     if prepared:
@@ -365,6 +389,7 @@ def _direct_unit(
             loaded,
             [row[3] for row in prepared],
             config.answer_max_new_tokens,
+            config.decoding_strategy,
         )
         for (_, example, prompt_ids, _, control), answer in zip(prepared, answers):
             record = _base_record(example, prompt_ids, control)
@@ -430,11 +455,17 @@ def _reasoning_unit(
         initial_ids,
         boundary_ids,
         config.reasoning_max_new_tokens,
+        config.decoding_strategy,
     )
     control_ids = [*boundary_ids, *final_instruction_ids, *marker_ids]
     marker_start = len(boundary_ids) + len(final_instruction_ids)
     final_context = [*initial_ids, *reasoning_ids, *control_ids]
-    answer = _answer_outputs(loaded, [final_context], config.answer_max_new_tokens)[0]
+    answer = _answer_outputs(
+        loaded,
+        [final_context],
+        config.answer_max_new_tokens,
+        config.decoding_strategy,
+    )[0]
     control = {
         "text": f"{THINKING_BOUNDARY}\n\n{instruction}\n{FINAL_MARKER}",
         "token_ids": control_ids,
@@ -468,7 +499,10 @@ def generation_units(
         size = config.direct_batch_size
         missing = [item for item in indexed if item[1]["id"] not in completed]
         generation_config = getattr(loaded.model, "generation_config", None)
-        if bool(getattr(generation_config, "do_sample", False)):
+        if (
+            config.decoding_strategy == "model_default"
+            and bool(getattr(generation_config, "do_sample", False))
+        ):
             size = 1
         for start in range(0, len(missing), size):
             batch = missing[start : start + size]

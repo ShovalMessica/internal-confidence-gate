@@ -54,6 +54,7 @@ def build_generation_context(config: TaskConfig) -> GenerationContext:
         "answer_max_new_tokens": config.answer_max_new_tokens,
         "allow_abstention": config.allow_abstention,
         "generation_seed": config.generation_seed,
+        "decoding_strategy": config.decoding_strategy,
         "generation_protocol_version": GENERATION_PROTOCOL_VERSION,
     }
     if config.system_prompt_sha256 is not None:
@@ -62,6 +63,7 @@ def build_generation_context(config: TaskConfig) -> GenerationContext:
         settings["reasoning_max_new_tokens"] = config.reasoning_max_new_tokens
     else:
         settings["direct_batch_size"] = config.direct_batch_size
+        settings["direct_output_format"] = config.direct_output_format
     fingerprint = hashlib.sha256(
         _encoded({"schema_version": CACHE_SCHEMA_VERSION, "settings": settings})
     ).hexdigest()

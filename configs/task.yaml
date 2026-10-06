@@ -22,6 +22,8 @@ allow_abstention: true
 # answer_matcher_path: "C:/path/to/answer_matcher.py"
 generation_seed: 42
 direct_batch_size: 8       # Used only in direct mode
+direct_output_format: final_prefix  # final_prefix or raw_answer; direct mode only
+decoding_strategy: model_default    # model_default or greedy
 probe_seed: 42
 # probe_positions: [prompt_end]  # Omit to train every captured position
 # probe_layers: [35]             # 0 is the embedding output; omit for every state

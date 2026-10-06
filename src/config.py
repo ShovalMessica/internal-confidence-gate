@@ -43,6 +43,8 @@ class TaskConfig:
     answer_matcher_path: Path | None = None
     generation_seed: int = 42
     direct_batch_size: int = 8
+    direct_output_format: Literal["final_prefix", "raw_answer"] = "final_prefix"
+    decoding_strategy: Literal["model_default", "greedy"] = "model_default"
     probe_seed: int = 42
     probe_positions: tuple[str, ...] | None = None
     probe_layers: tuple[int, ...] | None = None
@@ -260,6 +262,23 @@ def load_config(path: str | Path) -> TaskConfig:
 
     if raw.get("reasoning_mode") not in ("direct", "reasoning"):
         errors.append("reasoning_mode is required and must be 'direct' or 'reasoning'.")
+
+    if values["direct_output_format"] not in ("final_prefix", "raw_answer"):
+        errors.append(
+            "direct_output_format must be 'final_prefix' or 'raw_answer'."
+        )
+    if (
+        values.get("reasoning_mode") == "reasoning"
+        and values["direct_output_format"] != "final_prefix"
+    ):
+        errors.append(
+            "direct_output_format applies only to direct mode; reasoning mode "
+            "requires 'final_prefix'."
+        )
+    if values["decoding_strategy"] not in ("model_default", "greedy"):
+        errors.append(
+            "decoding_strategy must be 'model_default' or 'greedy'."
+        )
 
     if "output_dir" in raw:
         output = _absolute_path(raw["output_dir"], "output_dir", errors)

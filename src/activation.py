@@ -16,7 +16,7 @@ from src.generation import (
 from src.model import LoadedModel
 
 
-ACTIVATION_PROTOCOL_VERSION = 2
+ACTIVATION_PROTOCOL_VERSION = 3
 ACTIVATION_SCHEMA_VERSION = 1
 CAPTURE_BACKEND = "transformers_hidden_states"
 POSITION_PROTOCOL = "semantic_spans_v1"
@@ -82,19 +82,22 @@ def build_replay_plan(
     control = generation.get("final_control")
     if not isinstance(control, dict):
         raise ActivationError("final_control must be an object.")
-    control_ids = _token_ids(
-        control.get("token_ids"), "final_control.token_ids", nonempty=True
-    )
+    control_ids = _token_ids(control.get("token_ids"), "final_control.token_ids")
     marker_span = control.get("final_marker_span")
-    if (
-        not isinstance(marker_span, list)
-        or len(marker_span) != 2
-        or not all(type(item) is int for item in marker_span)
-        or not 0 <= marker_span[0] < marker_span[1] <= len(control_ids)
-    ):
-        raise ActivationError("final_control.final_marker_span is invalid.")
-    if marker_span[1] != len(control_ids):
-        raise ActivationError("The final marker must end the final control tokens.")
+    if control_ids:
+        if (
+            not isinstance(marker_span, list)
+            or len(marker_span) != 2
+            or not all(type(item) is int for item in marker_span)
+            or not 0 <= marker_span[0] < marker_span[1] <= len(control_ids)
+        ):
+            raise ActivationError("final_control.final_marker_span is invalid.")
+        if marker_span[1] != len(control_ids):
+            raise ActivationError("The final marker must end the final control tokens.")
+    elif marker_span is not None:
+        raise ActivationError(
+            "final_control.final_marker_span must be null without final control tokens."
+        )
 
     answer = generation.get("answer")
     if not isinstance(answer, dict):
@@ -114,13 +117,13 @@ def build_replay_plan(
 
     control_start = len(prompt) + len(reasoning_ids)
     answer_start = control_start + len(control_ids)
-    marker_end = control_start + marker_span[1] - 1
     token_ids = (*prompt, *reasoning_ids, *control_ids, *answer_ids)
-    positions = {
-        "prompt_end": (len(prompt) - 1,),
-        "final_prompt_end": (marker_end,),
-        "answer_tokens": tuple(range(answer_start, answer_start + len(answer_ids))),
-    }
+    positions = {"prompt_end": (len(prompt) - 1,)}
+    if marker_span is not None:
+        positions["final_prompt_end"] = (control_start + marker_span[1] - 1,)
+    positions["answer_tokens"] = tuple(
+        range(answer_start, answer_start + len(answer_ids))
+    )
     for name, raw_positions in (semantic_positions or {}).items():
         selected = tuple(raw_positions)
         if (
@@ -166,7 +169,7 @@ def map_semantic_spans(
     instruction = (
         REASONING_INSTRUCTION if reasoning else control.get("answer_instruction")
     )
-    if not isinstance(instruction, str):
+    if instruction is not None and not isinstance(instruction, str):
         raise ActivationError(
             f"Example ID {example_id}: initial prompt instruction is unavailable."
         )

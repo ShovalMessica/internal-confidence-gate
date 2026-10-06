@@ -35,7 +35,7 @@ VOCAB_SIZE = 16
 TOKEN_LOGPROB = 2.0 - log(exp(2.0) + VOCAB_SIZE - 1)
 
 
-def _generation(*, reasoning=False, answer_ids=(5,)):
+def _generation(*, reasoning=False, answer_ids=(5,), raw_answer=False):
     reasoning_record = (
         {
             "text": "reason",
@@ -47,8 +47,8 @@ def _generation(*, reasoning=False, answer_ids=(5,)):
         if reasoning
         else None
     )
-    control_ids = [9, 10, 11] if reasoning else [3, 4]
-    marker_span = [2, 3] if reasoning else [0, 2]
+    control_ids = [] if raw_answer else ([9, 10, 11] if reasoning else [3, 4])
+    marker_span = None if raw_answer else ([2, 3] if reasoning else [0, 2])
     return {
         "id": 1,
         "split": "train",
@@ -138,10 +138,12 @@ class _DuplicatingTokenizer(_SpanTokenizer):
 
 
 def _generation_for_spans(
-    tokenizer, task_input, *, reasoning=False, system_prompt=None
+    tokenizer, task_input, *, reasoning=False, raw_answer=False, system_prompt=None
 ):
-    record = _generation(reasoning=reasoning)
-    instruction = REASONING_INSTRUCTION if reasoning else "final instruction"
+    record = _generation(reasoning=reasoning, raw_answer=raw_answer)
+    instruction = (
+        REASONING_INSTRUCTION if reasoning else (None if raw_answer else "final instruction")
+    )
     record["formatted_prompt_token_ids"] = render_initial_prompt(
         tokenizer,
         task_input,
@@ -149,7 +151,7 @@ def _generation_for_spans(
         reasoning=reasoning,
         system_prompt=system_prompt,
     )
-    record["final_control"]["answer_instruction"] = "final instruction"
+    record["final_control"]["answer_instruction"] = instruction
     return record
 
 
@@ -181,6 +183,24 @@ class ActivationTests(unittest.TestCase):
         generation = _generation_for_spans(tokenizer, task_input, reasoning=True)
         example = {
             "id": 8,
+            "input": task_input,
+            "semantic_spans": {
+                "span_1": {"start_char": 4, "end_char": 12},
+            },
+        }
+
+        mapped = map_semantic_spans(tokenizer, example, generation)
+
+        self.assertTrue(mapped["span_1"])
+
+    def test_raw_answer_semantic_span_uses_unchanged_input(self):
+        tokenizer = _SpanTokenizer()
+        task_input = "Use evidence here"
+        generation = _generation_for_spans(
+            tokenizer, task_input, raw_answer=True
+        )
+        example = {
+            "id": 10,
             "input": task_input,
             "semantic_spans": {
                 "span_1": {"start_char": 4, "end_char": 12},
@@ -276,6 +296,14 @@ class ActivationTests(unittest.TestCase):
         result = capture_hidden_states(_loaded(model), plan)
 
         self.assertEqual(result.tensors["answer_tokens"].shape, (3, 2, 4))
+
+    def test_raw_direct_replay_has_no_final_prompt_position(self):
+        plan = build_replay_plan(_generation(raw_answer=True))
+        self.assertEqual(plan.token_ids, (1, 2, 5))
+        self.assertEqual(
+            plan.positions,
+            {"prompt_end": (1,), "answer_tokens": (2,)},
+        )
 
     def test_replay_probability_mismatch_is_rejected(self):
         record = _generation()
