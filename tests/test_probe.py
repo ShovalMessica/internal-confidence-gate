@@ -382,6 +382,27 @@ class ProbeTests(unittest.TestCase):
         with h5py.File(self.directory / PROBE_FILE, "r") as source:
             self.assertNotIn("test_evaluations", source)
 
+        activation_path = self.directory / "activations.h5"
+        with h5py.File(activation_path, "a") as source:
+            saved = {
+                name: np.asarray(dataset[...])
+                for name, dataset in source["examples/9"].items()
+            }
+            for dataset in source["examples/9"].values():
+                dataset[...] = np.inf
+        with self.assertRaisesRegex(ProbeError, "nonfinite values"):
+            evaluate_frozen_test(
+                self.directory,
+                probe,
+                selection,
+                identity,
+                self.evaluations,
+                generations,
+            )
+        with h5py.File(activation_path, "a") as source:
+            for name, values in saved.items():
+                source[f"examples/9/{name}"][...] = values
+
         result = evaluate_frozen_test(
             self.directory,
             probe,

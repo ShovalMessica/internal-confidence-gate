@@ -330,18 +330,23 @@ def capture_hidden_states(loaded: LoadedModel, plan: ReplayPlan) -> ActivationRe
     max_difference = _replay_logprob_difference(output, plan, torch)
     tensors = {}
     for name, positions in plan.positions.items():
-        tensors[name] = torch.stack(
-            [
-                state[0]
-                .index_select(
-                    0,
-                    torch.tensor(positions, dtype=torch.long, device=state.device),
+        selected_states = []
+        for index, state in enumerate(hidden_states):
+            selected = state[0].index_select(
+                0,
+                torch.tensor(positions, dtype=torch.long, device=state.device),
+            )
+            if not bool(torch.isfinite(selected).all()):
+                raise ActivationError(
+                    f"Activation '{name}' contains nonfinite values at state {index}."
                 )
-                .to(dtype=torch.float16, device="cpu")
-                for state in hidden_states
-            ],
-            dim=0,
-        ).contiguous()
+            stored = selected.to(dtype=torch.float16, device="cpu")
+            if not bool(torch.isfinite(stored).all()):
+                raise ActivationError(
+                    f"Activation '{name}' overflows float16 at state {index}."
+                )
+            selected_states.append(stored)
+        tensors[name] = torch.stack(selected_states, dim=0).contiguous()
     labels = ("embedding",) + tuple(
         f"hidden_state_{index}" for index in range(1, len(hidden_states))
     )

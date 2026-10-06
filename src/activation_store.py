@@ -388,6 +388,10 @@ def append_activation_record(
                     raise ActivationStoreError(
                         f"Captured activation tensor '{name}' has an invalid shape or dtype."
                     )
+                if not bool(tensor.isfinite().all()):
+                    raise ActivationStoreError(
+                        f"Captured activation tensor '{name}' contains nonfinite values."
+                    )
                 group.create_dataset(name, data=tensor.numpy())
             source.flush()
             source.move(f"_pending/{key}", f"examples/{key}")

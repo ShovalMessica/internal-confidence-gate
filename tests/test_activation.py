@@ -87,6 +87,17 @@ class _ReplayModel:
         return SimpleNamespace(logits=logits, hidden_states=hidden_states)
 
 
+class _NonfiniteReplayModel(_ReplayModel):
+    def __init__(self, answer_positions, answer_ids, value):
+        super().__init__(answer_positions, answer_ids)
+        self.value = value
+
+    def __call__(self, **kwargs):
+        output = super().__call__(**kwargs)
+        output.hidden_states[1][0, :, 0] = self.value
+        return output
+
+
 def _loaded(model):
     return LoadedModel(model, object(), "cpu", "float32", "commit")
 
@@ -284,6 +295,16 @@ class ActivationTests(unittest.TestCase):
         model = _ReplayModel(plan.positions["answer_tokens"], plan.answer_token_ids)
         result = capture_hidden_states(_loaded(model), plan)
         self.assertGreater(result.max_logprob_difference, 1.0)
+
+    def test_nonfinite_and_float16_overflow_activations_are_rejected(self):
+        plan = build_replay_plan(_generation())
+        for value, message in ((float("inf"), "nonfinite"), (70_000.0, "overflows")):
+            with self.subTest(value=value):
+                model = _NonfiniteReplayModel(
+                    plan.positions["answer_tokens"], plan.answer_token_ids, value
+                )
+                with self.assertRaisesRegex(ActivationError, message):
+                    capture_hidden_states(_loaded(model), plan)
 
     def test_invalid_saved_boundaries_are_rejected(self):
         record = _generation()

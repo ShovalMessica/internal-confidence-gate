@@ -1155,13 +1155,28 @@ def evaluate_frozen_test(
             probe_threshold = float(selection.attrs["selected_threshold"])
             model = training["position_models"][position]
             test_values = _matrix(activations, test_ids, position, activation_state)
+            if not np.isfinite(test_values).all():
+                raise ProbeError(
+                    f"Test activations contain nonfinite values at '{position}', "
+                    f"{selected_state}."
+                )
             standardized = (
                 test_values - np.asarray(model["scaler_mean"][state])
             ) / np.asarray(model["scaler_scale"][state])
+            if not np.isfinite(standardized).all():
+                raise ProbeError(
+                    f"Standardized test features are nonfinite at '{position}', "
+                    f"{selected_state}."
+                )
             logits = (
                 standardized @ np.asarray(model["coefficients"][state])
                 + float(model["intercepts"][state])
             )
+            if not np.isfinite(logits).all():
+                raise ProbeError(
+                    f"Frozen probe produced nonfinite logits at '{position}', "
+                    f"{selected_state}."
+                )
             probe_scores = _sigmoid(np.asarray(logits, dtype=np.float64))
             if not np.isfinite(probe_scores).all():
                 raise ProbeError("Frozen probe produced nonfinite test scores.")
