@@ -46,12 +46,33 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(result.content_sha256, hashlib.sha256(before).hexdigest())
         self.assertEqual(list(self.root.iterdir()), [self.source])
 
-    def test_extra_fields_are_ignored_at_record_and_span_levels(self):
+    def test_metadata_is_preserved_and_other_extra_fields_are_ignored(self):
         record = self.record(metadata={"source": "user"}, semantic_spans={
-            "span_3": {"start_char": 11, "end_char": 15, "note": "name"}})
+            "span_3": {"start_char": 11, "end_char": 15, "note": "name"}},
+            ignored="value")
         result = load_dataset(self.write(record))
-        self.assertEqual(result.examples, [self.record(semantic_spans={
-            "span_3": {"start_char": 11, "end_char": 15}})])
+        self.assertEqual(result.examples, [self.record(
+            metadata={"source": "user"},
+            semantic_spans={"span_3": {"start_char": 11, "end_char": 15}},
+        )])
+
+    def test_metadata_is_optional_free_form_and_may_differ(self):
+        records = [
+            self.record(1, metadata={"example_type": "corrupted", "nested": {"x": [1]}}),
+            self.record(2, metadata={}),
+            self.record(3, metadata={"difficulty": 4}),
+            self.record(4),
+        ]
+        self.assertEqual(load_dataset(self.write(*records)).examples, records)
+
+    def test_metadata_must_be_an_object(self):
+        for value in (None, [], "type", 1, True):
+            with self.subTest(value=value):
+                result = load_dataset(
+                    self.write(self.record(1, metadata=value), self.record(2))
+                )
+                self.assertEqual(result.examples, [self.record(2)])
+                self.assertIn("metadata must be an object", result.excluded[0]["reasons"][0])
 
     def test_invalid_fields_are_reported_and_skipped(self):
         cases = {

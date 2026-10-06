@@ -41,6 +41,7 @@ class TaskConfig:
     answer_max_new_tokens: int = 64
     allow_abstention: bool = True
     answer_matcher_path: Path | None = None
+    custom_metrics_path: Path | None = None
     generation_seed: int = 42
     direct_batch_size: int = 8
     direct_output_format: Literal["final_prefix", "raw_answer"] = "final_prefix"
@@ -358,16 +359,16 @@ def load_config(path: str | Path) -> TaskConfig:
     if type(values["allow_abstention"]) is not bool:
         errors.append("allow_abstention must be true or false.")
 
-    if "answer_matcher_path" in raw:
-        matcher = _absolute_path(
-            raw["answer_matcher_path"], "answer_matcher_path", errors
-        )
-        values["answer_matcher_path"] = matcher
-        if matcher is not None:
-            if matcher.suffix.lower() != ".py":
-                errors.append("answer_matcher_path must name a .py file.")
-            if not matcher.is_file():
-                errors.append("answer_matcher_path must point to an existing file.")
+    for field_name in ("answer_matcher_path", "custom_metrics_path"):
+        if field_name not in raw:
+            continue
+        path = _absolute_path(raw[field_name], field_name, errors)
+        values[field_name] = path
+        if path is not None:
+            if path.suffix.lower() != ".py":
+                errors.append(f"{field_name} must name a .py file.")
+            if not path.is_file():
+                errors.append(f"{field_name} must point to an existing file.")
 
     if "split_ratios" in raw:
         values["split_ratios"] = _split_ratios(raw["split_ratios"], errors)

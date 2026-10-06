@@ -18,12 +18,15 @@ from src.generation_cache import (
 from src.evaluation import (
     EVALUATION_PROTOCOL_VERSION,
     EVALUATION_RECORD_SCHEMA_VERSION,
+    build_custom_metrics_identity,
     build_evaluation_identity,
     load_answer_matcher,
+    load_custom_metrics,
 )
 from src.run_store import (
     RunStoreError,
     append_generation_records,
+    complete_custom_metrics,
     complete_evaluation,
     evaluation_artifact_path,
     generation_artifact_path,
@@ -33,6 +36,7 @@ from src.run_store import (
     reset_generation,
     reuse_cached_generation_records,
     validate_completed_evaluation,
+    validate_completed_custom_metrics,
     write_evaluation_records,
 )
 
@@ -209,6 +213,37 @@ class RunStoreTests(unittest.TestCase):
                 self.directory, identity.evaluation_id, examples
             )
 
+    def test_custom_metrics_are_registered_and_validated(self):
+        path = self.directory / "metrics.py"
+        path.write_text(
+            "def compute_metrics(records):\n    return {'x': {'numerator': 0, 'denominator': 0}}\n",
+            encoding="utf-8",
+        )
+        custom = load_custom_metrics(path)
+        identity = build_custom_metrics_identity(
+            "dataset", "generation", "evaluation", custom
+        )
+        results = {
+            "overall": {"x": {"numerator": 0, "denominator": 0, "rate": None}},
+            "by_split": {
+                split: {"x": {"numerator": 0, "denominator": 0, "rate": None}}
+                for split in ("train", "validation", "test")
+            },
+        }
+        (self.directory / "run.json").write_text(
+            json.dumps({"completed_stages": ["preparation", "evaluation"]}),
+            encoding="utf-8",
+        )
+
+        complete_custom_metrics(self.directory, identity, custom, results)
+        record = load_run_record(self.directory)
+        self.assertEqual(validate_completed_custom_metrics(record, identity), results)
+
+        record["custom_metrics"][identity.metrics_id]["generation_sha256"] = "changed"
+        (self.directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(RunStoreError, "identity is invalid"):
+            validate_completed_custom_metrics(load_run_record(self.directory), identity)
+
     def test_force_reset_removes_downstream_artifacts(self):
         evaluation_id = "a" * 12
         path = evaluation_artifact_path(self.directory, evaluation_id)
@@ -240,6 +275,7 @@ class RunStoreTests(unittest.TestCase):
                     "generation": {},
                     "evaluation": {},
                     "evaluations": {evaluation_id: {}},
+                    "custom_metrics": {"metrics": {}},
                     "activation_capture": {},
                     "probe_trainings": {"probe": {}},
                     "probe_selections": {"selection": {}},
@@ -255,6 +291,7 @@ class RunStoreTests(unittest.TestCase):
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertNotIn("evaluation", record)
         self.assertNotIn("evaluations", record)
+        self.assertNotIn("custom_metrics", record)
         self.assertNotIn("activation_capture", record)
         self.assertNotIn("probe_trainings", record)
         self.assertNotIn("probe_selections", record)

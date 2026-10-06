@@ -24,9 +24,14 @@ from src.activation_store import (
 from src.config import TaskConfig
 from src.evaluation import (
     AnswerMatcher,
+    CustomMetrics,
+    CustomMetricsIdentity,
+    CUSTOM_METRICS_PROTOCOL_VERSION,
+    EvaluationError,
     EvaluationIdentity,
     EVALUATION_PROTOCOL_VERSION,
     EVALUATION_RECORD_SCHEMA_VERSION,
+    validate_custom_metrics_results,
 )
 from src.generation import (
     GENERATION_PROTOCOL_VERSION,
@@ -642,6 +647,70 @@ def validate_completed_evaluation(
     return True
 
 
+def complete_custom_metrics(
+    directory: Path,
+    identity: CustomMetricsIdentity,
+    custom_metrics: CustomMetrics,
+    results: dict,
+) -> None:
+    """Register a completed custom Model Behavior summary."""
+    record = load_run_record(directory)
+    registry = record.setdefault("custom_metrics", {})
+    if not isinstance(registry, dict):
+        raise RunStoreError("Run record has an invalid custom-metrics registry.")
+    entry = {
+        "metrics_id": identity.metrics_id,
+        "fingerprint": identity.fingerprint,
+        "protocol_version": CUSTOM_METRICS_PROTOCOL_VERSION,
+        "dataset_sha256": identity.dataset_sha256,
+        "generation_sha256": identity.generation_sha256,
+        "evaluation_sha256": identity.evaluation_sha256,
+        "implementation": custom_metrics.metadata(),
+        "results": results,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    existing = registry.get(identity.metrics_id)
+    if existing is not None and existing != entry:
+        raise RunStoreError("Custom metrics ID collision or conflicting run record.")
+    registry[identity.metrics_id] = entry
+    _save_run_record(directory, record)
+
+
+def validate_completed_custom_metrics(
+    record: dict, identity: CustomMetricsIdentity
+) -> dict | None:
+    """Return saved results when a matching custom summary is complete."""
+    registry = record.get("custom_metrics")
+    if registry is None:
+        return None
+    if not isinstance(registry, dict):
+        raise RunStoreError("Run record has an invalid custom-metrics registry.")
+    entry = registry.get(identity.metrics_id)
+    if entry is None:
+        return None
+    if (
+        not isinstance(entry, dict)
+        or entry.get("metrics_id") != identity.metrics_id
+        or entry.get("fingerprint") != identity.fingerprint
+        or entry.get("protocol_version") != CUSTOM_METRICS_PROTOCOL_VERSION
+        or entry.get("dataset_sha256") != identity.dataset_sha256
+        or entry.get("generation_sha256") != identity.generation_sha256
+        or entry.get("evaluation_sha256") != identity.evaluation_sha256
+    ):
+        raise RunStoreError("Completed custom metrics identity is invalid.")
+    implementation = entry.get("implementation")
+    if (
+        not isinstance(implementation, dict)
+        or implementation.get("sha256") != identity.implementation_sha256
+    ):
+        raise RunStoreError("Completed custom metrics provenance is invalid.")
+    results = entry.get("results")
+    try:
+        return validate_custom_metrics_results(results)
+    except EvaluationError as exc:
+        raise RunStoreError("Completed custom metrics results are invalid.") from exc
+
+
 def complete_activation_capture(
     directory: Path,
     identity: ActivationIdentity,
@@ -1055,6 +1124,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("generation_settings", None)
     record.pop("evaluation", None)
     record.pop("evaluations", None)
+    record.pop("custom_metrics", None)
     record.pop("activation_capture", None)
     record.pop("activation_captures", None)
     record.pop("probe_training", None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import inspect
@@ -13,6 +14,7 @@ from typing import Callable, Literal, Sequence
 
 EVALUATION_PROTOCOL_VERSION = 2
 EVALUATION_RECORD_SCHEMA_VERSION = 1
+CUSTOM_METRICS_PROTOCOL_VERSION = 1
 _BUILTIN_MATCHER_NAME = "normalized_exact_v1"
 _SPLITS = ("train", "validation", "test")
 _OUTCOMES = ("correct", "incorrect", "abstained", "invalid")
@@ -68,6 +70,35 @@ class EvaluationResult:
     shortages: tuple[dict, ...]
 
 
+@dataclass(frozen=True)
+class CustomMetrics:
+    sha256: str
+    source_path: Path
+    function: Callable[[list[dict]], dict] = field(repr=False, compare=False)
+
+    def compute(self, records: list[dict], scope: str) -> dict:
+        try:
+            result = self.function(deepcopy(records))
+        except Exception as exc:
+            raise EvaluationError(
+                f"compute_metrics failed for {scope} ({type(exc).__name__}: {exc})."
+            ) from exc
+        return _validate_custom_metric_output(result, scope)
+
+    def metadata(self) -> dict:
+        return {"source_path": str(self.source_path), "sha256": self.sha256}
+
+
+@dataclass(frozen=True)
+class CustomMetricsIdentity:
+    metrics_id: str
+    fingerprint: str
+    dataset_sha256: str
+    generation_sha256: str
+    evaluation_sha256: str
+    implementation_sha256: str
+
+
 def normalize_answer(value: str) -> str:
     """Apply the task-independent V1 answer normalization."""
     return " ".join(value.casefold().split())
@@ -77,38 +108,158 @@ def _default_answer_match(prediction: str, target_answer: str) -> bool:
     return normalize_answer(prediction) == normalize_answer(target_answer)
 
 
+def _load_python_function(
+    path: Path, function_name: str, arguments: tuple[object, ...], label: str
+) -> tuple[str, Callable]:
+    """Load and validate one trusted user-supplied Python hook."""
+    try:
+        source = path.read_bytes()
+    except OSError as exc:
+        raise EvaluationError(f"Cannot read {label}: {path}") from exc
+    digest = hashlib.sha256(source).hexdigest()
+    namespace = {"__file__": str(path), "__name__": f"_{function_name}_{digest}"}
+    try:
+        code = compile(source, str(path), "exec")
+        exec(code, namespace)
+    except Exception as exc:
+        raise EvaluationError(
+            f"Cannot load {label} {path} ({type(exc).__name__}: {exc})."
+        ) from exc
+
+    function = namespace.get(function_name)
+    if not callable(function):
+        raise EvaluationError(
+            f"{label.capitalize()} must define {function_name}: {path}"
+        )
+    try:
+        inspect.signature(function).bind(*arguments)
+    except (TypeError, ValueError) as exc:
+        raise EvaluationError(
+            f"{function_name} has an invalid signature: {path}"
+        ) from exc
+    return digest, function
+
+
 def load_answer_matcher(path: Path | None) -> AnswerMatcher:
     """Load the built-in matcher or a user-supplied answer_match function."""
     if path is None:
         digest = hashlib.sha256(_BUILTIN_MATCHER_NAME.encode("utf-8")).hexdigest()
         return AnswerMatcher("builtin", digest, None, _default_answer_match)
 
-    try:
-        source = path.read_bytes()
-    except OSError as exc:
-        raise EvaluationError(f"Cannot read answer matcher: {path}") from exc
-    digest = hashlib.sha256(source).hexdigest()
-    namespace = {"__file__": str(path), "__name__": f"_answer_matcher_{digest}"}
-    try:
-        code = compile(source, str(path), "exec")
-        exec(code, namespace)
-    except Exception as exc:
-        raise EvaluationError(
-            f"Cannot load answer matcher {path} ({type(exc).__name__}: {exc})."
-        ) from exc
-
-    function = namespace.get("answer_match")
-    if not callable(function):
-        raise EvaluationError(
-            f"Answer matcher must define answer_match(prediction, target_answer): {path}"
-        )
-    try:
-        inspect.signature(function).bind("prediction", "target_answer")
-    except (TypeError, ValueError) as exc:
-        raise EvaluationError(
-            f"answer_match must accept prediction and target_answer: {path}"
-        ) from exc
+    digest, function = _load_python_function(
+        path,
+        "answer_match",
+        ("prediction", "target_answer"),
+        "answer matcher",
+    )
     return AnswerMatcher("custom", digest, path, function)
+
+
+def load_custom_metrics(path: Path | None) -> CustomMetrics | None:
+    """Load an optional user-supplied compute_metrics function."""
+    if path is None:
+        return None
+    digest, function = _load_python_function(
+        path, "compute_metrics", ([],), "custom metrics file"
+    )
+    return CustomMetrics(digest, path, function)
+
+
+def build_custom_metrics_identity(
+    dataset_sha256: str,
+    generation_sha256: str,
+    evaluation_sha256: str,
+    custom_metrics: CustomMetrics,
+) -> CustomMetricsIdentity:
+    payload = {
+        "protocol_version": CUSTOM_METRICS_PROTOCOL_VERSION,
+        "dataset_sha256": dataset_sha256,
+        "generation_sha256": generation_sha256,
+        "evaluation_sha256": evaluation_sha256,
+        "implementation_sha256": custom_metrics.sha256,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    fingerprint = hashlib.sha256(encoded).hexdigest()
+    return CustomMetricsIdentity(
+        fingerprint[:12],
+        fingerprint,
+        dataset_sha256,
+        generation_sha256,
+        evaluation_sha256,
+        custom_metrics.sha256,
+    )
+
+
+def _validate_custom_metric_output(value: object, scope: str) -> dict:
+    if not isinstance(value, dict) or not value:
+        raise EvaluationError(
+            f"compute_metrics must return a nonempty metric object for {scope}."
+        )
+    validated = {}
+    for name, metric in value.items():
+        if not isinstance(name, str) or not name.strip():
+            raise EvaluationError(
+                f"Custom metric names must be nonempty strings for {scope}."
+            )
+        if not isinstance(metric, dict) or set(metric) != {"numerator", "denominator"}:
+            raise EvaluationError(
+                f"Custom metric '{name}' for {scope} must contain exactly "
+                "numerator and denominator."
+            )
+        numerator, denominator = metric["numerator"], metric["denominator"]
+        if type(numerator) is not int or type(denominator) is not int:
+            raise EvaluationError(
+                f"Custom metric '{name}' for {scope} requires integer counts."
+            )
+        if numerator < 0 or denominator < 0 or numerator > denominator:
+            raise EvaluationError(
+                f"Custom metric '{name}' for {scope} requires "
+                "0 <= numerator <= denominator."
+            )
+        validated[name] = {
+            "numerator": numerator,
+            "denominator": denominator,
+            "rate": numerator / denominator if denominator else None,
+        }
+    return validated
+
+
+def validate_custom_metrics_results(value: object) -> dict:
+    """Validate stored custom metric results and their calculated rates."""
+    if not isinstance(value, dict) or set(value) != {"overall", "by_split"}:
+        raise EvaluationError("Custom metrics results have an invalid structure.")
+    by_split = value["by_split"]
+    if not isinstance(by_split, dict) or set(by_split) != set(_SPLITS):
+        raise EvaluationError("Custom metrics results have invalid split summaries.")
+    scopes = {"overall": value["overall"], **by_split}
+    expected_names = None
+    for scope, metrics in scopes.items():
+        if not isinstance(metrics, dict) or not metrics:
+            raise EvaluationError(f"Custom metrics results are empty for {scope}.")
+        names = set(metrics)
+        if expected_names is None:
+            expected_names = names
+        elif names != expected_names:
+            raise EvaluationError("Custom metrics results have inconsistent names.")
+        for name, metric in metrics.items():
+            if not isinstance(metric, dict) or set(metric) != {
+                "numerator", "denominator", "rate"
+            }:
+                raise EvaluationError(
+                    f"Stored custom metric '{name}' is invalid for {scope}."
+                )
+            normalized = _validate_custom_metric_output(
+                {name: {
+                    "numerator": metric["numerator"],
+                    "denominator": metric["denominator"],
+                }},
+                scope,
+            )[name]
+            if metric["rate"] != normalized["rate"]:
+                raise EvaluationError(
+                    f"Stored custom metric '{name}' has an invalid rate for {scope}."
+                )
+    return value
 
 
 def build_evaluation_identity(
@@ -282,3 +433,58 @@ def evaluate_answers(
     summary["probe_ready"] = not shortages
     summary["shortages"] = list(shortages)
     return EvaluationResult(tuple(records), summary, shortages)
+
+
+def evaluate_custom_metrics(
+    examples: Sequence[dict],
+    generations: dict[int, dict],
+    evaluations: dict[int, dict],
+    custom_metrics: CustomMetrics,
+) -> dict:
+    """Compute user-defined count ratios overall and for each split."""
+    expected_ids = [example["id"] for example in examples]
+    if set(generations) != set(expected_ids) or set(evaluations) != set(expected_ids):
+        raise EvaluationError(
+            "Custom metric inputs do not match the dataset examples."
+        )
+
+    records = []
+    for example in examples:
+        example_id = example["id"]
+        generation = generations[example_id]
+        evaluation = evaluations[example_id]
+        answer = generation.get("answer") if generation.get("status") == "success" else None
+        prediction = answer.get("text") if isinstance(answer, dict) else None
+        records.append(
+            {
+                "id": example_id,
+                "split": example["split"],
+                "prediction": prediction if isinstance(prediction, str) else None,
+                "normalized_prediction": evaluation.get("normalized_answer"),
+                "target_answer": example["target_answer"],
+                "outcome": evaluation["outcome"],
+                "is_correct": evaluation.get("is_correct"),
+                "invalid_reason": evaluation.get("invalid_reason"),
+                "answer_token_limit": bool(
+                    isinstance(answer, dict)
+                    and answer.get("stop_reason") == "token_limit"
+                ),
+                "metadata": deepcopy(example.get("metadata", {})),
+            }
+        )
+
+    overall = custom_metrics.compute(records, "overall")
+    by_split = {
+        split: custom_metrics.compute(
+            [record for record in records if record["split"] == split], split
+        )
+        for split in _SPLITS
+    }
+    expected_names = set(overall)
+    for split, result in by_split.items():
+        if set(result) != expected_names:
+            raise EvaluationError(
+                f"compute_metrics returned different metric names for {split}; "
+                "return the same metrics for every scope."
+            )
+    return {"overall": overall, "by_split": by_split}

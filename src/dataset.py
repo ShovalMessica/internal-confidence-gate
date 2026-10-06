@@ -94,6 +94,11 @@ def _validate_record(record: dict, errors: list[str], allow_abstention: bool) ->
         example["semantic_spans"] = _validate_spans(
             record["semantic_spans"], example["input"], errors
         )
+    if "metadata" in record:
+        if not isinstance(record["metadata"], dict):
+            errors.append("metadata must be an object when supplied.")
+        else:
+            example["metadata"] = record["metadata"]
     return example
 
 

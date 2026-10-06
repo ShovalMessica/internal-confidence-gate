@@ -161,6 +161,11 @@ By default, answer matching ignores case, trims surrounding whitespace, collapse
 
 Before probe training, the runner reports model behavior overall and by split: correct predictions, wrong predictions, missed predictions (`UNKNOWN`), invalid outputs, and token-limit outputs. Every rate uses all examples in its scope as the denominator.
 
+Tasks can also attach free-form `metadata` to dataset examples and configure
+`custom_metrics_path` to add task-specific count-based metrics, such as NER
+correction recall and false discovery rate. These summaries do not alter
+correctness labels or probes; see [Custom task metrics](docs/configuration.md#custom-task-metrics).
+
 For eligible predictions:
 
 - **Gate TPR:** accepted correct predictions divided by all correct predictions.
@@ -267,7 +272,7 @@ The runner reports valid and excluded examples and the final split sizes. It cre
 <output_dir>/<run_id>/reports/<report_id>/...
 ```
 
-The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, activation summaries, probe-training and selection summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
+The run ID represents the generation settings and exact dataset contents. `run.json` stores provenance, matcher-specific evaluation summaries, optional custom metric summaries, activation summaries, probe-training and selection summaries, and completed stages. The generation manifest references shared per-example generations; evaluation files store correctness outcomes in dataset order.
 
 `activations.h5` contains every eligible example. Within each example, it stores `prompt_end`, `final_prompt_end`, `answer_tokens`, and any configured semantic-span tensors across the embedding output and all returned model layers.
 

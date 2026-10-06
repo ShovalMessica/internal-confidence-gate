@@ -110,6 +110,61 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 
 The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. Insufficient correct or incorrect counts produce exit code `1` after saving the results.
 
+## Custom task metrics
+
+- **`custom_metrics_path` (optional; default: omitted)** — Absolute path to a
+  trusted Python file defining `compute_metrics(records)`. Generic Model
+  Behavior metrics are always reported first; custom metrics are additional
+  summaries and do not change correctness labels, probe readiness, or probes.
+
+The toolkit calls the function once for all examples and once for each split.
+Each record is a dictionary with this structure:
+
+```python
+{
+    "id": int,
+    "split": str,
+    "prediction": str | None,
+    "normalized_prediction": str | None,
+    "target_answer": str,
+    "outcome": "correct" | "incorrect" | "abstained" | "invalid",
+    "is_correct": bool | None,
+    "invalid_reason": str | None,
+    "answer_token_limit": bool,
+    "metadata": dict,
+}
+```
+
+Return a nonempty mapping from metric names to integer counts:
+
+```python
+def compute_metrics(records):
+    relevant = [
+        record for record in records
+        if record["metadata"].get("example_type") == "corrupted"
+    ]
+    correct = sum(record["is_correct"] is True for record in relevant)
+    return {
+        "correction_recall": {
+            "numerator": correct,
+            "denominator": len(relevant),
+        }
+    }
+```
+
+Every metric must contain exactly `numerator` and `denominator`, both
+nonnegative integers with `numerator <= denominator`. The toolkit calculates
+the rate; a zero denominator produces `null`. Return the same metric names for
+the overall dataset and every split. Errors name the scope that failed.
+
+The file is loaded during preparation and its bytes are hashed. Results are
+stored under `custom_metrics` in `run.json`, identified by the dataset,
+generation, evaluation, implementation, and protocol hashes. Changing only
+the custom code recalculates these summaries without rerunning the model or
+changing saved evaluations and probes. See
+[examples/custom_metrics.py](../examples/custom_metrics.py) for a complete NER
+recall and false-discovery-rate example.
+
 ## Probe training and validation selection
 
 - **`probe_seed` (optional; default: `42`)** — Seed for reproducible linear-probe fitting.
@@ -179,6 +234,7 @@ reasoning_max_new_tokens: 1024
 answer_max_new_tokens: 64
 allow_abstention: true
 # answer_matcher_path: "C:/tasks/my-task/answer_matcher.py"
+# custom_metrics_path: "C:/tasks/my-task/custom_metrics.py"
 generation_seed: 42
 direct_batch_size: 8
 direct_output_format: final_prefix
@@ -209,7 +265,9 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
 - Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Direct output format and decoding strategy must use the choices documented above.
 - `model_revision`, when supplied, must be a nonempty string and may be used only with a Hub model ID. Device and dtype values must use the supported choices above.
-- `answer_matcher_path`, when supplied, must be an absolute path to an existing `.py` file. The runner loads and validates its `answer_match` function during preparation.
+- `answer_matcher_path` and `custom_metrics_path`, when supplied, must be
+  absolute paths to existing `.py` files. The runner loads and validates their
+  required functions during preparation.
 - Probe position, layer, and excluded-answer lists must be nonempty and contain
   no duplicates when supplied. Probe layers are checked against the loaded
   model states before training.
@@ -232,6 +290,12 @@ Generations are cached per example under `<output_dir>/.cache/generations`. A ca
 After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the saved token sequence, verifies the saved answer-token probabilities, and stores float16 Hugging Face hidden states for `prompt_end`, every `answer_tokens` position, any configured semantic spans, and `final_prompt_end` when a final marker exists. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
 
 Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection and frozen test evaluation have their own IDs, so downstream setting changes reuse completed upstream work. All groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
+
+The custom metric path does not affect run, generation, evaluation, activation,
+or probe identity. Its file hash identifies a small summary stored in
+`run.json`. Changing dataset metadata creates a new run because the exact
+dataset bytes changed, while generations for unchanged IDs and inputs remain
+reusable from the shared generation cache.
 
 Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Greedy direct generation may use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
 

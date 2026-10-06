@@ -1002,6 +1002,117 @@ class RunTests(unittest.TestCase):
         self.assertFalse((self.root / "outputs").exists())
         load_model.assert_not_called()
 
+    def test_invalid_custom_metrics_stop_before_model_loading(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        metrics = self.root / "metrics.py"
+        metrics.write_text("value = 1\n", encoding="utf-8")
+        self.write_config(custom_metrics_path=str(metrics))
+
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+
+        self.assertEqual((code, stdout), (1, ""))
+        self.assertIn("must define compute_metrics", stderr)
+        self.assertFalse((self.root / "outputs").exists())
+        load_model.assert_not_called()
+
+    def test_custom_metrics_run_reuse_and_do_not_change_generation(self):
+        records = [
+            self.record(index) | {"metadata": {"example_type": "corrupted"}}
+            for index in range(700)
+        ]
+        self.write_dataset(records)
+        metrics = self.root / "metrics.py"
+        source = (
+            "def compute_metrics(records):\n"
+            "    chosen = [r for r in records if r['metadata'].get('example_type') == 'corrupted']\n"
+            "    correct = sum(r['is_correct'] is True for r in chosen)\n"
+            "    return {'correction_recall': {\n"
+            "        'numerator': correct, 'denominator': len(chosen)}}\n"
+        )
+        metrics.write_text(source, encoding="utf-8")
+        self.write_config(custom_metrics_path=str(metrics))
+        prepared = prepare_run(self.config)
+        generations = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(generations),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Custom metrics: created", stdout)
+        self.assertIn("correction_recall", stdout)
+
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Custom metrics: reused", stdout)
+        load_model.assert_not_called()
+
+        metrics.write_text(source + "# changed reporting code\n", encoding="utf-8")
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation artifact: reused", stdout)
+        self.assertIn("Evaluation artifact: reused", stdout)
+        self.assertIn("Custom metrics: created", stdout)
+        load_model.assert_not_called()
+        run_record = json.loads(
+            (self.run_directories()[0] / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(run_record["custom_metrics"]), 2)
+
+    def test_metadata_change_reuses_cached_generations(self):
+        records = [self.record(index) for index in range(700)]
+        self.write_dataset(records)
+        self.write_config()
+        prepared = prepare_run(self.config)
+        generations = self.probe_ready_generation_records(prepared.dataset.examples)
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(generations),)),
+            ),
+        ):
+            self.assertEqual(self.invoke_full()[0], 0)
+
+        self.write_dataset(
+            record | {"metadata": {"example_type": "corrupted"}}
+            for record in records
+        )
+        with patch("src.run.load_model") as load_model:
+            code, stdout, stderr = self.invoke_full()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Generation cache: 700 reused", stdout)
+        self.assertIn("Generation complete from cached records; model not loaded", stdout)
+        load_model.assert_not_called()
+
     def test_legacy_evaluation_is_rebuilt_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()

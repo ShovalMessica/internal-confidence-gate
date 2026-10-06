@@ -49,6 +49,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.answer_max_new_tokens, 64)
         self.assertTrue(config.allow_abstention)
         self.assertIsNone(config.answer_matcher_path)
+        self.assertIsNone(config.custom_metrics_path)
         self.assertEqual(config.generation_seed, 42)
         self.assertEqual(config.direct_batch_size, 8)
         self.assertEqual(config.direct_output_format, "final_prefix")
@@ -72,11 +73,14 @@ class ConfigTests(unittest.TestCase):
         checkpoint.mkdir()
         matcher = self.root / "matcher.py"
         matcher.write_text("def answer_match(prediction, target_answer):\n    return True\n")
+        metrics = self.root / "metrics.py"
+        metrics.write_text("def compute_metrics(records):\n    return {}\n")
         output = self.root / "custom-results"
         values = dict(self.required, model_name_or_path=str(checkpoint), output_dir=str(output),
                       reasoning_mode="reasoning", reasoning_max_new_tokens=256,
                       answer_max_new_tokens=16, allow_abstention=False,
                       answer_matcher_path=str(matcher),
+                      custom_metrics_path=str(metrics),
                       generation_seed=7, direct_batch_size=4, probe_seed=11,
                       probe_positions=["prompt_end"], probe_layers=[35],
                       probe_excluded_answers=["NONE"],
@@ -94,6 +98,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((config.reasoning_max_new_tokens, config.answer_max_new_tokens), (256, 16))
         self.assertFalse(config.allow_abstention)
         self.assertEqual(config.answer_matcher_path, matcher)
+        self.assertEqual(config.custom_metrics_path, metrics)
         self.assertEqual((config.generation_seed, config.direct_batch_size), (7, 4))
         self.assertEqual(config.probe_seed, 11)
         self.assertEqual(config.probe_positions, ("prompt_end",))
@@ -227,6 +232,10 @@ class ConfigTests(unittest.TestCase):
             ("answer_matcher_path", "relative.py"),
             ("answer_matcher_path", str(self.root / "missing.py")),
             ("answer_matcher_path", str(self.dataset)),
+            ("custom_metrics_path", None),
+            ("custom_metrics_path", "relative.py"),
+            ("custom_metrics_path", str(self.root / "missing.py")),
+            ("custom_metrics_path", str(self.dataset)),
             ("system_prompt_path", None),
             ("system_prompt_path", "relative.md"),
             ("system_prompt_path", str(self.root / "missing-system.md")),

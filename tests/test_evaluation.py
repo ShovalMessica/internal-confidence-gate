@@ -6,9 +6,12 @@ import tempfile
 
 from src.evaluation import (
     EvaluationError,
+    build_custom_metrics_identity,
     build_evaluation_identity,
     evaluate_answers,
+    evaluate_custom_metrics,
     load_answer_matcher,
+    load_custom_metrics,
     normalize_answer,
     probe_shortages,
 )
@@ -194,6 +197,117 @@ class EvaluationTests(unittest.TestCase):
                         allow_abstention=True,
                         matcher=load_answer_matcher(path),
                     )
+
+    def test_custom_metrics_receive_documented_records_and_calculate_rates(self):
+        path = self.root / "metrics.py"
+        path.write_text(
+            "def compute_metrics(records):\n"
+            "    selected = [r for r in records if r['metadata'].get('kind') == 'x']\n"
+            "    correct = sum(r['is_correct'] is True for r in selected)\n"
+            "    return {'selected_accuracy': {\n"
+            "        'numerator': correct, 'denominator': len(selected)}}\n",
+            encoding="utf-8",
+        )
+        custom = load_custom_metrics(path)
+        examples = [
+            {**_example(1, split="train"), "metadata": {"kind": "x"}},
+            {**_example(2, split="validation"), "metadata": {"other": 1}},
+            {**_example(3, split="test"), "metadata": {"kind": "x"}},
+        ]
+        generations = {
+            1: _generation(examples[0], "answer"),
+            2: _generation(examples[1], "wrong", stop_reason="token_limit"),
+            3: _generation(examples[2], "UNKNOWN"),
+        }
+        evaluated = evaluate_answers(examples, generations, allow_abstention=True)
+        evaluations = {record["id"]: record for record in evaluated.records}
+        results = evaluate_custom_metrics(
+            examples, generations, evaluations, custom
+        )
+
+        self.assertEqual(
+            results["overall"]["selected_accuracy"],
+            {"numerator": 1, "denominator": 2, "rate": 0.5},
+        )
+        self.assertEqual(
+            results["by_split"]["validation"]["selected_accuracy"],
+            {"numerator": 0, "denominator": 0, "rate": None},
+        )
+        identity = build_custom_metrics_identity("data", "generation", "evaluation", custom)
+        self.assertEqual(identity.implementation_sha256, custom.sha256)
+
+    def test_custom_metric_failures_are_clear_and_scope_specific(self):
+        sources = {
+            "missing": "value = 1\n",
+            "signature": "def compute_metrics():\n    return {}\n",
+            "syntax": "def compute_metrics(:\n",
+        }
+        for name, source in sources.items():
+            with self.subTest(name=name):
+                path = self.root / f"{name}_metrics.py"
+                path.write_text(source, encoding="utf-8")
+                with self.assertRaises(EvaluationError):
+                    load_custom_metrics(path)
+
+        invalid_outputs = {
+            "empty": "{}",
+            "extra": "{'metric': {'numerator': 0, 'denominator': 1, 'extra': 2}}",
+            "boolean": "{'metric': {'numerator': False, 'denominator': 1}}",
+            "negative": "{'metric': {'numerator': -1, 'denominator': 1}}",
+            "oversized": "{'metric': {'numerator': 2, 'denominator': 1}}",
+        }
+        example = {**_example(1), "metadata": {}}
+        generation = {1: _generation(example, "answer")}
+        evaluation = evaluate_answers(
+            [example], generation, allow_abstention=True
+        ).records[0]
+        for name, output in invalid_outputs.items():
+            with self.subTest(name=name):
+                path = self.root / f"{name}.py"
+                path.write_text(
+                    f"def compute_metrics(records):\n    return {output}\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(EvaluationError, "overall"):
+                    evaluate_custom_metrics(
+                        [example], generation, {1: evaluation}, load_custom_metrics(path)
+                    )
+
+        path = self.root / "raises.py"
+        path.write_text(
+            "def compute_metrics(records):\n    raise RuntimeError('broken')\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(EvaluationError, "overall.*RuntimeError"):
+            evaluate_custom_metrics(
+                [example], generation, {1: evaluation}, load_custom_metrics(path)
+            )
+
+    def test_custom_metrics_require_consistent_names_across_scopes(self):
+        path = self.root / "different.py"
+        path.write_text(
+            "def compute_metrics(records):\n"
+            "    name = records[0]['split'] if records else 'empty'\n"
+            "    return {name: {'numerator': 0, 'denominator': len(records)}}\n",
+            encoding="utf-8",
+        )
+        examples = [
+            {**_example(1, split="train"), "metadata": {}},
+            {**_example(2, split="validation"), "metadata": {}},
+            {**_example(3, split="test"), "metadata": {}},
+        ]
+        generations = {item["id"]: _generation(item, "answer") for item in examples}
+        evaluations = {
+            item["id"]: result
+            for item, result in zip(
+                examples,
+                evaluate_answers(examples, generations, allow_abstention=True).records,
+            )
+        }
+        with self.assertRaisesRegex(EvaluationError, "different metric names"):
+            evaluate_custom_metrics(
+                examples, generations, evaluations, load_custom_metrics(path)
+            )
 
     def test_exact_probe_minimums_pass_and_shortages_are_explicit(self):
         examples = []

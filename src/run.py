@@ -34,10 +34,14 @@ from src.config import ConfigurationError, TaskConfig, load_config
 from src.dataset import DatasetError, DatasetResult, assign_splits, load_dataset
 from src.evaluation import (
     AnswerMatcher,
+    CustomMetrics,
     EvaluationError,
+    build_custom_metrics_identity,
     build_evaluation_identity,
     evaluate_answers,
+    evaluate_custom_metrics,
     load_answer_matcher,
+    load_custom_metrics,
     probe_shortages,
 )
 from src.generation import GenerationError, generation_units
@@ -79,6 +83,7 @@ from src.run_store import (
     build_run_identity,
     complete_generation,
     complete_evaluation,
+    complete_custom_metrics,
     complete_activation_capture,
     complete_probe_selection,
     complete_probe_training,
@@ -95,6 +100,7 @@ from src.run_store import (
     save_model_metadata,
     validate_completed_generation,
     validate_completed_evaluation,
+    validate_completed_custom_metrics,
     validate_completed_activation_capture,
     validate_completed_probe_selection,
     validate_completed_probe_training,
@@ -110,18 +116,20 @@ class PreparedRun:
     dataset: DatasetResult
     split_source: Literal["dataset", "automatic"]
     answer_matcher: AnswerMatcher
+    custom_metrics: CustomMetrics | None
 
 
 def prepare_run(config_path: str | Path) -> PreparedRun:
     """Load configuration and return validated, split-assigned examples."""
     config = load_config(config_path)
     matcher = load_answer_matcher(config.answer_matcher_path)
+    custom_metrics = load_custom_metrics(config.custom_metrics_path)
     dataset = load_dataset(
         config.dataset_path, allow_abstention=config.allow_abstention
     )
     split_source = "dataset" if "split" in dataset.examples[0] else "automatic"
     dataset = assign_splits(dataset, config.split_ratios, config.split_seed)
-    return PreparedRun(config, dataset, split_source, matcher)
+    return PreparedRun(config, dataset, split_source, matcher, custom_metrics)
 
 
 def _print_exclusions(excluded: list[dict], stream: TextIO) -> None:
@@ -160,6 +168,8 @@ def _print_preparation(
     matcher = prepared.answer_matcher
     matcher_name = str(matcher.source_path) if matcher.source_path else "built-in"
     print(f"Answer matcher: {matcher_name}", file=stream)
+    if prepared.custom_metrics is not None:
+        print(f"Custom metrics: {prepared.custom_metrics.source_path}", file=stream)
     print(f"Dataset: {config.dataset_path}", file=stream)
     print(f"Run ID: {registered.directory.name}", file=stream)
     print(f"Run directory: {registered.directory}", file=stream)
@@ -376,6 +386,20 @@ def _print_evaluation(summary: dict, *, reused: bool) -> None:
             )
 
 
+def _print_custom_metrics(metrics_id: str, results: dict, *, reused: bool) -> None:
+    print(f"Custom metrics ID: {metrics_id}")
+    print(f"Custom metrics: {'reused' if reused else 'created'}")
+    print(f"  {'Scope':<12}{'Metric':<26}{'Numerator':>11}{'Denominator':>13}{'Rate':>10}")
+    scopes = [("overall", results["overall"]), *results["by_split"].items()]
+    for scope, metrics in scopes:
+        for index, (name, value) in enumerate(metrics.items()):
+            scope_label = scope if index == 0 else ""
+            print(
+                f"  {scope_label:<12}{name:<26}{value['numerator']:>11}"
+                f"{value['denominator']:>13}{_format_rate(value['rate']):>10}"
+            )
+
+
 def _print_shortages(shortages: list[dict], stream: TextIO) -> None:
     print("Probe-readiness requirements are not met:", file=stream)
     for shortage in shortages:
@@ -447,6 +471,51 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     summary["shortages"] = list(shortages)
     _print_evaluation(summary, reused=False)
     return summary
+
+
+def _evaluate_custom_metrics(
+    prepared: PreparedRun, registered: RegisteredRun
+) -> None:
+    custom_metrics = prepared.custom_metrics
+    if custom_metrics is None:
+        return
+
+    directory = registered.directory
+    run_record = load_run_record(directory)
+    generation = run_record.get("generation")
+    if not isinstance(generation, dict):
+        raise RunStoreError("Custom metrics require completed generation.")
+    evaluation_identity = build_evaluation_identity(
+        generation["artifact_sha256"], prepared.answer_matcher
+    )
+    evaluation = run_record.get("evaluations", {}).get(
+        evaluation_identity.evaluation_id
+    )
+    if not isinstance(evaluation, dict):
+        raise RunStoreError("Custom metrics require the current evaluation.")
+    identity = build_custom_metrics_identity(
+        prepared.dataset.content_sha256,
+        generation["artifact_sha256"],
+        evaluation["artifact_sha256"],
+        custom_metrics,
+    )
+    saved = validate_completed_custom_metrics(run_record, identity)
+    if saved is not None:
+        _print_custom_metrics(identity.metrics_id, saved, reused=True)
+        return
+
+    context = build_generation_context(prepared.config)
+    generations, _ = load_generation_records(
+        directory, context, prepared.dataset.examples
+    )
+    evaluations = load_evaluation_records(
+        directory, evaluation_identity.evaluation_id, prepared.dataset.examples
+    )
+    results = evaluate_custom_metrics(
+        prepared.dataset.examples, generations, evaluations, custom_metrics
+    )
+    complete_custom_metrics(directory, identity, custom_metrics, results)
+    _print_custom_metrics(identity.metrics_id, results, reused=False)
 
 
 def _activation_progress(done: int, total: int, started: float, starting_done: int) -> None:
@@ -950,6 +1019,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prepared, registered, args.config.resolve(), args.force_recompute
             )
             summary = _evaluate(prepared, registered)
+            _evaluate_custom_metrics(prepared, registered)
             if not summary["probe_ready"]:
                 _print_shortages(summary["shortages"], sys.stderr)
                 return 1

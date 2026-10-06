@@ -8,7 +8,8 @@ Example
 ├── input
 ├── target_answer
 ├── split                         [optional]
-└── semantic_spans            [optional]
+├── metadata                      [optional]
+└── semantic_spans                [optional]
     ├── span_1
     │   ├── start_char
     │   └── end_char
@@ -37,6 +38,12 @@ Example
 - **`split` (optional)** — `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
 
   If omitted, the toolkit randomly assigns 70%/15%/15% using seed 42. Both proportions and seed are configurable. Fractions are rounded down, then remaining examples go to the splits with the largest fractional remainders. Ties follow train, validation, test order.
+
+- **`metadata` (optional)** — Free-form JSON object passed to a configured
+  [custom metric function](configuration.md#custom-task-metrics). You choose
+  its inner field names and values; they may differ between examples. Metadata
+  is never sent to the model or used as a probe feature. Omit it or use `{}`
+  when no metadata is needed; `null` and non-object values are invalid.
 
 - **`semantic_spans` (optional)** — Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
 
@@ -71,7 +78,8 @@ Semantic spans require a fast Hugging Face tokenizer with character-offset suppo
 
 ## Validation
 
-- Ignore extra fields, including extra properties inside individual spans; retain only recognized fields.
+- Ignore extra fields, including extra properties inside individual spans;
+  retain only recognized fields. Preserve `metadata` exactly.
 - Skip malformed JSON, blank lines, non-object records, duplicate JSON keys, missing required fields, invalid values or spans, and normalized `UNKNOWN` targets when abstention is enabled. Whitespace-only input or target text is invalid.
 - The first occurrence of an integer ID reserves it, even if that record is invalid. Skip later duplicates.
 - After excluding invalid records, reject datasets with partially assigned splits or differing semantic-span key sets. The loader checks keys and offsets; users are responsible for semantic meaning and target independence.
@@ -100,7 +108,7 @@ These loading functions do not run a model, print messages, or save files. The r
 ## Example
 
 ```json
-{"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive"}
+{"id":1,"input":"Classify this review as Positive or Negative:\nI loved this product.","target_answer":"Positive","metadata":{"source":"customer_reviews"}}
 ```
 
 ## Adding examples later
