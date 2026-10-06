@@ -38,6 +38,9 @@ or training probes, run:
 python -m src.run configs/task.yaml --behavior-only
 ```
 
+This mode saves and reports behavior results even when the correct/incorrect
+class counts are too small for probe training.
+
 ## Research goal
 
 Language models can produce incorrect answers even when their output probabilities are high. Applications that need to decide which predictions to accept therefore need reliable ways to assess those predictions.

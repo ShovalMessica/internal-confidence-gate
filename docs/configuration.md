@@ -255,7 +255,7 @@ The function returns immutable `TaskConfig` settings with defaults filled in. It
 - Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
 - The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
 
-The configuration loader itself does not read dataset records, inspect model weights, or run generation. The runner coordinates those stages. Use `--prepare-only` to stop before model loading, or `--behavior-only` to stop after generation and answer evaluation without capturing activations or training probes.
+The configuration loader itself does not read dataset records, inspect model weights, or run generation. The runner coordinates those stages. Use `--prepare-only` to stop before model loading, or `--behavior-only` to stop after generation and answer evaluation without capturing activations or training probes. Behavior-only runs succeed and preserve their summaries even when the class counts are insufficient for probe training.
 
 ## Run identity and reuse
 

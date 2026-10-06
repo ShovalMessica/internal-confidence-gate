@@ -1078,15 +1078,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             summary = _evaluate(prepared, registered)
             _evaluate_custom_metrics(prepared, registered)
-            if not summary["probe_ready"]:
-                _print_shortages(summary["shortages"], sys.stderr)
-                return 1
             if args.behavior_only:
                 print(
                     "Model Behavior complete. Activation capture and probe stages "
                     "were not run."
                 )
             else:
+                if not summary["probe_ready"]:
+                    _print_shortages(summary["shortages"], sys.stderr)
+                    return 1
                 _capture_activations(
                     prepared, registered, loaded, args.force_recompute
                 )

@@ -527,6 +527,39 @@ class RunTests(unittest.TestCase):
         self.test_evaluation_mock.assert_not_called()
         self.report_mock.assert_not_called()
 
+    def test_behavior_only_does_not_require_probe_ready_classes(self):
+        self.write_dataset(self.record(index) for index in range(700))
+        self.write_config()
+        prepared = prepare_run(self.config)
+        records = tuple(
+            self.generation_record(example, "Positive")
+            for example in prepared.dataset.examples
+        )
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model",
+            "tokenizer_class": "Tokenizer",
+            "dtype": "float32",
+            "device": "cpu",
+            "torch_version": "test",
+            "transformers_version": "test",
+            "generation_config": {},
+        }
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch(
+                "src.run.generation_units",
+                return_value=iter((GenerationUnit(records),)),
+            ),
+        ):
+            code, stdout, stderr = self.invoke_full(None, "--behavior-only")
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Model Behavior complete", stdout)
+        self.assertNotIn("Probe training cannot begin", stdout)
+        self.capture_mock.assert_not_called()
+
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
