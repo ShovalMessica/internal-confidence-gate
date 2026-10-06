@@ -251,6 +251,15 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def write_system_prompt(source: Path, destination: Path) -> None:
+    """Extract the literal prompt from the Markdown display code block."""
+
+    lines = source.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 3 or lines[0] != "```text" or lines[-1] != "```":
+        raise ValueError(f"{source} must contain one outer ```text code block.")
+    destination.write_text("\n".join(lines[1:-1]) + "\n", encoding="utf-8")
+
+
 def write_config(
     path: Path,
     *,
@@ -284,6 +293,8 @@ def main() -> None:
     root = Path(__file__).resolve().parent
     generated = root / "generated"
     generated.mkdir(exist_ok=True)
+    system_prompt = generated / "system-prompt.txt"
+    write_system_prompt(root / "system-prompt.md", system_prompt)
 
     development = read_jsonl(root / "dev-sample.jsonl")
     validate_partition_isolation(development)
@@ -302,14 +313,14 @@ def main() -> None:
         generated / "task.yaml",
         model=args.model,
         dataset=dataset,
-        system_prompt=root / "system-prompt.txt",
+        system_prompt=system_prompt,
         output_dir=generated / "outputs",
     )
     write_config(
         generated / "dev-task.yaml",
         model=args.model,
         dataset=root / "dev-sample.jsonl",
-        system_prompt=root / "system-prompt.txt",
+        system_prompt=system_prompt,
         output_dir=generated / "dev-outputs",
     )
     print(f"Wrote {len(records)} disjoint examples to {dataset}")

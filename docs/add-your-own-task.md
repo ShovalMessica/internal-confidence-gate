@@ -15,7 +15,9 @@ incorrect. In the example, the task answer is a participant label (`A`-`J`),
 `NONE`, or `UNKNOWN`.
 
 Fixed rules and demonstrations are in
-[`system-prompt.txt`](../examples/ner/system-prompt.txt). Each dataset `input`
+[`system-prompt.md`](../examples/ner/system-prompt.md). It uses one text code
+block so GitHub displays the exact prompt literally; `prepare.py` extracts that
+block without its fences for the model. Each dataset `input`
 contains the participant list and utterance for one example. Do not include
 `FINAL:` in either place; the toolkit supplies its answer instruction and marker.
 
@@ -74,7 +76,7 @@ settings:
 ```yaml
 model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
 dataset_path: <absolute path>/dataset.jsonl
-system_prompt_path: <absolute path>/system-prompt.txt
+system_prompt_path: <absolute path>/generated/system-prompt.txt
 reasoning_mode: direct
 decoding_strategy: greedy
 answer_max_new_tokens: 4
@@ -143,7 +145,7 @@ eligible population.
 
 Replace these parts:
 
-1. **Shared instructions:** rewrite `system-prompt.txt` with the task, valid
+1. **Shared instructions:** rewrite the text block in `system-prompt.md` with the task, valid
    answers, decision rules, and useful demonstrations.
 2. **Example inputs:** put each complete example-specific user message in
    `input`.

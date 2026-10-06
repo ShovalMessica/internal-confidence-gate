@@ -7,6 +7,8 @@ are fictional.
 The generator uses fixed random seeds to sample names, roster order, speakers,
 and utterance context. Clean/corrupted pairs stay in the same split, while task
 content is checked for overlap across development, train, validation, and test.
+The Markdown prompt source displays as literal text on GitHub; preparation
+extracts it without the surrounding code fence before model use.
 
 From the repository root:
 

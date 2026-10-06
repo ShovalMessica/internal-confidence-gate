@@ -1,6 +1,8 @@
 """Checks for the executable synthetic NER example."""
 
 from collections import defaultdict
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from examples.ner.prepare import (
@@ -9,6 +11,7 @@ from examples.ner.prepare import (
     build_records,
     content_key,
     validate_partition_isolation,
+    write_system_prompt,
 )
 
 
@@ -66,6 +69,17 @@ class NerExampleTests(unittest.TestCase):
                 self.assertEqual(record["target_answer"], "NONE")
             else:
                 self.assertNotEqual(record["target_answer"], "NONE")
+
+    def test_markdown_prompt_is_materialized_without_display_fences(self):
+        source = Path(__file__).parents[1] / "examples" / "ner" / "system-prompt.md"
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "system-prompt.txt"
+            write_system_prompt(source, destination)
+            prompt = destination.read_text(encoding="utf-8")
+
+        self.assertTrue(prompt.startswith("# Task\n"))
+        self.assertIn("<PARTICIPANTS>", prompt)
+        self.assertNotIn("```", prompt)
 
 
 if __name__ == "__main__":
