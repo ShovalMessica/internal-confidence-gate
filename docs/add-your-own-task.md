@@ -4,6 +4,8 @@ This walkthrough uses the executable synthetic
 [name-correction example](../examples/ner/README.md). It first checks a prompt
 on a small development sample, then runs a separate full dataset through probe
 training and reporting.
+The synthetic task demonstrates the workflow rather than supporting a research
+claim about gate quality.
 
 Use [Dataset format](dataset-format.md) and
 [Configuration](configuration.md) as the exact references.
@@ -53,10 +55,10 @@ A record contains a unique integer ID, the complete example-specific user
 message, its target answer, its split, and optional annotations:
 
 ```json
-{"id":1000000,"input":"<PARTICIPANTS>\nA William Gonzalez\nB Taylor Allen\nC Thomas Moore\nD Christopher Lopez\nE Isabella Jones\nF Olivia Harris\nG Knox Smith\nH Kenneth Scott\nI Edward Thompson\nJ Teresa Thomas\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<1000000><Speaker 14>We still need feedback from Will about hiring.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train","semantic_spans":{"span_1":{"start_char":267,"end_char":271}},"metadata":{"case_family":"dev_00000","example_type":"corrupted"}}
+{"id":1000000,"input":"<PARTICIPANTS>\nA William Gonzalez\nB Taylor Allen\nC Thomas Moore\nD Christopher Lopez\nE Isabella Jones\nF Olivia Harris\nG Knox Smith\nH Kenneth Scott\nI Edward Thompson\nJ Teresa Thomas\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<846479><Speaker 14>We still need feedback from Will about hiring.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train","semantic_spans":{"span_1":{"start_char":266,"end_char":270}},"metadata":{"case_family":"dev_00000","example_type":"corrupted"}}
 ```
 
-Here `span_1` selects characters `[267, 271)`, the complete substring `Will`.
+Here `span_1` selects characters `[266, 270)`, the complete substring `Will`.
 The span marks an additional task-specific activation location; it does not
 reveal whether the model's answer is correct.
 

@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -69,6 +70,17 @@ class NerExampleTests(unittest.TestCase):
                 self.assertEqual(record["target_answer"], "NONE")
             else:
                 self.assertNotEqual(record["target_answer"], "NONE")
+
+    def test_transcript_ids_do_not_encode_clean_or_corrupted_targets(self):
+        targets_by_transcript = defaultdict(set)
+        for record in self.development + self.full:
+            match = re.search(r"<MEETING_TRANSCRIPT>\n<(\d+)>", record["input"])
+            self.assertIsNotNone(match)
+            targets_by_transcript[match.group(1)].add(record["target_answer"])
+
+        for targets in targets_by_transcript.values():
+            self.assertEqual(len(targets), 2)
+            self.assertIn("NONE", targets)
 
     def test_markdown_prompt_is_materialized_without_display_fences(self):
         source = Path(__file__).parents[1] / "examples" / "ner" / "system-prompt.md"

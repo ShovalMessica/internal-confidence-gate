@@ -124,6 +124,7 @@ def _new_family(
     split: str,
     first_example_id: int,
     target_index: int,
+    transcript_id: int,
 ) -> list[dict]:
     pairs = rng.sample(NAME_PAIRS, 10)
     surnames = rng.sample(LAST_NAMES, 10)
@@ -157,7 +158,7 @@ def _new_family(
         utterance = template.format(mention=mention, **fields)
         input_text = (
             f"<PARTICIPANTS>\n{roster}\n</PARTICIPANTS>\n\n"
-            f"<MEETING_TRANSCRIPT>\n<{example_id}><{speaker}>{utterance}\n"
+            f"<MEETING_TRANSCRIPT>\n<{transcript_id}><{speaker}>{utterance}\n"
             "</MEETING_TRANSCRIPT>"
         )
         start = input_text.rindex(mention)
@@ -196,6 +197,9 @@ def build_records(
     family_number = 0
     next_id = id_offset
     split_counts = _split_family_counts(count // 2)
+    transcript_ids = random.Random(seed ^ 0x5EED).sample(
+        range(100_000, 1_000_000), count // 2
+    )
 
     for split in ("train", "validation", "test"):
         created = 0
@@ -207,6 +211,7 @@ def build_records(
                 split=split,
                 first_example_id=next_id,
                 target_index=family_number % 10,
+                transcript_id=transcript_ids[family_number],
             )
             keys = {content_key(record["input"]) for record in candidate}
             if len(keys) != len(candidate) or keys & seen:

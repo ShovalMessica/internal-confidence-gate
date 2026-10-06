@@ -3,6 +3,7 @@
 This executable example asks a model to identify misspelled or nickname forms
 of participant names in synthetic meeting utterances. All people and utterances
 are fictional.
+It demonstrates the toolkit workflow; it is not a benchmark or research result.
 
 The generator uses fixed random seeds to sample names, roster order, speakers,
 and utterance context. Clean/corrupted pairs stay in the same split, while task
