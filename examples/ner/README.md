@@ -49,3 +49,29 @@ runner settings, edit `examples/ner/generated/dev-task.yaml` or
 See [Add your own task](../../docs/add-your-own-task.md) for the adaptation
 walkthrough and [Dataset format](../../docs/dataset-format.md) for the exact
 record contract.
+
+## Verified run
+
+The complete 1,000-example pipeline passed on 2026-10-07 with
+`Qwen/Qwen3-4B-Instruct-2507`, revision
+`cdbee75f17c01a7cc42f958dc650907174af0554`, using the unchanged example prompt
+and seed `91337`. In the generated task YAML, this check set `dtype: "float16"`
+and `device: "cuda:0"` for a Quadro RTX 8000. Other settings kept the generated
+defaults: direct mode, greedy decoding, four answer tokens, and enabled abstention.
+The runtime used PyTorch `2.5.1+cu121` and Transformers `4.51.3`.
+
+Model Behavior produced 627 correct, 324 incorrect, and 49 abstained predictions,
+with no invalid outputs. All splits met the training minimums. Activation capture
+included `span_1`; all 148 probes trained and the reports were created.
+Validation selected `answer_tokens / hidden_state_18` at `target_tpr: 0.90`.
+
+Gate evaluation used 191 concrete test predictions: 123 correct and 68 incorrect.
+Both thresholds were selected on validation and applied unchanged to test.
+
+| Method | Test TPR | Test FPR | Balanced accuracy | AUROC |
+| --- | ---: | ---: | ---: | ---: |
+| Selected probe | 87.8% | 1.5% | 93.2% | 0.9935 |
+| Output probability | 86.2% | 83.8% | 51.2% | 0.6031 |
+
+Repeating the command reused every stage without loading the model. These results
+verify the synthetic workflow; they do not establish performance on real NER data.
