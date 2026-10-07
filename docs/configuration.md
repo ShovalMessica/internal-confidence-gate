@@ -33,30 +33,56 @@ assistant generation boundary.
 
 - **`reasoning_mode`** - Required: `direct` or `reasoning`.
 
-  - **Direct:** Disable thinking when the model's chat template supports that option, append the answer instruction and `FINAL:`, then generate the answer.
-  - **Reasoning:** Enable thinking when supported and append:
+  **`direct`**
 
-    > Reason about the task first. A separate final-answer instruction will follow.
+  Append this instruction to the user message:
 
-    Generate reasoning until its end boundary or token limit. Close reasoning if needed, then append the answer instruction and `FINAL:` before generating the answer.
+  ```text
+  Complete the FINAL: line with only the answer, without reasoning or explanation.
+  ```
 
-  **Answer instruction:**
+  Render the messages through the chat template, open the assistant's response,
+  supply `FINAL:`, then generate the answer.
 
-  > Complete the FINAL: line with only the answer, without reasoning or explanation.
+  **`reasoning`**
 
-  **The toolkit supplies `FINAL:`; the model generates the answer after it.** Extraction uses this known boundary.
+  Append this instruction to the user message:
 
-- **`reasoning_max_new_tokens` (optional; default: `1024`)** - Reasoning-token limit. Reaching it triggers the answer stage. Applies only in reasoning mode.
+  ```text
+  Reason about the task first. A separate final-answer instruction will follow.
+  ```
 
-- **`answer_max_new_tokens` (optional; default: `64`)** - Separate answer-token limit, used in both modes.
+  Generate reasoning until `</think>`, the model's end-of-response token, or
+  the reasoning-token limit. Supply `</think>` if missing, then append the
+  final-answer instruction above and `FINAL:` inside the same assistant
+  response. Resume generation to produce the answer.
 
-- **`allow_abstention` (optional; default: `true`)** - Add the applicable sentence to the answer instruction:
+  The toolkit requests thinking enabled for reasoning mode and disabled for
+  direct mode through the chat template when supported.
 
-  - Enabled: “If you cannot determine the answer, return UNKNOWN.”
-  - Disabled: “Provide your best answer. Do not return UNKNOWN.”
+- **`reasoning_max_new_tokens` (optional; default: `1024`)** - Maximum reasoning
+  tokens before starting the answer step. Used only in reasoning mode.
 
-  Enabled UNKNOWN predictions are reported separately and excluded from probe
-  training and gate TPR/FPR.
+- **`answer_max_new_tokens` (optional; default: `64`)** - Maximum generated
+  answer tokens. Used in both modes.
+
+- **`allow_abstention` (optional; default: `true`)** - Adds one sentence to the
+  final-answer instruction.
+
+  When enabled:
+
+  ```text
+  If you cannot determine the answer, return UNKNOWN.
+  ```
+
+  When disabled:
+
+  ```text
+  Provide your best answer. Do not return UNKNOWN.
+  ```
+
+  Enabled `UNKNOWN` responses are reported as abstentions and excluded from
+  probe training and gate evaluation.
 
 - **`generation_seed` (optional; default: `42`)** - Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 

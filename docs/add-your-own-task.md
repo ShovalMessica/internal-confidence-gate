@@ -10,44 +10,81 @@ data only; it is not part of preparing your own task.
 
 ## 1. Prepare your prompt
 
-Write instructions that tell the model what to do and what kind of answer to
-return. Include the context, decision rules, and examples it needs to understand
-your task.
+Describe the task, expected answer, and any rules or examples the model needs.
+Choose one of these two options.
 
-Separate the shared instructions from the content that changes between examples:
+**Shared instructions in a system prompt**
 
-- **Shared instructions:** save these in a UTF-8 text file, such as
-  `system-prompt.txt`. The toolkit sends this same file as the system message
-  for every example. Set its path through `system_prompt_path` in step 3.
-- **Example content:** put this in each dataset record's `input` field. The
-  toolkit sends it as the user message alongside the shared instructions.
+Use this when the same instructions apply to every example. Save them in a
+UTF-8 text file and set its absolute path as `system_prompt_path`.
 
-For a sentiment task, `system-prompt.txt` could contain:
+Contents of `system-prompt.txt`:
 
 ```text
 Classify the review as POSITIVE or NEGATIVE.
 ```
 
-One example's `input` would be `The battery lasts all day.` The instructions
-stay the same; the review changes for each example.
+Each dataset record's `input` contains only the changing content:
 
-The prompt file is read as written. Copy only the instructions, without the
-surrounding code fences shown above. The toolkit does not fill placeholders.
-If you prefer a single message, include the instructions in every `input` and
-omit `system_prompt_path`.
+```text
+The battery lasts all day.
+```
 
-**Answer formatting is handled by the toolkit.** It adds an instruction to
-return only the final answer, then starts the model's answer with `FINAL:`.
-The model generates the answer after that marker, for example `POSITIVE`.
-This lets the toolkit locate the answer and its tokens. Do not add the marker
-yourself. In reasoning mode, this answer step follows a separate reasoning phase.
-See [Generation](configuration.md#generation) for the exact instructions.
+The toolkit sends the file as a **system message** and each `input` as a
+**user message**.
 
-See [Prompt examples](prompt-examples.md) for fuller task prompts. Try your
-instructions on a separate development sample before the full run, as described
-in step 4.
+**Complete prompt in each input**
 
-## 2. Prepare your dataset
+Use this when you already have complete prompts or need different instructions
+per example. Omit `system_prompt_path` and put everything in each record's
+`input`:
+
+```text
+Classify the review as POSITIVE or NEGATIVE.
+
+Review: The battery lasts all day.
+```
+
+The toolkit sends this as **one user message**, without a system message.
+These examples show two ways to supply the same task.
+
+Both options use the model tokenizer's **chat template** to format the messages
+and mark where the assistant's response begins. A compatible chat model is
+required, even without a system prompt. You do not add role markers yourself.
+
+Supply finished text without unresolved placeholders or code fences around the
+prompt. Test your instructions on separate development examples, then keep the
+instruction template and message structure consistent across training,
+validation, and test.
+
+See [Prompt examples](prompt-examples.md) for more detailed task prompts.
+
+## 2. Reasoning mode
+
+Set `reasoning_mode` to choose how the model answers:
+
+- **`direct`:** the toolkit appends the answer instruction to your user message,
+  formats the messages, starts the assistant's response with `FINAL:`, then lets
+  the model generate the answer.
+- **`reasoning`:** the toolkit requests reasoning first. When it finishes or
+  reaches its token limit, the toolkit closes reasoning if needed, appends the
+  final-answer instruction and `FINAL:` inside the same assistant response,
+  then lets the model generate the answer.
+
+The toolkit supplies `FINAL:` so it can locate the answer and identify its
+tokens for activation capture. **You do not add this marker yourself.**
+
+For example, the toolkit supplies `FINAL:` and the model generates `POSITIVE`,
+producing `FINAL: POSITIVE`.
+
+By default, the model may return `UNKNOWN` when uncertain. Set
+`allow_abstention: false` to request its best answer instead. Keep your task
+instructions consistent with that choice.
+
+See [Generation settings](configuration.md#generation) for the exact
+instructions and token limits.
+
+## 3. Prepare your dataset
 
 Create a UTF-8 `.jsonl` file with one object per example. Each record needs a
 unique integer `id`, the complete user message in `input`, and one plain
@@ -67,7 +104,7 @@ Targets are never sent to the model or used as probe features. The probe learns
 whether a prediction is correct; balanced task answers do not guarantee enough
 correct and incorrect predictions.
 
-## 3. Fill in the configuration
+## 4. Fill in the configuration
 
 Edit [`configs/task.yaml`](../configs/task.yaml). Replace these required fields:
 
@@ -84,7 +121,7 @@ Review the remaining defaults, especially token limits and abstention. See
 [Configuration](configuration.md) for supported models and all settings.
 Local checkpoints also require `model_revision`.
 
-## 4. Check the prompt on development data
+## 5. Check the prompt on development data
 
 Use a small, separate development dataset while refining your prompt. Copy
 your configuration to `configs/dev-task.yaml` and change its `dataset_path`
@@ -108,7 +145,7 @@ Both checks accept small samples. Revise your prompt file or dataset inputs and
 rerun the behavior command as needed. The toolkit reads your files directly.
 Freeze the prompt before using the full dataset, including its test split.
 
-## 5. Run Model Behavior on the full dataset
+## 6. Run Model Behavior on the full dataset
 
 Use `configs/task.yaml`, pointing to your full dataset:
 
@@ -122,7 +159,7 @@ token-limit outputs overall and by split. Check the
 [probe-training minimums](dataset-format.md#dataset-size) before proceeding.
 Behavior-only runs save results even when those counts are insufficient.
 
-## 6. Train and evaluate the gate
+## 7. Train and evaluate the gate
 
 Run the same configuration without a stopping flag:
 
