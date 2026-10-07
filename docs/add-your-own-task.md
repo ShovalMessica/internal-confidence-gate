@@ -22,7 +22,10 @@ Choose one of these two options:
 - **Shared instructions in a system prompt**
 
   Use this when the same instructions apply to every example. Save them in a
-  UTF-8 text file and set its absolute path as `system_prompt_path`.
+  UTF-8 text file, such as `system-prompt.txt`. You can keep it anywhere.
+  In [`configs/task.yaml`](../configs/task.yaml), uncomment `system_prompt_path`
+  and replace the example path with your file's absolute path.
+  [Step 4](#4-fill-in-the-configuration) covers the configuration.
 
   Contents of `system-prompt.txt`:
 
@@ -36,8 +39,9 @@ Choose one of these two options:
   The battery lasts all day.
   ```
 
-  The toolkit sends the file as a **system message** and each `input` as a
-  **user message**.
+  The toolkit sends the file's contents as a **system message** and each `input`
+  as a **user message**. [Step 3: Prepare your dataset](#3-prepare-your-dataset)
+  explains how to supply that user message in each record.
 
 - **Complete prompt in each input**
 
