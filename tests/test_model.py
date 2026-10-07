@@ -181,6 +181,25 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(cuda.checked_devices, [(0, False), (1, False)])
         self.assertEqual(cuda.current_device(), 0)
 
+    def test_precision_warning_is_bold_red_only_in_a_terminal(self):
+        model = _Model()
+        model.dtype = "torch.bfloat16"
+        dependencies = self.dependencies(model=model)
+        dependencies[0].cuda.native_bf16[0] = False
+        for interactive in (True, False):
+            with (
+                self.subTest(interactive=interactive),
+                patch("src.model.sys.stderr.isatty", return_value=interactive),
+                self.assertLogs("src.model", level="WARNING") as logs,
+            ):
+                self.load(dependencies=dependencies)
+            message = logs.records[0].getMessage()
+            if interactive:
+                self.assertTrue(message.startswith("\x1b[1m\x1b[31mModel precision:"))
+                self.assertTrue(message.endswith("\x1b[0m"))
+            else:
+                self.assertNotIn("\x1b", message)
+
     def test_warns_for_single_device_models_without_a_device_map(self):
         for device in ("cuda", "cuda:1"):
             with self.subTest(device=device):

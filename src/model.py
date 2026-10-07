@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import sys
 from typing import Any
+
+from colorama import Fore, Style
 
 from src.config import TaskConfig
 
@@ -98,12 +101,14 @@ def _warn_slow_precision(torch: Any, loaded: LoadedModel) -> None:
             if not torch.cuda.is_bf16_supported(including_emulation=False):
                 unsupported.append(f"cuda:{index} ({torch.cuda.get_device_name(index)})")
     if unsupported:
-        logging.getLogger(__name__).warning(
+        message = (
             "Model precision: bfloat16 lacks native support on %s; generation may "
             "be slow. Consider setting dtype: \"float16\" in your task YAML if your "
-            "model supports FP16. Continuing with bfloat16; precision was not changed.",
-            ", ".join(unsupported),
+            "model supports FP16. Continuing with bfloat16; precision was not changed."
         )
+        if sys.stderr.isatty():
+            message = f"{Style.BRIGHT}{Fore.RED}{message}{Style.RESET_ALL}"
+        logging.getLogger(__name__).warning(message, ", ".join(unsupported))
 
 
 def _resolve_model(

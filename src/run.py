@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import time
 from typing import Literal, Sequence, TextIO
+
+from colorama import just_fix_windows_console
 
 from src.activation import (
     ActivationError,
@@ -166,7 +169,7 @@ class _Tee:
         self.terminal.write(value)
         # Console libraries may retain this stream for their shutdown callbacks.
         if not self.log.closed:
-            self.log.write(value)
+            self.log.write(re.sub(r"\x1b\[[0-9;]*m", "", value))
         return len(value)
 
     def flush(self) -> None:
@@ -179,6 +182,7 @@ class _Tee:
 
 
 def _start_execution_log(directory: Path) -> tuple[TextIO, TextIO, TextIO]:
+    just_fix_windows_console()
     path = directory / "execution.log"
     try:
         log = path.open("a", encoding="utf-8", newline="\n")

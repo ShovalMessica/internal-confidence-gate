@@ -37,6 +37,15 @@ from src.run_store import build_run_identity
 
 
 class ExecutionLogTests(unittest.TestCase):
+    def test_warning_color_reaches_terminal_but_not_execution_log(self):
+        terminal, log = io.StringIO(), io.StringIO()
+        warning = "Model precision: warning"
+        colored = f"\x1b[1m\x1b[31m{warning}\x1b[0m\n"
+        stream = _Tee(terminal, log)
+        self.assertEqual(stream.write(colored), len(colored))
+        self.assertEqual(terminal.getvalue(), colored)
+        self.assertEqual(log.getvalue(), warning + "\n")
+
     def test_duration_uses_largest_two_units(self):
         for seconds, expected in (
             (0, "0s"), (0.25, "250ms"), (1, "1s"), (8, "8s"),
