@@ -119,9 +119,8 @@ After generation, the runner compares each saved answer with its dataset target.
 
 Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
 
-Other task labels, including `NONE`, are concrete predictions. They participate
-in probe training when valid. Gate coverage includes only correct and incorrect
-concrete predictions.
+Probe training and gate coverage include only correct and incorrect predictions,
+excluding invalid outputs and enabled abstentions.
 
 The runner prints and stores a Model Behavior summary overall and by split. For `N` examples in the reported scope:
 

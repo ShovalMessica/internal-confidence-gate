@@ -140,7 +140,7 @@ See [dataset fields](dataset-format.md#fields),
 [minimum sizes](dataset-format.md#dataset-size) when preparing your records.
 
 With abstention enabled, `UNKNOWN` is reserved for model responses and cannot
-be a target. Other task answers, such as `NONE`, participate normally.
+be a target.
 Targets are never sent to the model or used as probe features. The probe learns
 whether a prediction is correct; balanced task answers do not guarantee enough
 correct and incorrect predictions.
