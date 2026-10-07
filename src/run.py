@@ -250,7 +250,7 @@ def _print_preparation(
         print(f"Custom metrics: {prepared.custom_metrics.source_path}", file=stream)
     print(f"Dataset: {config.dataset_path}", file=stream)
     if registered is not None:
-        print(f"Run ID: {registered.directory.name}", file=stream)
+        print(f"Run name: {registered.directory.name}", file=stream)
         print(f"Run directory: {registered.directory}", file=stream)
         print(
             f"Run record: {'created' if registered.created else 'reused'}", file=stream

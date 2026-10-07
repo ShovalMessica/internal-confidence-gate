@@ -158,6 +158,8 @@ In that YAML file, uncomment `system_prompt_path` if you use shared instructions
 and enter the prompt file's absolute path. To choose a results directory,
 uncomment `output_dir` and enter its absolute path. Otherwise, results go under
 `outputs/` at the repository root, regardless of where the YAML is saved.
+Run folders use the YAML filename, such as `outputs/dev-task/`. Changed inputs
+get a numbered suffix (`dev-task_2/`); matching setups reuse the existing folder.
 
 Review the remaining defaults, especially token limits and abstention. See
 [Model and paths](configuration.md#model-and-paths) for supported models and

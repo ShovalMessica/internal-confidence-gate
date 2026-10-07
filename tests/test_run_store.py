@@ -1,6 +1,7 @@
 """Offline checks for generation artifact integrity and recovery."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -25,6 +26,8 @@ from src.evaluation import (
 )
 from src.run_store import (
     RunStoreError,
+    build_run_identity,
+    register_run,
     append_generation_records,
     complete_custom_metrics,
     complete_evaluation,
@@ -69,6 +72,74 @@ def _evaluation(example_id, outcome="correct"):
         "is_correct": {"correct": True, "incorrect": False}.get(outcome),
         **({"invalid_reason": "empty_answer"} if outcome == "invalid" else {}),
     }
+
+
+class RunNamingTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.config = TaskConfig(
+            model_name_or_path="organization/model",
+            dataset_path=self.root / "data.jsonl",
+            reasoning_mode="direct",
+            output_dir=self.root / "outputs",
+        )
+
+    def register(self, filename="dev-task.yaml", config=None, dataset_hash="a" * 64):
+        config = config or self.config
+        identity = build_run_identity(config, dataset_hash, "dataset")
+        return register_run(identity, config, self.root / filename, {"valid_examples": 20})
+
+    def test_changed_inputs_get_suffixes_and_reverting_reuses_original(self):
+        first = self.register()
+        record = first.directory / "run.json"
+        before = (record.read_bytes(), record.stat().st_mtime_ns)
+        second = self.register(config=replace(self.config, answer_max_new_tokens=32))
+        third = self.register(dataset_hash="b" * 64)
+        self.assertEqual([r.directory.name for r in (first, second, third)],
+                         ["dev-task", "dev-task_2", "dev-task_3"])
+        reused = self.register()
+        self.assertFalse(reused.created)
+        self.assertEqual(reused.directory, first.directory)
+        self.assertEqual((record.read_bytes(), record.stat().st_mtime_ns), before)
+        self.assertEqual(self.register(dataset_hash="b" * 64).directory, third.directory)
+
+    def test_renamed_yaml_and_moved_dataset_reuse_matching_run(self):
+        first = self.register()
+        reused = self.register("renamed.yaml", config=replace(
+            self.config, dataset_path=self.root / "moved.jsonl"
+        ))
+        self.assertFalse(reused.created)
+        self.assertEqual(reused.directory, first.directory)
+
+    def test_existing_hash_named_run_is_reused_without_moving_or_rewriting(self):
+        first = self.register()
+        record = load_run_record(first.directory)
+        legacy = self.config.output_dir / record["run_id"]
+        first.directory.rename(legacy)
+        before = (legacy / "run.json").read_bytes()
+        reused = self.register()
+        self.assertFalse(reused.created)
+        self.assertEqual(reused.directory, legacy)
+        self.assertEqual((legacy / "run.json").read_bytes(), before)
+        self.assertEqual(list(self.config.output_dir.iterdir()), [legacy])
+
+    def test_numbered_name_collision_preserves_other_config_results(self):
+        self.register()
+        other = self.register("dev-task_2.yaml", dataset_hash="b" * 64)
+        before = (other.directory / "run.json").read_bytes()
+        changed = self.register(dataset_hash="c" * 64)
+        self.assertEqual(changed.directory.name, "dev-task_3")
+        self.assertEqual((other.directory / "run.json").read_bytes(), before)
+
+    def test_conflicting_fingerprint_metadata_is_rejected(self):
+        registered = self.register()
+        record = load_run_record(registered.directory)
+        record["effective_configuration"]["answer_max_new_tokens"] = 999
+        (registered.directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(RunStoreError, "conflict with its fingerprint"):
+            self.register()
 
 
 class RunStoreTests(unittest.TestCase):

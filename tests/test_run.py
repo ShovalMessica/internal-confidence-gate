@@ -197,7 +197,8 @@ class RunTests(unittest.TestCase):
         run_directories = self.run_directories()
         self.assertEqual(len(run_directories), 1)
         record = json.loads((run_directories[0] / "run.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["run_id"], run_directories[0].name)
+        self.assertEqual(run_directories[0].name, "task")
+        self.assertEqual(record["run_id"], record["fingerprint"][:12])
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertEqual(record["preparation"]["split_sizes"], {
             "train": 490, "validation": 105, "test": 105,
@@ -287,6 +288,7 @@ class RunTests(unittest.TestCase):
                 self.assertEqual((code, stderr), (0, ""))
                 self.assertIn("No files were written.", stdout)
                 self.assertNotIn("Run ID:", stdout)
+                self.assertNotIn("Run name:", stdout)
                 for mock in (register, log, model, generate):
                     mock.assert_not_called()
                 self.assertEqual(set(self.root.rglob("*")), paths_before)
@@ -1473,10 +1475,7 @@ class RunTests(unittest.TestCase):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
         prepared = prepare_run(self.config)
-        identity = build_run_identity(
-            prepared.config, prepared.dataset.content_sha256, prepared.split_source
-        )
-        run_directory = prepared.config.output_dir / identity.run_id
+        run_directory = prepared.config.output_dir / self.config.stem
         run_directory.mkdir(parents=True)
 
         code, stdout, stderr = self.invoke_registration()

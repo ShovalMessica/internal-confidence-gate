@@ -18,7 +18,7 @@ your [JSONL dataset](dataset-format.md).
   placeholders. When omitted, generation uses only the dataset `input` as the
   user message. The file's SHA-256 hash is recorded in the run identity, so
   changing its contents creates a different generation run.
-- **`output_dir` (optional)** - Absolute path to the results directory. If omitted, use `<repository>/outputs`, regardless of the YAML location. Behavior and full runs are stored under `<output_dir>/<run_id>`. Preparation checks write no files.
+- **`output_dir` (optional)** - Absolute path to the results directory. If omitted, use `<repository>/outputs`, regardless of the YAML location. Behavior and full runs are stored under `<output_dir>/<run_name>`. Preparation checks write no files.
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
@@ -292,9 +292,15 @@ predictions, targets, and outcomes. These flags go in the command, not the YAML.
 
 ## Run identity and reuse
 
-Behavior and full runs are stored under `<output_dir>/<run_id>`.
-`--prepare-only` creates no run folder or log. The run ID depends
-on the effective configuration and exact dataset contents, not their file paths.
+Behavior and full runs are stored under `<output_dir>/<run_name>`.
+The folder name comes from the YAML filename: `dev-task.yaml` creates
+`dev-task/`. Changed inputs create `dev-task_2/`, `dev-task_3/`, and so on.
+Matching setups reuse their existing folder, even if the YAML is renamed or
+you return to earlier settings. Existing hash-named folders remain reusable.
+
+Fingerprints stay in `run.json` and depend on the effective configuration,
+prompt contents, and exact dataset contents, not their file paths.
+`--prepare-only` creates no run folder or log.
 The resolved model revision is pinned so resumed runs use the same weights.
 
 Running the same setup again reuses completed work. Dataset extensions can reuse

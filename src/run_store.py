@@ -185,7 +185,7 @@ def _validate_record(record: dict, identity: RunIdentity, path: Path) -> None:
     if record.get("schema_version") != IDENTITY_SCHEMA_VERSION:
         raise RunStoreError(f"Run record has an unsupported schema version: {path}")
     if record.get("run_id") != identity.run_id:
-        raise RunStoreError(f"Run record ID does not match its directory: {path}")
+        raise RunStoreError(f"Run record ID does not match its fingerprint: {path}")
     if record.get("fingerprint") != identity.fingerprint:
         raise RunStoreError(f"Run ID collision or conflicting run record: {path}")
     if (
@@ -1197,6 +1197,31 @@ def reset_generation(directory: Path) -> str | None:
     return pinned
 
 
+def _run_directory(output: Path, config_path: str | Path, identity: RunIdentity) -> Path:
+    """Find matching saved work before allocating a readable folder name."""
+    if output.is_dir():
+        for directory in sorted(output.iterdir()):
+            if directory.name.startswith(".") or not directory.is_dir():
+                continue
+            record_path = directory / _RUN_RECORD
+            if not record_path.exists():
+                continue
+            record = _load_record(record_path)
+            if (
+                record.get("fingerprint") == identity.fingerprint
+                or directory.name == identity.run_id
+            ):
+                return directory
+
+    name = Path(config_path).stem.strip(" .") or "task"
+    number = 1
+    while True:
+        directory = output / (name if number == 1 else f"{name}_{number}")
+        if not (directory / _RUN_RECORD).exists():
+            return directory
+        number += 1
+
+
 def register_run(
     identity: RunIdentity,
     config: TaskConfig,
@@ -1204,7 +1229,10 @@ def register_run(
     preparation: dict,
 ) -> RegisteredRun:
     """Create a run record or safely reuse an identical existing record."""
-    directory = config.output_dir / identity.run_id
+    try:
+        directory = _run_directory(config.output_dir, config_path, identity)
+    except OSError as exc:
+        raise RunStoreError(f"Cannot inspect output directory: {config.output_dir}") from exc
     record_path = directory / _RUN_RECORD
 
     if directory.exists() and not directory.is_dir():

@@ -50,7 +50,7 @@ python -m src.run configs/task.yaml
 
 The full command captures activations, trains and selects a probe, evaluates
 the frozen gate on test data, and creates a report under
-`<output_dir>/<run_id>/` (`output_dir` defaults to `outputs/` at the repository
+`<output_dir>/<run_name>/` (`output_dir` defaults to `outputs/` at the repository
 root). Preparation checks only print results; they create no files or folders.
 Preparation and behavior checks accept small
 development samples; the full run enforces the data minimums listed below.
