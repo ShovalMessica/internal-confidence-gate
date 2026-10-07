@@ -10,14 +10,15 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 7
+GENERATION_PROTOCOL_VERSION = 8
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
     "Reason about the task first. A separate final-answer instruction will follow."
 )
 ANSWER_INSTRUCTION = (
-    "Complete the FINAL: line with only the answer, without reasoning or explanation."
+    "Answer immediately after FINAL: with only the final answer. "
+    "Do not repeat the prefix or add reasoning or explanation."
 )
 ALLOW_ABSTENTION_INSTRUCTION = (
     "If you cannot determine the answer, return UNKNOWN."

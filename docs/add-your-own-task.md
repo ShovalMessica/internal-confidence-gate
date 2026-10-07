@@ -71,7 +71,7 @@ See [Prompt examples](prompt-examples.md) for more detailed task prompts.
 Both modes use this final-answer instruction, supplied by the toolkit:
 
 ```text
-Complete the FINAL: line with only the answer, without reasoning or explanation.
+Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
 ```
 
 Set `reasoning_mode` to choose when it is added:

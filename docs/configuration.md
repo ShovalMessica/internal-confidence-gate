@@ -38,7 +38,7 @@ assistant generation boundary.
   Append this instruction to the user message:
 
   ```text
-  Complete the FINAL: line with only the answer, without reasoning or explanation.
+  Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
   ```
 
   Render the messages through the chat template, open the assistant's response,

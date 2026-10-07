@@ -116,7 +116,7 @@ J Juan West
 **Toolkit-added instruction:**
 
 ```text
-Complete the FINAL: line with only the answer, without reasoning or explanation.
+Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
 If you cannot determine the answer, return UNKNOWN.
 ```
 
@@ -174,7 +174,7 @@ Reason about the task first. A separate final-answer instruction will follow.
 **Toolkit-added instruction after reasoning:**
 
 ```text
-Complete the FINAL: line with only the answer, without reasoning or explanation.
+Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
 If you cannot determine the answer, return UNKNOWN.
 FINAL:
 ```
