@@ -30,6 +30,10 @@ Validate those inputs without loading the model:
 python -m src.run configs/task.yaml --prepare-only
 ```
 
+Before running your full dataset, try a few separate examples and adjust the
+task instructions if needed. Once satisfied, use those same instructions for
+all training, validation, and test examples.
+
 Run the model and inspect its answers before training probes:
 
 ```sh
