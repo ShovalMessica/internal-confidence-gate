@@ -112,6 +112,11 @@ instruction and token limits.
 
 ## 3. Prepare your dataset
 
+Prepare your examples using the fields and rules in
+[Dataset format](dataset-format.md). Save the `.jsonl` file anywhere on your
+machine, then set `dataset_path` in [`configs/task.yaml`](../configs/task.yaml)
+to its absolute path.
+
 Create a UTF-8 `.jsonl` file with one object per example. Each record needs a
 unique integer `id`, an `input`, and one expected `target_answer`.
 
