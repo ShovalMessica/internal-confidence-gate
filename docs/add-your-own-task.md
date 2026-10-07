@@ -1,8 +1,14 @@
 # Add your own task
 
-Use this guide to run the toolkit on your own dataset. Complete the
-[installation](../README.md#quick-start) first, then run commands from the
-repository root.
+This guide walks you through preparing and running your task. Follow it in
+order, using the linked references for details:
+
+- **[Dataset format](dataset-format.md):** required fields and validation rules.
+- **[Configuration](configuration.md):** settings, defaults, and generation behavior.
+- **[Prompt examples](prompt-examples.md):** examples to help design your instructions.
+
+Complete the [installation](../README.md#quick-start) first, then run commands
+from the repository root.
 
 Want a ready-made demo instead? See the optional
 [synthetic NER example](../examples/ner/README.md). Its generator creates demo
@@ -111,7 +117,9 @@ unique integer `id`, the complete user message in `input`, and one plain
 
 Assign every record to `train`, `validation`, or `test`, or omit `split` from
 all records for automatic splitting. Keep related examples in the same split.
-See [Dataset format](dataset-format.md) for the exact fields and minimum sizes.
+See [dataset fields](dataset-format.md#fields),
+[validation rules](dataset-format.md#validation), and
+[minimum sizes](dataset-format.md#dataset-size) when preparing your records.
 
 With abstention enabled, `UNKNOWN` is reserved for model responses and cannot
 be a target. Other task answers, such as `NONE`, participate normally.
@@ -133,7 +141,8 @@ absolute path. Set `output_dir` if you want results in a specific directory;
 otherwise they go under `outputs` beside the YAML file.
 
 Review the remaining defaults, especially token limits and abstention. See
-[Configuration](configuration.md) for supported models and all settings.
+[Model and paths](configuration.md#model-and-paths) for supported models and
+[Generation](configuration.md#generation) for answer settings.
 Local checkpoints also require `model_revision`.
 
 ## 5. Check the prompt on development data
@@ -175,7 +184,9 @@ python -m src.run configs/task.yaml --behavior-only --show-examples 10
 The terminal and `run.json` report correct, wrong, abstained, invalid, and
 token-limit outputs overall and by split. Check the
 [probe-training minimums](dataset-format.md#dataset-size) before proceeding.
-Behavior-only runs save results even when those counts are insufficient.
+Behavior-only runs save results even when those counts are insufficient. See
+[Answer evaluation](configuration.md#answer-evaluation) for matching rules and
+metric definitions.
 
 ## 7. Train and evaluate the gate
 
@@ -210,18 +221,15 @@ comparisons and TPR-FPR curves. Metric definitions are in
 
 ## Optional task-specific behavior
 
-- **Custom matching:** use `answer_matcher_path` when normalized complete-answer
-  equality does not fit your task.
-- **Semantic spans:** mark additional input text for activation capture. Every
-  example must supply the same span keys and semantic roles.
-- **Custom metrics:** use `metadata` and `custom_metrics_path` for task-specific
-  summaries.
+- **[Custom matching](configuration.md#answer-evaluation):** use
+  `answer_matcher_path` when normalized complete-answer equality does not fit your task.
+- **[Semantic spans](dataset-format.md#capture-locations):** mark additional input
+  text for activation capture. Every example must supply the same span keys and semantic roles.
+- **[Custom metrics](configuration.md#custom-task-metrics):** use `metadata` and
+  `custom_metrics_path` for task-specific summaries.
 
 For example, this complete record marks `battery` at characters `[4, 11)`:
 
 ```json
 {"id":1,"input":"The battery lasts all day.","target_answer":"POSITIVE","split":"train","semantic_spans":{"span_1":{"start_char":4,"end_char":11}}}
 ```
-
-See [Dataset format](dataset-format.md) and [Configuration](configuration.md)
-for the exact interfaces.
