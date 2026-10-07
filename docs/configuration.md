@@ -80,13 +80,15 @@ After generation, the runner compares each saved answer with its dataset target.
       return prediction.casefold().strip() == target_answer.casefold().strip()
   ```
 
-  The function receives the raw extracted answer and raw dataset target and must return `True` or `False`. Use it for task-specific rules such as aliases, punctuation handling, or numeric tolerance. When omitted, the toolkit uses its stricter built-in complete-answer comparison described above. Keep the task-specific matching logic in this file because its exact bytes define the matcher hash.
-
-  The matcher is loaded during preparation, so its path, function, and signature are checked before model generation. Exceptions raised for an example or non-Boolean return values stop evaluation with a clear error. The toolkit still decides whether an output is structurally valid and whether it is exactly `UNKNOWN`; the custom function only compares concrete answers.
+  The function receives the raw prediction and target and must return a Boolean.
+  Use it for aliases, punctuation rules, numeric tolerance, or other task-specific
+  matching. The toolkit still handles invalid outputs and `UNKNOWN`.
 
 Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
 
-Every other task-defined answer, including labels such as `NONE`, is a concrete prediction. It is matched against the target and participates in probe training and gate evaluation. Gate coverage is calculated only over eligible correct and incorrect concrete predictions; invalid outputs and enabled `UNKNOWN` abstentions are excluded.
+Other task labels, including `NONE`, are concrete predictions. They participate
+in probe training when valid. Gate coverage includes only correct and incorrect
+concrete predictions.
 
 The runner prints and stores a Model Behavior summary overall and by split. For `N` examples in the reported scope:
 
@@ -96,7 +98,8 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 - **Invalid output:** the response could not be evaluated structurally; rate `N_invalid / N`.
 - **Token-limit output:** answer generation reached its token limit; rate `N_token_limit / N`. This is an independent diagnostic, so the same example also appears in one of the four outcomes above.
 
-The matcher file's SHA-256 hash contributes to a separate evaluation ID, not the generation run ID. Evaluation is saved to `evaluations/<evaluation_id>.jsonl` and summarized in `run.json`. Reusing the same matcher bytes reuses that evaluation; changing them creates another evaluation from the saved generations without loading the model. In a full run, insufficient correct or incorrect counts produce exit code `1` after saving the results. `--behavior-only` saves and reports the same counts without enforcing probe-readiness minimums.
+Changing the matcher reevaluates saved answers without rerunning the model.
+`--behavior-only` reports these results without enforcing probe-training minimums.
 
 ## Custom task metrics
 
@@ -140,17 +143,11 @@ def compute_metrics(records):
     }
 ```
 
-Every metric must contain exactly `numerator` and `denominator`, both
-nonnegative integers with `numerator <= denominator`. The toolkit calculates
-the rate; a zero denominator produces `null`. Return the same metric names for
-the overall dataset and every split. Errors name the scope that failed.
-
-The file is loaded during preparation and its bytes are hashed. Results are
-stored under `custom_metrics` in `run.json`, identified by the dataset,
-generation, evaluation, implementation, and protocol hashes. Changing only
-the custom code recalculates these summaries without rerunning the model or
-changing saved evaluations and probes. See
-the function above as a minimal template.
+Each metric must contain only nonnegative integer `numerator` and `denominator`
+values, with `numerator <= denominator`. The toolkit calculates the rate and
+uses `null` when the denominator is zero. Return the same metric names overall
+and for every split. Changing this file recalculates custom metrics without
+rerunning the model.
 
 ## Probe training and validation selection
 
@@ -167,21 +164,26 @@ the function above as a minimal template.
   `none`.
 - **`target_tpr` (optional; default: `0.90`)** - Minimum fraction of correct validation predictions the selected gate must accept. Must be greater than `0` and at most `1`.
 
-After activation capture, the toolkit trains one probe for every position and model state selected by `probe_positions` and `probe_layers`. When those settings are omitted, it uses every captured position and saved state, including the embedding output. Multi-token answers and semantic spans are mean-pooled at each state; single-token positions are unchanged.
+The toolkit trains an L2 logistic-regression probe for each selected position and
+layer. By default, it uses every captured position and state. Multi-token spans
+are mean-pooled, and feature standardization is fitted on training data only.
 
-Each probe is an L2 logistic regression using the configured regularization and class weighting, with training-only feature standardization. Larger scores indicate greater estimated reliability. With class weighting, the score is not assumed to be a calibrated probability; it is used only for ranking and thresholding. Training saves train and validation scores without reading test activations.
-
-For each candidate, validation selection chooses the highest observed reliability-score threshold whose acceptance rule, `score >= threshold`, retains at least `target_tpr` of correct validation predictions. Tied scores are accepted together, so achieved TPR may be higher than requested. The candidate with the lowest validation FPR is selected; exact FPR ties use position name and then saved state order. AUROC is saved and reported but is not a selection criterion.
-
-All candidates and selections are stored in `<run_dir>/probes.h5`. The probe ID depends on the activation artifact, evaluation artifact, fixed training protocol, and `probe_seed`. The selection ID depends on that completed probe group and `target_tpr`. Changing the target therefore reuses trained probes and creates another small selection group without rerunning the model.
+For each probe, validation chooses the highest observed threshold that meets
+`target_tpr`. It then selects the probe with the lowest FPR. AUROC is reported
+but does not affect selection. Test data is not read during this process.
+Candidates and selections are stored in `<run_dir>/probes.h5`.
 
 ## Frozen test evaluation
 
-After validation selection, the toolkit applies the selected probe and threshold unchanged to correct and incorrect test predictions. It reports the frozen threshold, TPR, FPR, balanced accuracy, AUROC, coverage, and accepted-error rate. Coverage is the accepted fraction of these eligible concrete predictions; accepted-error rate is the incorrect fraction among accepted predictions. Invalid outputs and enabled abstentions are excluded from both denominators.
+The toolkit applies the validation-selected probe and threshold unchanged to
+test predictions. It reports TPR, FPR, balanced accuracy, AUROC, coverage, and
+accepted-error rate. Coverage is the accepted fraction of eligible predictions;
+accepted-error rate is the incorrect fraction among accepted predictions.
+Invalid outputs and enabled abstentions are ineligible.
 
 The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability. Token probabilities are calculated from the model's raw next-token logits, before temperature, top-k, top-p, or other sampling filters are applied.
 
-Per-example test labels, scores, and accept/reject decisions are stored in the existing `<run_dir>/probes.h5`; `run.json` stores the summary. Neither method uses test data to select a representation or threshold.
+Neither method uses test data to select a representation or threshold.
 
 ## Reporting
 
@@ -233,33 +235,19 @@ split_ratios:
 split_seed: 42
 ```
 
-## Loading and validation
+## Validation
 
-From Python, with the repository root as the working directory:
+Run preparation from the repository root:
 
-```python
-from src.config import load_config
-
-config = load_config("configs/task.yaml")
+```sh
+python -m src.run configs/task.yaml --prepare-only
 ```
 
-The function returns immutable `TaskConfig` settings with defaults filled in. It raises `ConfigurationError` with the discovered errors together; the runner displays them.
-
-- Required `null` placeholders must be replaced. Optional defaults apply only when fields are omitted; explicit `null` values are invalid.
-- Unknown or duplicate YAML fields are errors. Token limits and `direct_batch_size` must be positive integers; generation, probe, and split seeds must be nonnegative integers; `target_tpr` must be greater than 0 and at most 1; `allow_abstention` must be a Boolean. Decoding strategy must use the choices documented above.
-- `model_revision`, when supplied, must be a nonempty string. It is optional for a Hub model and required for a local checkpoint. Device and dtype values must use the supported choices above.
-- `answer_matcher_path` and `custom_metrics_path`, when supplied, must be
-  absolute paths to existing `.py` files. The runner loads and validates their
-  required functions during preparation.
-- Probe position and layer lists must be nonempty and contain no duplicates
-  when supplied. Probe layers are checked against the loaded model states
-  before tokenizer or weight loading. Requested positions must exist in the
-  dataset capture plan; this is checked during preparation.
-- Split ratios must contain exactly `train`, `validation`, and `test`, each strictly between 0 and 1, summing to 1 within floating-point tolerance.
-- Dataset paths must point to existing `.jsonl` files; local checkpoint paths must point to existing directories. Hugging Face IDs are checked syntactically, without accessing the Hub.
-- The path locating the YAML may be relative or absolute. Filesystem values inside it must be absolute. The default output path is computed beside the YAML, without creating it.
-
-The configuration loader itself does not read dataset records, inspect model weights, or run generation. The runner coordinates those stages. Use `--prepare-only` to stop before model loading, or `--behavior-only` to load and run the model, then stop after generation and answer evaluation without capturing activations or training probes. Hub weights are downloaded when needed. Both modes accept small development samples and defer probe-size minimums. Behavior-only runs preserve their summaries even when the class counts are insufficient for probe training. Add `--show-examples N` to print the first `N` inputs, raw predictions, targets, and outcomes.
+Preparation checks the configuration and dataset without loading the model.
+Unknown fields, invalid values, duplicate YAML keys, and bad paths are reported
+together. Use `--behavior-only` to run through answer evaluation without
+capturing activations or training probes. Add `--show-examples N` to inspect
+individual inputs, predictions, targets, and outcomes.
 
 ## Run identity and reuse
 
