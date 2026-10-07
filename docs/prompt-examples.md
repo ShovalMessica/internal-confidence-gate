@@ -1,7 +1,7 @@
 # Prompt design examples
 
-These examples show how task instructions, rules, and demonstrations can guide
-the expected answer. Test prompts on development data before freezing them.
+Customize these prompts with your task instructions, rules, and demonstrations.
+Test prompts on development data before keeping them fixed for the final run.
 Text marked **toolkit-added** is automatic and should not be copied into your
 prompt. See [Generation](configuration.md#generation).
 

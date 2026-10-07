@@ -138,11 +138,14 @@ complete layout and rules.
 
 | File | Purpose |
 | --- | --- |
-| [Add your own task](docs/add-your-own-task.md) | Prepare your own data and run the pipeline |
+| [Add your own task](docs/add-your-own-task.md) | Prepare, customize, and run your task |
 | [Dataset format](docs/dataset-format.md) | Exact JSONL record contract |
 | [Configuration](docs/configuration.md) | Complete settings and artifact reference |
 | [Prompt examples](docs/prompt-examples.md) | Direct and reasoning prompt designs |
 | [NER example](examples/ner/README.md) | Executable synthetic starter task |
+
+See [Customize your task](docs/add-your-own-task.md#customize-your-task) for
+prompts, generation, splits, answer matching, semantic spans, metrics, and probes.
 
 ## Limitations
 

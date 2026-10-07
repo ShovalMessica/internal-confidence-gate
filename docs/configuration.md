@@ -8,6 +8,8 @@ your [JSONL dataset](dataset-format.md).
 
 ## Model and paths
 
+Customize the model, hardware settings, and file paths in your task YAML.
+
 - **`model_name_or_path`** - Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
 - **`model_revision`** - Optional Hub commit, tag, or branch. When omitted for a Hub model, the loader resolves and records the exact commit. For a local checkpoint, this field is required as a stable version string; change it whenever any checkpoint file changes. It identifies caches but is not passed to Transformers.
 - **`device` (optional; default: `auto`)** - `auto`, `cpu`, `cuda`, or a numbered CUDA device such as `cuda:1`.
@@ -32,6 +34,9 @@ The toolkit builds standard chat messages and lets the model tokenizer's
 message and each dataset `input` becomes the `user` message. Otherwise, the
 dataset `input` is the only user message. The tokenizer then renders the
 assistant generation boundary.
+
+Customize reasoning, token limits, abstention, decoding, batch size, and seed
+with the following fields in your task YAML.
 
 - **`reasoning_mode`** - Required: `direct` or `reasoning`.
 
@@ -109,6 +114,8 @@ Context-length and prompt-rendering failures are saved per example while generat
 
 Model Behavior generates answers, compares them with dataset targets, and reports outcomes. Default matching ignores case, surrounding whitespace, and repeated internal whitespace. It does not remove punctuation or apply task-specific rules.
 
+### Customize answer matching
+
 - **`answer_matcher_path` (optional; default: omitted)** - Absolute path to a trusted Python file that defines:
 
   ```python
@@ -123,6 +130,10 @@ Model Behavior generates answers, compares them with dataset targets, and report
   Use it for aliases, punctuation rules, numeric tolerance, or other task-specific
   matching. The toolkit still handles invalid outputs and `UNKNOWN`.
 
+Changing the matcher reevaluates saved answers without rerunning the model.
+
+### Model Behavior metrics
+
 Generation failures, empty answers, repeated `FINAL:` markers, and multiple nonempty answer lines are invalid. Exact `UNKNOWN` responses are abstentions when abstention is enabled. Other structurally valid nonmatching answers are incorrect. Answers that reach the token limit remain valid and are reported separately.
 
 Probe training and gate coverage include only correct and incorrect predictions,
@@ -136,10 +147,9 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 - **Invalid output:** the response could not be evaluated structurally; rate `N_invalid / N`.
 - **Token-limit output:** answer generation reached its token limit; rate `N_token_limit / N`. This is an independent diagnostic, so the same example also appears in one of the four outcomes above.
 
-Changing the matcher reevaluates saved answers without rerunning the model.
 `--behavior-only` reports these results without enforcing probe-training minimums.
 
-## Custom task metrics
+## Customize task metrics
 
 - **`custom_metrics_path` (optional; default: omitted)** - Absolute path to a
   trusted Python file defining `compute_metrics(records)`. Generic Model
@@ -193,6 +203,9 @@ rerunning the model.
 
 ## Probe training and validation selection
 
+Customize probe positions, layers, fitting settings, and the gate's retention
+target with these fields in your task YAML.
+
 - **`probe_seed` (optional; default: `42`)** - Seed for reproducible linear-probe fitting.
 - **`probe_positions` (optional)** - Capture positions to use for probe training,
   such as `[prompt_end]` or `[span_1]`. When omitted, train on every default
@@ -240,7 +253,8 @@ The TPR-FPR plots reverse conventional ROC axes: TPR is on the horizontal axis a
 
 ## Automatic splitting
 
-Applies only when the dataset omits `split`.
+Customize split assignments with `split` in each JSONL record. If all records
+omit it, customize automatic splitting with these fields in your task YAML:
 
 - **`split_ratios` (optional)** - Defaults to `train: 0.70`, `validation: 0.15`, `test: 0.15`. Values must sum to 1.
 - **`split_seed` (optional; default: `42`)** - Seed for reproducible random splitting.

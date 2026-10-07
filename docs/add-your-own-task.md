@@ -14,9 +14,12 @@ Want a ready-made demo instead? See the optional
 [synthetic NER example](../examples/ner/README.md). Its generator creates demo
 data only; it is not part of preparing your own task.
 
+See [Customize your task](#customize-your-task) for the options you can adapt.
+
 ## 1. Prepare your prompt
 
-Describe the task, expected answer, and any rules or examples the model needs.
+Customize the instructions for your task: describe the expected answer and any
+rules or examples the model needs.
 Choose one of these two options:
 
 - **Shared instructions in a system prompt**
@@ -245,18 +248,35 @@ The generation manifest references saved model outputs in the shared
 comparisons and TPR-FPR curves. Metric definitions are in
 [Gate evaluation](configuration.md#gate-evaluation).
 
-## Optional task-specific behavior
+## Customize your task
 
-- **[Custom matching](configuration.md#model-behavior):** save your
+- **[Customize your prompt](#1-prepare-your-prompt):** edit your system-prompt
+  file and each JSONL record's `input` to supply task instructions and content.
+- **[Customize generation](configuration.md#generation):** choose reasoning
+  mode, token limits, abstention, decoding, batch size, and seed in your task YAML.
+- **[Customize dataset splits](configuration.md#automatic-splitting):** assign
+  `split` in each JSONL record, or set `split_ratios` and `split_seed` in the YAML.
+- **[Customize answer matching](configuration.md#customize-answer-matching):** save your
   `answer_match` function in a Python file. In `configs/task.yaml`, uncomment
   `answer_matcher_path` and set it to that file's absolute path.
-- **[Semantic spans](dataset-format.md#semantic-spans):** add `semantic_spans`
+- **[Customize semantic spans](dataset-format.md#semantic-spans):** add `semantic_spans`
   to each JSONL record to mark input text for activation capture. Use the same
   span keys and semantic roles across examples.
-- **[Custom metrics](configuration.md#custom-task-metrics):** add any needed
+- **[Customize task metrics](configuration.md#customize-task-metrics):** add any needed
   `metadata` to your JSONL records and save `compute_metrics` in a Python file.
   In `configs/task.yaml`, uncomment `custom_metrics_path` and set it to that
   file's absolute path.
+- **[Customize probe training](configuration.md#probe-training-and-validation-selection):**
+  set `probe_positions`, `probe_layers`, `probe_seed`, `probe_regularization_c`,
+  and `probe_class_weight` in your task YAML.
+- **[Customize the gate's retention target](configuration.md#probe-training-and-validation-selection):**
+  set `target_tpr` in your task YAML. Validation selects the probe and threshold
+  against this target; gate evaluation applies them unchanged to test data.
+
+Customize model, device, precision, and file paths in the same YAML; see
+[Model and paths](configuration.md#model-and-paths). Keep defaults for optional
+settings you do not need to change. Finish task design before the final run;
+use development examples to refine prompts and validation for probe selection.
 
 For example, this complete record marks `battery` at characters `[4, 11)`:
 

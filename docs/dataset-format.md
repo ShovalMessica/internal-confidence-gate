@@ -31,8 +31,9 @@ Example
 - **`target_answer`** - One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
   Correctness ignores case, surrounding whitespace, and repeated internal
-  whitespace, but keeps punctuation and extra words. For different rules, save a
-  custom [`answer_match`](configuration.md#model-behavior) in a Python file
+  whitespace, but keeps punctuation and extra words. To
+  [customize answer matching](configuration.md#customize-answer-matching), save
+  `answer_match` in a Python file
   and set `answer_matcher_path` in `configs/task.yaml` to its absolute path.
   Targets create probe labels; they are never probe features.
 
@@ -43,8 +44,8 @@ Example
 
   Automatic splitting treats records independently. If several records come from the same source, conversation, document, or template instance, assign splits yourself so related examples cannot cross split boundaries.
 
-- **`metadata` (optional)** - Free-form JSON object passed to a configured
-  [custom metric function](configuration.md#custom-task-metrics). You choose
+- **`metadata` (optional)** - Free-form JSON object passed to your metric function
+  when you [customize task metrics](configuration.md#customize-task-metrics). You choose
   its inner field names and values; they may differ between examples. Metadata
   is never sent to the model or used as a probe feature. Omit it or use `{}`
   when no metadata is needed; `null` and non-object values are invalid.
@@ -63,9 +64,9 @@ Example
 
 As explained in the [README](../README.md), probes use internal activations to estimate prediction reliability.
 
-Semantic spans mark task-specific text in `input`, such as the name being
-checked in a correction task. The role stays fixed even when the text and
-location change.
+Customize semantic spans by adding `semantic_spans` to each JSONL record. They
+mark task-specific text in `input`, such as the name being checked in a
+correction task. The role stays fixed even when the text and location change.
 
 The toolkit maps each character span to every overlapping prompt token.
 One-token and multi-token spans keep the same tensor structure. Spans cannot
