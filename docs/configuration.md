@@ -105,9 +105,9 @@ assistant generation boundary.
 
 Context-length and prompt-rendering failures are saved per example while generation continues. Unexpected model or runtime failures stop the run.
 
-## Answer evaluation
+## Model Behavior
 
-After generation, the runner compares each saved answer with its dataset target. Matching ignores case, surrounding whitespace, and repeated internal whitespace. It does not remove punctuation or apply task-specific rules.
+Model Behavior generates answers, compares them with dataset targets, and reports outcomes. Default matching ignores case, surrounding whitespace, and repeated internal whitespace. It does not remove punctuation or apply task-specific rules.
 
 - **`answer_matcher_path` (optional; default: omitted)** - Absolute path to a trusted Python file that defines:
 
@@ -292,7 +292,7 @@ Preparation checks the configuration and dataset without loading the model or
 writing files. Results are printed in the terminal.
 Unknown fields, invalid values, duplicate YAML keys, and bad paths are reported
 together. In the command above, replace `--prepare-only` with `--behavior-only`
-to run through answer evaluation without capturing activations or training probes.
+to run Model Behavior without capturing activations or training probes.
 Add `--show-examples 10` to that command to inspect the first 10 inputs,
 predictions, targets, and outcomes. These flags go in the command, not the YAML.
 

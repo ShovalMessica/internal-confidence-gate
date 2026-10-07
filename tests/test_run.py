@@ -602,7 +602,7 @@ class RunTests(unittest.TestCase):
             "Generation complete: 0 reused, 700 generated; 700 succeeded, 0 failed.",
             stdout,
         )
-        self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("Model Behavior results: created", stdout)
         self.assertIn("Model Behavior:", stdout)
         self.assertIn("Correct prediction", stdout)
         self.assertIn("Token-limit output", stdout)
@@ -612,7 +612,7 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation artifact: reused (model not loaded).", stdout)
-        self.assertIn("Evaluation artifact: reused", stdout)
+        self.assertIn("Model Behavior results: reused", stdout)
         load_model.assert_not_called()
 
         run_directory = self.run_directories()[0]
@@ -1347,12 +1347,12 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
 
         self.assertEqual(code, 1)
-        self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("Model Behavior results: created", stdout)
         self.assertIn("train needs 100 correct predictions", stderr)
         self.capture_mock.assert_not_called()
         run_directory = self.run_directories()[0]
         execution_log = (run_directory / "execution.log").read_text(encoding="utf-8")
-        self.assertIn("Evaluation artifact: created", execution_log)
+        self.assertIn("Model Behavior results: created", execution_log)
         self.assertIn("train needs 100 correct predictions", execution_log)
         run_record = json.loads(
             (run_directory / "run.json").read_text(encoding="utf-8")
@@ -1397,7 +1397,7 @@ class RunTests(unittest.TestCase):
         with patch("src.run.load_model") as load_model:
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
-        self.assertIn("Evaluation artifact: reused", stdout)
+        self.assertIn("Model Behavior results: reused", stdout)
         load_model.assert_not_called()
 
         copy.write_text(source + "# revised matcher\n", encoding="utf-8")
@@ -1405,7 +1405,7 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation artifact: reused", stdout)
-        self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("Model Behavior results: created", stdout)
         load_model.assert_not_called()
 
         run_directory = self.run_directories()[0]
@@ -1492,7 +1492,7 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation artifact: reused", stdout)
-        self.assertIn("Evaluation artifact: reused", stdout)
+        self.assertIn("Model Behavior results: reused", stdout)
         self.assertIn("Custom metrics: created", stdout)
         load_model.assert_not_called()
         run_record = json.loads(
@@ -1575,7 +1575,7 @@ class RunTests(unittest.TestCase):
             code, stdout, stderr = self.invoke_full()
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("Generation artifact: reused", stdout)
-        self.assertIn("Evaluation artifact: created", stdout)
+        self.assertIn("Model Behavior results: created", stdout)
         load_model.assert_not_called()
         rebuilt = json.loads(run_path.read_text(encoding="utf-8"))
         self.assertIn("evaluations", rebuilt)

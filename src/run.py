@@ -584,7 +584,7 @@ def _format_rate(value: float | None) -> str:
 
 
 def _print_evaluation(summary: dict, *, reused: bool) -> None:
-    print(f"Evaluation artifact: {'reused' if reused else 'created'}")
+    print(f"Model Behavior results: {'reused' if reused else 'created'}")
     columns = (
         ("Correct prediction", "correct", "correct_prediction_rate"),
         ("Wrong prediction", "incorrect", "wrong_prediction_rate"),
@@ -672,7 +672,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
     run_record = load_run_record(directory)
     context = _recorded_generation_context(prepared.config, run_record)
     if not validate_completed_generation(directory, run_record, context):
-        raise RunStoreError("Evaluation requires completed generation.")
+        raise RunStoreError("Model Behavior requires completed generation.")
     generation_hash = run_record["generation"]["artifact_sha256"]
     identity = build_evaluation_identity(
         generation_hash, prepared.answer_matcher
@@ -686,7 +686,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         shortages = probe_shortages(list(records_by_id.values()))
         summary["probe_ready"] = not shortages
         summary["shortages"] = list(shortages)
-        print(f"Evaluation ID: {identity.evaluation_id}")
+        print(f"Model Behavior ID: {identity.evaluation_id}")
         _print_evaluation(summary, reused=True)
         return summary
 
@@ -703,7 +703,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         ordered = [existing[example["id"]] for example in examples]
         if ordered != list(result.records):
             raise RunStoreError(
-                "Unregistered evaluation artifact conflicts with computed results."
+                "Unregistered Model Behavior results conflict with computed results."
             )
     artifact_hash = write_evaluation_records(
         directory, identity.evaluation_id, list(result.records)
@@ -715,7 +715,7 @@ def _evaluate(prepared: PreparedRun, registered: RegisteredRun) -> dict:
         artifact_hash,
         result.summary,
     )
-    print(f"Evaluation ID: {identity.evaluation_id}")
+    print(f"Model Behavior ID: {identity.evaluation_id}")
     summary = dict(result.summary)
     shortages = probe_shortages(list(result.records))
     summary["probe_ready"] = not shortages
@@ -1234,7 +1234,7 @@ def _parser() -> argparse.ArgumentParser:
     stop.add_argument(
         "--behavior-only",
         action="store_true",
-        help="Run generation and answer evaluation, then stop before activations.",
+        help="Run Model Behavior (generation and answer matching), then stop before activations.",
     )
     parser.add_argument(
         "--force-recompute",
@@ -1352,7 +1352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Generation cache error: {error}", file=sys.stderr)
         return 1
     except EvaluationError as error:
-        print(f"Evaluation error: {error}", file=sys.stderr)
+        print(f"Model Behavior error: {error}", file=sys.stderr)
         return 1
     except ActivationError as error:
         print(f"Activation capture error: {error}", file=sys.stderr)

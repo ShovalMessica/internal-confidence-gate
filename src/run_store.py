@@ -513,28 +513,28 @@ def finalize_generation_records(
 
 def _validate_evaluation_record(record: object, expected: dict, line: int) -> dict:
     if not isinstance(record, dict):
-        raise RunStoreError(f"Evaluation record at line {line} must be an object.")
+        raise RunStoreError(f"Model Behavior record at line {line} must be an object.")
     if record.get("schema_version") != EVALUATION_RECORD_SCHEMA_VERSION:
         raise RunStoreError(
-            f"Evaluation record at line {line} has an unsupported schema version."
+            f"Model Behavior record at line {line} has an unsupported schema version."
         )
     if record.get("protocol_version") != EVALUATION_PROTOCOL_VERSION:
         raise RunStoreError(
-            f"Evaluation record at line {line} has an unsupported protocol version."
+            f"Model Behavior record at line {line} has an unsupported protocol version."
         )
     example_id = record.get("id")
     if type(example_id) is not int or example_id not in expected:
         raise RunStoreError(
-            f"Evaluation record at line {line} has an unexpected example ID."
+            f"Model Behavior record at line {line} has an unexpected example ID."
         )
     if record.get("split") != expected[example_id]["split"]:
         raise RunStoreError(
-            f"Evaluation record at line {line} has the wrong split for ID {example_id}."
+            f"Model Behavior record at line {line} has the wrong split for ID {example_id}."
         )
     outcome = record.get("outcome")
     if outcome not in ("correct", "incorrect", "abstained", "invalid"):
         raise RunStoreError(
-            f"Evaluation record at line {line} has an invalid outcome."
+            f"Model Behavior record at line {line} has an invalid outcome."
         )
     expected_correct = {"correct": True, "incorrect": False}.get(outcome)
     if (
@@ -542,17 +542,17 @@ def _validate_evaluation_record(record: object, expected: dict, line: int) -> di
         or record.get("is_correct") is not expected_correct
     ):
         raise RunStoreError(
-            f"Evaluation record at line {line} has inconsistent correctness."
+            f"Model Behavior record at line {line} has inconsistent correctness."
         )
     normalized = record.get("normalized_answer")
     if outcome == "invalid":
         if normalized is not None or not isinstance(record.get("invalid_reason"), str):
             raise RunStoreError(
-                f"Invalid evaluation record at line {line} is incomplete."
+                f"Invalid Model Behavior record at line {line} is incomplete."
             )
     elif not isinstance(normalized, str) or not normalized:
         raise RunStoreError(
-            f"Evaluation record at line {line} has no normalized answer."
+            f"Model Behavior record at line {line} has no normalized answer."
         )
     return record
 
@@ -560,16 +560,16 @@ def _validate_evaluation_record(record: object, expected: dict, line: int) -> di
 def load_evaluation_records(
     directory: Path, evaluation_id: str, examples: list[dict]
 ) -> dict[int, dict]:
-    """Load and validate a complete evaluation artifact."""
+    """Load and validate a complete Model Behavior artifact."""
     path = evaluation_artifact_path(directory, evaluation_id)
     if not path.is_file():
-        raise RunStoreError(f"Evaluation artifact is missing: {path}")
+        raise RunStoreError(f"Model Behavior artifact is missing: {path}")
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise RunStoreError(f"Cannot read evaluation artifact: {path}") from exc
+        raise RunStoreError(f"Cannot read Model Behavior artifact: {path}") from exc
     if text and not text.endswith("\n"):
-        raise RunStoreError(f"Evaluation artifact is truncated: {path}")
+        raise RunStoreError(f"Model Behavior artifact is truncated: {path}")
 
     expected = {example["id"]: example for example in examples}
     records: dict[int, dict] = {}
@@ -578,20 +578,20 @@ def load_evaluation_records(
             raw = json.loads(line)
         except json.JSONDecodeError as exc:
             raise RunStoreError(
-                f"Invalid evaluation JSON at line {line_number}: {path}"
+                f"Invalid Model Behavior JSON at line {line_number}: {path}"
             ) from exc
         record = _validate_evaluation_record(raw, expected, line_number)
         example_id = record["id"]
         if example_id in records:
             raise RunStoreError(
-                f"Duplicate evaluation record for ID {example_id}: {path}"
+                f"Duplicate Model Behavior record for ID {example_id}: {path}"
             )
         records[example_id] = record
     if set(records) != set(expected):
-        raise RunStoreError("Evaluation artifact does not contain every example.")
+        raise RunStoreError("Model Behavior artifact does not contain every example.")
     expected_order = [example["id"] for example in examples]
     if list(records) != expected_order:
-        raise RunStoreError("Evaluation artifact is not in dataset order.")
+        raise RunStoreError("Model Behavior artifact is not in dataset order.")
     return records
 
 
@@ -602,7 +602,7 @@ def write_evaluation_records(
     try:
         path.parent.mkdir(exist_ok=True)
     except OSError as exc:
-        raise RunStoreError(f"Cannot create evaluation directory: {path.parent}") from exc
+        raise RunStoreError(f"Cannot create Model Behavior directory: {path.parent}") from exc
     _write_jsonl_records(path, records)
     return _sha256(path)
 
@@ -620,7 +620,7 @@ def complete_evaluation(
         stages.append("evaluation")
     evaluations = record.setdefault("evaluations", {})
     if not isinstance(evaluations, dict):
-        raise RunStoreError("Run record has an invalid evaluation registry.")
+        raise RunStoreError("Run record has an invalid Model Behavior registry.")
     artifact = f"{_EVALUATIONS_DIR}/{identity.evaluation_id}.jsonl"
     entry = {
         "evaluation_id": identity.evaluation_id,
@@ -635,7 +635,7 @@ def complete_evaluation(
     }
     existing = evaluations.get(identity.evaluation_id)
     if existing is not None and existing != entry:
-        raise RunStoreError("Evaluation ID collision or conflicting run record.")
+        raise RunStoreError("Model Behavior ID collision or conflicting run record.")
     evaluations[identity.evaluation_id] = entry
     _save_run_record(directory, record)
 
@@ -647,34 +647,34 @@ def validate_completed_evaluation(
     if evaluations is None:
         return False
     if not isinstance(evaluations, dict):
-        raise RunStoreError("Run record has an invalid evaluation registry.")
+        raise RunStoreError("Run record has an invalid Model Behavior registry.")
     evaluation = evaluations.get(identity.evaluation_id)
     if evaluation is None:
         return False
     if "evaluation" not in record.get("completed_stages", []):
-        raise RunStoreError("Saved evaluation is missing its completed stage.")
+        raise RunStoreError("Saved Model Behavior is missing its completed stage.")
     if not isinstance(evaluation, dict):
-        raise RunStoreError("Completed evaluation has no valid run summary.")
+        raise RunStoreError("Model Behavior has no valid run summary.")
     if (
         evaluation.get("evaluation_id") != identity.evaluation_id
         or evaluation.get("fingerprint") != identity.fingerprint
     ):
-        raise RunStoreError("Completed evaluation identity is invalid.")
+        raise RunStoreError("Model Behavior identity is invalid.")
     if evaluation.get("protocol_version") != EVALUATION_PROTOCOL_VERSION:
-        raise RunStoreError("Completed evaluation uses an unsupported protocol version.")
+        raise RunStoreError("Model Behavior uses an unsupported protocol version.")
     if evaluation.get("generation_sha256") != identity.generation_sha256:
-        raise RunStoreError("Completed evaluation does not match saved generation.")
+        raise RunStoreError("Model Behavior does not match saved generation.")
     matcher = evaluation.get("matcher")
     if not isinstance(matcher, dict) or matcher.get("sha256") != identity.matcher_sha256:
-        raise RunStoreError("Completed evaluation has invalid matcher provenance.")
+        raise RunStoreError("Model Behavior has invalid matcher provenance.")
     expected_artifact = f"{_EVALUATIONS_DIR}/{identity.evaluation_id}.jsonl"
     if evaluation.get("artifact") != expected_artifact:
-        raise RunStoreError("Completed evaluation has an invalid artifact path.")
+        raise RunStoreError("Model Behavior has an invalid artifact path.")
     path = evaluation_artifact_path(directory, identity.evaluation_id)
     if not path.is_file() or _sha256(path) != evaluation.get("artifact_sha256"):
-        raise RunStoreError("Completed evaluation artifact is missing or has changed.")
+        raise RunStoreError("Completed Model Behavior artifact is missing or has changed.")
     if not isinstance(evaluation.get("summary"), dict):
-        raise RunStoreError("Completed evaluation summary is invalid.")
+        raise RunStoreError("Model Behavior summary is invalid.")
     return True
 
 
@@ -959,7 +959,7 @@ def complete_test_evaluation(
         stages.append("test_evaluation")
     evaluations = record.setdefault("test_evaluations", {})
     if not isinstance(evaluations, dict):
-        raise RunStoreError("Run record has an invalid test-evaluation registry.")
+        raise RunStoreError("Run record has an invalid Gate evaluation registry.")
     entry = {
         "test_id": identity.test_id,
         "fingerprint": identity.fingerprint,
@@ -991,7 +991,7 @@ def validate_completed_test_evaluation(
     if evaluations is None:
         return False
     if not isinstance(evaluations, dict):
-        raise RunStoreError("Run record has an invalid test-evaluation registry.")
+        raise RunStoreError("Run record has an invalid Gate evaluation registry.")
     evaluation = evaluations.get(identity.test_id)
     if evaluation is None:
         return False

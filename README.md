@@ -63,9 +63,9 @@ score for deciding which completed predictions to accept.
 
 The pipeline is:
 
-**Configuration and dataset → generation → answer evaluation → activation
-capture → probe training → validation selection → gate evaluation →
-report.**
+**Configuration and dataset → Model Behavior (generation and answer matching)
+→ activation capture → probe training → validation selection → gate evaluation
+→ report.**
 
 Target answers are used to determine whether saved model predictions are
 correct. They supervise probe training and evaluation, but are never inserted

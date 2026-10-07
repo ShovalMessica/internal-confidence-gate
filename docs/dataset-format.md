@@ -32,7 +32,7 @@ Example
 
   Correctness ignores case, surrounding whitespace, and repeated internal
   whitespace, but keeps punctuation and extra words. For different rules, save a
-  custom [`answer_match`](configuration.md#answer-evaluation) in a Python file
+  custom [`answer_match`](configuration.md#model-behavior) in a Python file
   and set `answer_matcher_path` in `configs/task.yaml` to its absolute path.
   Targets create probe labels; they are never probe features.
 

@@ -191,7 +191,7 @@ Run the model and inspect the first 10 inputs, predictions, targets, and outcome
 python -m src.run configs/dev-task.yaml --behavior-only --show-examples 10
 ```
 
-This command downloads Hub weights if needed and stops after answer evaluation.
+This command downloads Hub weights if needed and stops after Model Behavior.
 After the examples, it prints a final summary and the results folder path.
 Both checks accept small samples. Revise your prompt file or dataset inputs and
 rerun the behavior command as needed. The toolkit reads your files directly.
@@ -210,7 +210,7 @@ The terminal and `run.json` report correct, wrong, abstained, invalid, and
 token-limit outputs overall and by split. Check the
 [probe-training minimums](dataset-format.md#dataset-size) before proceeding.
 Behavior-only runs save results even when those counts are insufficient. See
-[Answer evaluation](configuration.md#answer-evaluation) for matching rules and
+[Model Behavior](configuration.md#model-behavior) for matching rules and
 metric definitions.
 
 ## 7. Probe training and gate evaluation
@@ -247,7 +247,7 @@ comparisons and TPR-FPR curves. Metric definitions are in
 
 ## Optional task-specific behavior
 
-- **[Custom matching](configuration.md#answer-evaluation):** save your
+- **[Custom matching](configuration.md#model-behavior):** save your
   `answer_match` function in a Python file. In `configs/task.yaml`, uncomment
   `answer_matcher_path` and set it to that file's absolute path.
 - **[Semantic spans](dataset-format.md#semantic-spans):** add `semantic_spans`

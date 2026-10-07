@@ -19,7 +19,7 @@ python -m src.run examples/ner/generated/dev-task.yaml --prepare-only
 ```
 
 The committed `dev-sample.jsonl` is for prompt and output-format checks only.
-To run its model behavior check:
+To run its Model Behavior check:
 
 ```sh
 python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-examples 20
