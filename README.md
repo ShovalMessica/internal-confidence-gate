@@ -159,3 +159,7 @@ prompts, generation, splits, answer matching, semantic spans, metrics, and probe
 
 Circuit finding, TransformerLens/PEAP signals, head-level analysis, and
 uncertainty intervals remain future extensions.
+
+## License
+
+[MIT](LICENSE).
