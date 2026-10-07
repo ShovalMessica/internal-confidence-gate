@@ -1232,10 +1232,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.show_examples is not None:
             _print_prediction_examples(prepared, registered, args.show_examples)
         if args.behavior_only:
+            counts = summary["overall"]
+            print(
+                f"Summary: {counts['total']} examples | "
+                f"correct: {counts['correct']} "
+                f"({_format_rate(counts['correct_prediction_rate'])}) | "
+                f"incorrect: {counts['incorrect']} "
+                f"({_format_rate(counts['wrong_prediction_rate'])}) | "
+                f"abstained: {counts['abstained']} | invalid: {counts['invalid']}"
+            )
             print(
                 "Model Behavior complete. Activation capture and probe stages "
                 "were not run."
             )
+            print(f"Results: {registered.directory}")
         else:
             if not summary["probe_ready"]:
                 _print_shortages(summary["shortages"], sys.stderr)

@@ -190,6 +190,7 @@ python -m src.run configs/dev-task.yaml --behavior-only --show-examples 10
 ```
 
 This command downloads Hub weights if needed and stops after answer evaluation.
+After the examples, it prints a final summary and the results folder path.
 Both checks accept small samples. Revise your prompt file or dataset inputs and
 rerun the behavior command as needed. The toolkit reads your files directly.
 

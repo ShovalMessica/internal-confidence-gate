@@ -98,7 +98,11 @@ class RunTests(unittest.TestCase):
     def invoke_registration(self, path=None):
         with (
             patch("src.run._generate"),
-            patch("src.run._evaluate"),
+            patch("src.run._evaluate", return_value={"overall": {
+                "total": 0, "correct": 0, "incorrect": 0,
+                "abstained": 0, "invalid": 0,
+                "correct_prediction_rate": None, "wrong_prediction_rate": None,
+            }}),
             patch("src.run._evaluate_custom_metrics"),
         ):
             return self.invoke_full(path, "--behavior-only")
@@ -689,6 +693,18 @@ class RunTests(unittest.TestCase):
         self.assertIn("Target: 'Positive'", stdout)
         self.assertIn("Outcome: correct", stdout)
         self.assertNotIn("Classify example 1.", stdout)
+        recap = "Summary: 3 examples | correct: 3 (100.0%) | incorrect: 0 (0.0%) | abstained: 0 | invalid: 0"
+        self.assertIn(recap, stdout)
+        self.assertGreater(stdout.index(recap), stdout.index("Outcome: correct"))
+        self.assertEqual(stdout.strip().splitlines()[-1], f"Results: {self.run_directories()[0]}")
+        with patch("src.run.load_model") as load_model:
+            code, reused_stdout, stderr = self.invoke_full(
+                None, "--behavior-only", "--show-examples", "1"
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        load_model.assert_not_called()
+        self.assertIn(recap, reused_stdout)
+        self.assertGreater(reused_stdout.index(recap), reused_stdout.index("Outcome: correct"))
 
     def test_completed_activation_capture_is_reused_without_model_loading(self):
         self.write_dataset(self.record(index) for index in range(700))
