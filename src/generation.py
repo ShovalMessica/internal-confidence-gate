@@ -10,7 +10,7 @@ from src.config import TaskConfig
 from src.model import LoadedModel
 
 
-GENERATION_PROTOCOL_VERSION = 8
+GENERATION_PROTOCOL_VERSION = 9
 GENERATION_RECORD_SCHEMA_VERSION = 1
 
 REASONING_INSTRUCTION = (
@@ -408,8 +408,10 @@ def _direct_unit(
         }
         prepared.append((position, example, chat_ids, answer_context, control))
 
+    batch_ids = [example["id"] for _, example in indexed_examples]
+    batch_seed = _stable_seed(config.generation_seed, batch_ids[0])
     if prepared:
-        set_seed(_stable_seed(config.generation_seed, indexed_examples[0][1]["id"]))
+        set_seed(batch_seed)
         answers = _answer_outputs(
             loaded,
             [row[3] for row in prepared],
@@ -424,6 +426,8 @@ def _direct_unit(
 
     order = {example["id"]: position for position, example in indexed_examples}
     records.sort(key=lambda record: order[record["id"]])
+    for record in records:
+        record["generation_batch"] = {"ids": batch_ids, "seed": batch_seed}
     return GenerationUnit(records=tuple(records))
 
 
@@ -516,22 +520,27 @@ def generation_units(
     examples: Sequence[dict],
     config: TaskConfig,
     completed_ids: Iterable[int] = (),
+    batch_ids: Sequence[Sequence[int]] | None = None,
 ) -> Iterator[GenerationUnit]:
     """Yield persistable generation units in dataset order."""
     completed = set(completed_ids)
     indexed = list(enumerate(examples))
     if config.reasoning_mode == "direct":
         size = config.direct_batch_size
-        missing = [item for item in indexed if item[1]["id"] not in completed]
-        generation_config = getattr(loaded.model, "generation_config", None)
-        if (
-            config.decoding_strategy == "model_default"
-            and bool(getattr(generation_config, "do_sample", False))
-        ):
-            size = 1
-        for start in range(0, len(missing), size):
-            batch = missing[start : start + size]
-            yield _direct_unit(loaded, batch, config)
+        if batch_ids is None:
+            batch_ids = [
+                [example["id"] for _, example in indexed[start : start + size]]
+                for start in range(0, len(indexed), size)
+            ]
+        by_id = {example["id"]: (position, example) for position, example in indexed}
+        for ids in batch_ids:
+            if all(example_id in completed for example_id in ids):
+                continue
+            # Retry the whole original batch to preserve RNG draws and padding.
+            unit = _direct_unit(loaded, [by_id[example_id] for example_id in ids], config)
+            yield GenerationUnit(tuple(
+                record for record in unit.records if record["id"] not in completed
+            ))
         return
 
     for position, example in indexed:

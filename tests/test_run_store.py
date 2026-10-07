@@ -33,6 +33,7 @@ from src.run_store import (
     complete_evaluation,
     evaluation_artifact_path,
     generation_artifact_path,
+    generation_batch_plan,
     load_evaluation_records,
     load_run_record,
     load_generation_records,
@@ -164,6 +165,32 @@ class RunStoreTests(unittest.TestCase):
             {example["id"]: example for example in examples},
             records,
         )
+
+    def test_batch_plan_reuses_cache_then_preserves_partial_batches(self):
+        path = self.directory / "run.json"
+        path.write_text("{}", encoding="utf-8")
+        examples = [_example(index) for index in range(10)]
+        plan = generation_batch_plan(self.directory, examples, {0, 1}, 4)
+        self.assertEqual(plan, [[2, 3, 4, 5], [6, 7, 8, 9]])
+        original = path.read_bytes()
+        for completed in ({0, 1, 2}, set(range(6)), set(range(10))):
+            self.assertEqual(generation_batch_plan(self.directory, examples, completed, 4), plan)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_batch_plan_rejects_corruption(self):
+        path = self.directory / "run.json"
+        examples = [_example(index) for index in range(3)]
+        for bad_plan in ("bad", {"ids": None}, {"ids": [[]]},
+                         {"ids": [[0, 0, 1, 2]]}, {"ids": [[0, 1]]},
+                         {"ids": [[0, 1, 99]]}, {"ids": [[0, 1, 2]], "sha256": "bad"}):
+            with self.subTest(plan=bad_plan):
+                path.write_text(json.dumps({"generation_batches": bad_plan}), encoding="utf-8")
+                with self.assertRaises(RunStoreError):
+                    generation_batch_plan(self.directory, examples, set(), 4)
+
+    def test_fully_cached_run_has_empty_batch_plan(self):
+        (self.directory / "run.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(generation_batch_plan(self.directory, [_example(1)], {1}, 8), [])
 
     def test_only_truncated_final_line_is_recovered(self):
         first = _record(1)
@@ -371,6 +398,7 @@ class RunStoreTests(unittest.TestCase):
                     ],
                     "model": {"resolved_revision": "commit"},
                     "generation": {},
+                    "generation_batches": {"ids": [[1]], "sha256": "saved"},
                     "evaluation": {},
                     "evaluations": {evaluation_id: {}},
                     "custom_metrics": {"metrics": {}},
@@ -388,6 +416,7 @@ class RunStoreTests(unittest.TestCase):
         self.assertEqual(pinned, "commit")
         self.assertEqual(record["completed_stages"], ["preparation"])
         self.assertNotIn("evaluation", record)
+        self.assertNotIn("generation_batches", record)
         self.assertNotIn("evaluations", record)
         self.assertNotIn("custom_metrics", record)
         self.assertNotIn("activation_capture", record)

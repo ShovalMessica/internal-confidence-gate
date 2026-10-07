@@ -229,6 +229,39 @@ def _save_run_record(directory: Path, record: dict) -> None:
     _write_record(directory / _RUN_RECORD, record)
 
 
+def generation_batch_plan(
+    directory: Path, examples: list[dict], completed_ids: set[int], batch_size: int,
+) -> list[list[int]]:
+    """Freeze batches after cache reuse, preserving them through partial saves."""
+    record = load_run_record(directory)
+    expected = {example["id"] for example in examples}
+    missing = [example["id"] for example in examples if example["id"] not in completed_ids]
+    saved = record.get("generation_batches")
+    if saved is None:
+        batches = [missing[start : start + batch_size] for start in range(0, len(missing), batch_size)]
+    elif isinstance(saved, dict):
+        batches = saved.get("ids")
+    else:
+        raise RunStoreError("Invalid saved generation batch plan.")
+    if not isinstance(batches, list) or any(
+        not isinstance(batch, list) or not 0 < len(batch) <= batch_size
+        or any(type(example_id) is not int or example_id not in expected for example_id in batch)
+        for batch in batches
+    ):
+        raise RunStoreError("Invalid saved generation batch membership.")
+    flattened = [example_id for batch in batches for example_id in batch]
+    if len(set(flattened)) != len(flattened) or not set(missing).issubset(flattened):
+        raise RunStoreError("Generation batch plan has duplicate or missing examples.")
+    digest = hashlib.sha256(json.dumps(batches, separators=(",", ":")).encode()).hexdigest()
+    if saved is not None:
+        if saved.get("sha256") != digest:
+            raise RunStoreError("Generation batch plan hash mismatch.")
+    else:
+        record["generation_batches"] = {"ids": batches, "sha256": digest}
+        _save_run_record(directory, record)
+    return batches
+
+
 def generation_artifact_path(directory: Path) -> Path:
     return directory / _GENERATION_ARTIFACT
 
@@ -1122,6 +1155,7 @@ def reset_generation(directory: Path) -> str | None:
     record.pop("generation_started_at_utc", None)
     record.pop("execution", None)
     record.pop("generation_settings", None)
+    record.pop("generation_batches", None)
     record.pop("evaluation", None)
     record.pop("evaluations", None)
     record.pop("custom_metrics", None)

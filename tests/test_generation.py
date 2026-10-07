@@ -427,10 +427,10 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(unit.records[0]["failure"]["reason"], "context_length")
         self.assertEqual(model.calls, [])
 
-    def test_resume_batches_only_missing_direct_examples(self):
+    def test_resume_replays_partial_batch_and_saves_only_missing_examples(self):
         tokenizer = _Tokenizer()
         answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
-        model = _Model([[[*answer]] * 7])
+        model = _Model([[answer] * 8])
         examples = [
             {"id": index, "input": str(index), "split": "train"} for index in range(8)
         ]
@@ -442,11 +442,12 @@ class GenerationTests(unittest.TestCase):
             _loaded(model, tokenizer), examples, _config(), [0]
         ))
         self.assertEqual([record["id"] for record in units[0].records], list(range(1, 8)))
+        self.assertEqual(model.calls[0]["input_ids"].shape[0], 8)
 
-    def test_sampled_direct_generation_uses_one_id_seed_per_example(self):
+    def test_sampled_direct_generation_honors_batch_size_and_seed(self):
         tokenizer = _Tokenizer()
         answer = tokenizer.encode("A") + [tokenizer.eos_token_id]
-        model = _Model([answer, answer])
+        model = _Model([[answer, answer]])
         model.generation_config = SimpleNamespace(do_sample=True)
         examples = [
             {"id": 10, "input": "first", "split": "train"},
@@ -458,11 +459,54 @@ class GenerationTests(unittest.TestCase):
             return_value=(torch, StoppingCriteriaList, seed),
         ):
             units = list(generation_units(_loaded(model, tokenizer), examples, _config()))
-        self.assertEqual([len(unit.records) for unit in units], [1, 1])
+        self.assertEqual([len(unit.records) for unit in units], [2])
         self.assertEqual(
             [call.args[0] for call in seed.call_args_list],
-            [_stable_seed(42, 10), _stable_seed(42, 20)],
+            [_stable_seed(42, 10)],
         )
+        self.assertNotIn("do_sample", model.calls[0])
+        for record in units[0].records:
+            self.assertEqual(record["generation_batch"], {
+                "ids": [10, 20], "seed": _stable_seed(42, 10),
+            })
+
+    def test_sampled_resume_preserves_random_draws_and_batch_padding(self):
+        class SampledModel(_Model):
+            def generate(self, **kwargs):
+                count = kwargs["input_ids"].shape[0]
+                self.outputs = iter([[
+                    [int(token), 2] for token in torch.randint(75, 100, (count,))
+                ]])
+                return super().generate(**kwargs)
+
+        examples = [
+            {"id": index, "input": "text" * (index + 1), "split": "train"}
+            for index in range(10)
+        ]
+        batches = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+
+        def generate(completed):
+            model = SampledModel([])
+            model.generation_config = SimpleNamespace(do_sample=True)
+            with patch("src.generation._runtime", return_value=(
+                torch, StoppingCriteriaList, torch.manual_seed,
+            )):
+                units = list(generation_units(
+                    _loaded(model, _Tokenizer()), examples, _config(direct_batch_size=4),
+                    completed_ids=completed, batch_ids=batches,
+                ))
+            return [r for unit in units for r in unit.records], model.calls
+
+        original, calls = generate([])
+        self.assertEqual([c["input_ids"].shape[0] for c in calls], [4, 4, 2])
+        for completed in ([0], list(range(4)), list(range(6)), list(range(10))):
+            with self.subTest(completed=completed):
+                resumed, resumed_calls = generate(completed)
+                self.assertEqual(resumed, [r for r in original if r["id"] not in completed])
+                remaining_batches = [i for i, ids in enumerate(batches) if set(ids) - set(completed)]
+                self.assertEqual(len(resumed_calls), len(remaining_batches))
+                for resumed_call, index in zip(resumed_calls, remaining_batches):
+                    self.assertTrue(torch.equal(resumed_call["input_ids"], calls[index]["input_ids"]))
 
 
 if __name__ == "__main__":

@@ -94,6 +94,7 @@ from src.run_store import (
     complete_report,
     evaluation_artifact_path,
     finalize_generation_records,
+    generation_batch_plan,
     load_evaluation_records,
     load_generation_records,
     load_run_record,
@@ -473,6 +474,8 @@ def _generate(
         records, _ = load_generation_records(directory, context, examples)
         if set(records) != {example["id"] for example in examples}:
             raise RunStoreError("Completed generation does not contain every example.")
+        if prepared.config.reasoning_mode == "direct":
+            generation_batch_plan(directory, examples, set(records), prepared.config.direct_batch_size)
         print("Generation artifact: reused (model not loaded).")
         return None
     else:
@@ -511,6 +514,10 @@ def _generate(
         if reused:
             print(f"Generation cache: {len(reused)} reused.")
 
+    batches = (
+        generation_batch_plan(directory, examples, set(records), prepared.config.direct_batch_size)
+        if prepared.config.reasoning_mode == "direct" else None
+    )
     expected_ids = {example["id"] for example in examples}
     if set(records) == expected_ids:
         artifact_hash, counts = finalize_generation_records(
@@ -548,7 +555,7 @@ def _generate(
     if records:
         print(f"Resuming generation with {len(records)}/{total} records complete.")
     for unit in generation_units(
-        loaded, examples, prepared.config, completed_ids=records
+        loaded, examples, prepared.config, completed_ids=records, batch_ids=batches
     ):
         append_generation_records(
             directory, context, examples_by_id, list(unit.records)

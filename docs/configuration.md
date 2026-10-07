@@ -88,13 +88,15 @@ assistant generation boundary.
   is compared with the target as an ordinary answer. This setting does not
   block the model from generating it.
 
-- **`generation_seed` (optional; default: `42`)** - Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
+- **`generation_seed` (optional; default: `42`)** - Base seed combined with the first example ID in each direct-mode batch, or each example ID in reasoning mode. It controls generation only. Activation capture replays saved tokens without sampling.
 
-- **`direct_batch_size` (optional; default: `8`)** - Batch size in direct mode.
-  When the model's decoding defaults enable sampling, the toolkit processes one
-  example at a time to preserve each example's seed across resume and dataset
-  extensions. This overrides the batch size and can be slower. Reasoning mode
-  always processes one example at a time.
+- **`direct_batch_size` (optional; default: `8`)** - Batch size in direct mode,
+  for both sampling and greedy decoding. After reusing cached predictions, the
+  toolkit saves the remaining batch membership and order in `run.json`.
+  Resuming skips completed batches and retries an unfinished batch with its
+  original members and seed, saving only missing predictions. Extended datasets
+  reuse cached predictions and batch the new examples. Changing the batch size
+  can change sampled answers. Reasoning mode processes one example at a time.
 
 - **`decoding_strategy` (optional; default: `model_default`)** -
   `model_default` preserves the checkpoint's decoding behavior; `greedy`

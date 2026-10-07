@@ -28,6 +28,7 @@ from src.generation import (
     ANSWER_INSTRUCTION,
     GENERATION_PROTOCOL_VERSION,
     GENERATION_RECORD_SCHEMA_VERSION,
+    GenerationError,
     GenerationUnit,
     render_initial_prompt,
 )
@@ -697,6 +698,53 @@ class RunTests(unittest.TestCase):
         self.test_evaluation_mock.assert_not_called()
         self.report_mock.assert_not_called()
 
+    def test_runner_resumes_saved_batch_plan_after_partial_save(self):
+        self.write_dataset(self.record(index, "train") for index in range(10))
+        self.write_config(direct_batch_size=4)
+        examples = [self.record(index, "train") for index in range(10)]
+        records = [self.generation_record(example, "Positive") for example in examples]
+        expected_batches = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+        metadata = {
+            "resolved_revision": "resolved-commit",
+            "model_class": "Model", "tokenizer_class": "Tokenizer",
+            "dtype": "float32", "device": "cpu",
+            **generation_runtime_versions(), "generation_config": {"do_sample": True},
+        }
+
+        def interrupted(*_, completed_ids, batch_ids):
+            self.assertEqual(set(completed_ids), set())
+            self.assertEqual(batch_ids, expected_batches)
+            yield GenerationUnit(tuple(records[:3]))
+            raise GenerationError("Interrupted after partial save")
+
+        def resumed(*_, completed_ids, batch_ids):
+            self.assertEqual(set(completed_ids), {0, 1, 2})
+            self.assertEqual(batch_ids, expected_batches)
+            yield GenerationUnit(tuple(records[3:]))
+
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch("src.run.generation_units", side_effect=interrupted),
+        ):
+            code, _, stderr = self.invoke_full(None, "--behavior-only")
+        self.assertEqual(code, 1)
+        self.assertIn("Interrupted after partial save", stderr)
+        path = self.run_directories()[0] / "run.json"
+        saved_plan = json.loads(path.read_text(encoding="utf-8"))["generation_batches"]
+        with (
+            patch("src.run.load_model", return_value=object()),
+            patch("src.run.describe_model", return_value=metadata),
+            patch("src.run.generation_units", side_effect=resumed),
+        ):
+            code, _, stderr = self.invoke_full(None, "--behavior-only")
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["generation_batches"], saved_plan)
+        with patch("src.run.load_model") as load_model:
+            code, _, stderr = self.invoke_full(None, "--behavior-only")
+        self.assertEqual((code, stderr), (0, ""))
+        load_model.assert_not_called()
+
     def test_behavior_only_does_not_require_probe_ready_classes(self):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config()
@@ -1239,8 +1287,9 @@ class RunTests(unittest.TestCase):
         )
         completed_count = []
 
-        def remaining_units(*_, completed_ids):
+        def remaining_units(*_, completed_ids, batch_ids):
             completed_count.append(len(completed_ids))
+            self.assertEqual(batch_ids, [[new_record["id"]]])
             return iter((GenerationUnit((new_record,)),))
 
         with (
