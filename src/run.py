@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -128,8 +129,39 @@ class _Tee:
     def __init__(self, terminal: TextIO, log: TextIO):
         self.terminal = terminal
         self.log = log
+        self.progress_line: str | None = None
+        self.progress_width = 0
+
+    def progress(self, message: str, *, complete: bool) -> None:
+        self.progress_line = message
+        if self.terminal.isatty():
+            width = max(1, shutil.get_terminal_size().columns - 1)
+            visible = message[:width]
+            self.terminal.write("\r" + visible.ljust(min(self.progress_width, width)))
+            self.progress_width = len(visible)
+        if complete:
+            self.finish_progress()
+        self.flush()
+
+    def finish_progress(self) -> None:
+        if self.progress_line is None:
+            return
+        # Keep only the final update (or last update before interruption) in the log.
+        if self.terminal.isatty():
+            self.terminal.write("\n")
+        else:
+            self.terminal.write(self.progress_line + "\n")
+        if not self.log.closed:
+            self.log.write(self.progress_line + "\n")
+        self.progress_line = None
+        self.progress_width = 0
 
     def write(self, value: str) -> int:
+        # Finish stdout's progress before ordinary output, including stderr errors.
+        finish = getattr(sys.stdout, "finish_progress", None)
+        if finish is not None:
+            finish()
+        self.finish_progress()
         self.terminal.write(value)
         # Console libraries may retain this stream for their shutdown callbacks.
         if not self.log.closed:
@@ -162,6 +194,9 @@ def _start_execution_log(directory: Path) -> tuple[TextIO, TextIO, TextIO]:
 
 def _stop_execution_log(log: TextIO, stdout: TextIO, stderr: TextIO) -> None:
     try:
+        finish = getattr(sys.stdout, "finish_progress", None)
+        if finish is not None:
+            finish()
         sys.stdout.flush()
         sys.stderr.flush()
     finally:
@@ -314,6 +349,24 @@ def _provenance(config_path: Path, force_recompute: bool) -> dict:
     return {"invocation": invocation, "git": _git_state()}
 
 
+def _print_progress(
+    label: str, done: int, total: int, started: float, starting_done: int,
+    details: str = "",
+) -> None:
+    elapsed = max(time.monotonic() - started, 1e-9)
+    rate = (done - starting_done) / elapsed
+    eta = f"{(total - done) / rate:.0f}s" if rate else "unknown"
+    message = (
+        f"{label}: {done}/{total} {100 * done / total:.1f}% | "
+        f"{elapsed:.0f}s {rate:.2f}/s ETA {eta}{details}"
+    )
+    progress = getattr(sys.stdout, "progress", None)
+    if progress is not None:
+        progress(message, complete=done == total)
+    elif done == total:
+        print(message, flush=True)
+
+
 def _progress(
     done: int,
     total: int,
@@ -321,18 +374,11 @@ def _progress(
     started: float,
     starting_done: int,
 ) -> None:
-    elapsed = max(time.monotonic() - started, 1e-9)
-    rate = (done - starting_done) / elapsed
-    remaining = total - done
-    eta = f"{remaining / rate:.1f}s" if rate else "unknown"
     successes = sum(record["status"] == "success" for record in records.values())
     failures = len(records) - successes
-    percent = 100 * done / total
-    print(
-        f"Generation: {done}/{total} ({percent:.1f}%) | "
-        f"elapsed {elapsed:.1f}s | {rate:.2f} examples/s | ETA {eta} | "
-        f"success {successes} | failed {failures}",
-        flush=True,
+    _print_progress(
+        "Generation", done, total, started, starting_done,
+        f" | ok {successes} failed {failures}",
     )
 
 
@@ -695,15 +741,7 @@ def _evaluate_custom_metrics(
 
 
 def _activation_progress(done: int, total: int, started: float, starting_done: int) -> None:
-    elapsed = max(time.monotonic() - started, 1e-9)
-    rate = (done - starting_done) / elapsed
-    remaining = total - done
-    eta = f"{remaining / rate:.1f}s" if rate else "unknown"
-    print(
-        f"Activation capture: {done}/{total} ({100 * done / total:.1f}%) | "
-        f"elapsed {elapsed:.1f}s | {rate:.2f} examples/s | ETA {eta}",
-        flush=True,
-    )
+    _print_progress("Activation capture", done, total, started, starting_done)
 
 
 def _activation_summary(
@@ -923,15 +961,7 @@ def _capture_activations(
 
 
 def _probe_progress(done: int, total: int, started: float, starting_done: int) -> None:
-    elapsed = max(time.monotonic() - started, 1e-9)
-    rate = (done - starting_done) / elapsed
-    remaining = total - done
-    eta = f"{remaining / rate:.1f}s" if rate else "unknown"
-    print(
-        f"Probe training: {done}/{total} ({100 * done / total:.1f}%) | "
-        f"elapsed {elapsed:.1f}s | {rate:.2f} probes/s | ETA {eta}",
-        flush=True,
-    )
+    _print_progress("Probe training", done, total, started, starting_done)
 
 
 def _train_probes(

@@ -311,3 +311,5 @@ Add `--force-recompute` to your `python -m src.run configs/task.yaml` command
 to regenerate the current run. This clears its downstream
 evaluation, activation, probe, and report artifacts. Behavior and full invocations are also
 recorded in `<run_dir>/execution.log`.
+Progress updates one terminal line; the log keeps the final update or the last
+update before interruption.

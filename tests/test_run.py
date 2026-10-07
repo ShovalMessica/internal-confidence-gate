@@ -20,7 +20,8 @@ from src.activation import ActivationError, ActivationResult
 from src.config import TaskConfig
 from src.model import ModelLoadError
 from src.run import (
-    _capture_activations, _start_execution_log, _stop_execution_log, main, prepare_run,
+    _Tee, _capture_activations, _print_progress, _start_execution_log,
+    _stop_execution_log, main, prepare_run,
 )
 from src.generation import (
     ALLOW_ABSTENTION_INSTRUCTION,
@@ -35,6 +36,58 @@ from src.run_store import build_run_identity
 
 
 class ExecutionLogTests(unittest.TestCase):
+    def test_thousands_of_updates_use_one_terminal_line_and_one_log_entry(self):
+        terminal, log = io.StringIO(), io.StringIO()
+        stream = _Tee(terminal, log)
+        with patch.object(terminal, "isatty", return_value=True):
+            for done in range(1, 4801):
+                stream.progress(f"Generation: {done}/4800", complete=done == 4800)
+        self.assertEqual(terminal.getvalue().count("\n"), 1)
+        self.assertEqual(terminal.getvalue().count("\r"), 4800)
+        self.assertEqual(log.getvalue(), "Generation: 4800/4800\n")
+
+    def test_progress_clears_shorter_lines_and_fits_terminal_width(self):
+        terminal, log = io.StringIO(), io.StringIO()
+        stream = _Tee(terminal, log)
+        with (
+            patch.object(terminal, "isatty", return_value=True),
+            patch("src.run.shutil.get_terminal_size", return_value=os.terminal_size((12, 30))),
+        ):
+            stream.progress("long progress message", complete=False)
+            stream.progress("short", complete=True)
+        self.assertEqual(terminal.getvalue(), "\rlong progre\rshort      \n")
+        self.assertEqual(log.getvalue(), "short\n")
+
+    def test_redirected_progress_is_quiet_until_completion(self):
+        terminal, log = io.StringIO(), io.StringIO()
+        stream = _Tee(terminal, log)
+        with redirect_stdout(stream), patch("src.run.time.monotonic", return_value=12):
+            _print_progress("Generation", 21, 22, 10, 20)
+            self.assertEqual(terminal.getvalue(), "")
+            self.assertEqual(log.getvalue(), "")
+            _print_progress("Generation", 22, 22, 10, 20)
+        self.assertEqual(terminal.getvalue(), log.getvalue())
+        self.assertIn("22/22 100.0% | 2s 1.00/s ETA 0s", log.getvalue())
+        self.assertEqual(log.getvalue().count("\n"), 1)
+
+    def test_progress_finishes_before_errors_and_on_interruption(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as tmp:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    log, terminal_out, terminal_err = _start_execution_log(Path(tmp))
+                    try:
+                        sys.stdout.progress("Generation: 2/20", complete=False)
+                        if not interrupted:
+                            print("Generation error", file=sys.stderr)
+                    finally:
+                        _stop_execution_log(log, terminal_out, terminal_err)
+                saved = (Path(tmp) / "execution.log").read_text(encoding="utf-8")
+                self.assertEqual(saved.count("Generation: 2/20"), 1)
+                self.assertIn("Generation: 2/20\n", stdout.getvalue())
+                if not interrupted:
+                    self.assertIn("Generation: 2/20\nGeneration error\n", saved)
+
     def test_retained_streams_can_write_and_flush_after_log_closes(self):
         stdout, stderr = io.StringIO(), io.StringIO()
         with tempfile.TemporaryDirectory() as temporary:
