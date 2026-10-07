@@ -1,16 +1,12 @@
 # Add your own task
 
-This walkthrough uses the executable synthetic
-[name-correction example](../examples/ner/README.md). It first checks a prompt
-on a small development sample, then runs a separate full dataset through probe
-training and reporting.
-The synthetic task demonstrates the workflow rather than supporting a research
-claim about gate quality.
+This walkthrough uses the synthetic
+[name-correction example](../examples/ner/README.md) to demonstrate the full
+workflow. It is an example, not evidence about gate quality.
 
-Install the repository dependencies first, and run every command below from
-the repository root. `--prepare-only` validates files without loading a model.
-`--behavior-only` loads and runs the model, downloading Hub weights when they
-are not already available, then stops after answer evaluation.
+Install the dependencies and run each command from the repository root.
+`--prepare-only` validates files without loading a model. `--behavior-only`
+runs the model, then stops after answer evaluation.
 
 Use [Dataset format](dataset-format.md) and
 [Configuration](configuration.md) as the exact references.
@@ -70,13 +66,9 @@ Here `span_1` selects characters `[266, 270)`, the complete substring `Will`.
 The span marks an additional task-specific activation location; it does not
 reveal whether the model's answer is correct.
 
-The target answer is never sent to the model or used as a probe feature. It is
-used only to decide whether the saved model prediction is correct.
-
-Do not confuse **task answers** with **probe labels**. `A` and `NONE` are task
-answers. The probe label is whether the model's answer matched the target:
-`correct` or `incorrect`. Balancing task answers does not guarantee enough
-correct and incorrect model predictions for probe training.
+The target is never sent to the model or used as a probe feature. `A` and
+`NONE` are task answers; the probe label is whether the prediction is correct.
+Balanced task answers do not guarantee balanced probe labels.
 
 ## 4. Review the configuration
 
@@ -95,10 +87,8 @@ output_dir: <absolute path>/outputs
 ```
 
 The generated dataset has 1,000 examples with fixed 600/200/200 train,
-validation, and test splits. Seeded sampling varies names, participant order,
-speaker metadata, and utterance context. Each clean/corrupted pair remains in
-one split, and generation stops if task content overlaps development or another
-split.
+validation, and test splits. Related clean and corrupted examples stay in the
+same split.
 
 ## 5. Run Model Behavior
 
@@ -139,17 +129,8 @@ reports/<report_id>/
 ```
 
 Read `reports/<report_id>/metrics.json` for exact values and the PNG files for
-layer comparisons and TPR-FPR curves. The main gate metrics are:
-
-- **TPR:** fraction of correct predictions accepted.
-- **FPR:** fraction of incorrect predictions accepted.
-- **Balanced accuracy:** `(TPR + 1 - FPR) / 2`.
-- **AUROC:** ranking quality across all thresholds.
-- **Coverage:** fraction of eligible concrete predictions accepted.
-- **Accepted-error rate:** fraction of accepted predictions that are wrong.
-
-Invalid outputs and enabled `UNKNOWN` abstentions are outside the gate's
-eligible population.
+layer comparisons and TPR-FPR curves. Metric definitions are in
+[Configuration](configuration.md#frozen-test-evaluation).
 
 ## 7. Create files for your own task
 
@@ -168,8 +149,7 @@ to prepare another task. Create these files yourself:
    the model, absolute dataset and prompt paths, reasoning mode, token limits,
    abstention behavior, and output directory.
 
-Use the same preparation, behavior, and full-run commands shown above, replacing
-the NER YAML path with your configuration path.
+Use the same commands shown above with your configuration path.
 
 For example, a sentiment task could replace the prompt with “Classify the review
 as POSITIVE or NEGATIVE” and use records such as:
@@ -192,12 +172,10 @@ Use these only when the default contract is insufficient:
 - **Custom metrics:** attach free-form `metadata` and configure
   `custom_metrics_path` for task-specific count-based summaries.
 
-Their exact interfaces, validation rules, and reuse behavior are documented in
+Their exact interfaces and validation rules are documented in
 [Configuration](configuration.md) and [Dataset format](dataset-format.md).
 
 ## Reproducibility
 
-Keep the model revision, prompt, dataset, generation settings, and split
-assignments fixed for the final run. The toolkit records hashes and provenance,
-resumes interrupted stages, and reuses validated artifacts. A changed prompt or
-dataset creates a distinct run rather than silently overwriting the earlier one.
+Freeze the prompt, model, dataset, generation settings, and splits before the
+final run. Changed inputs create a separate run instead of overwriting results.
