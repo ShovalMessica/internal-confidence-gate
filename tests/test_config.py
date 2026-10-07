@@ -7,10 +7,11 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
-from src.config import ConfigurationError, load_config
+from src.config import ConfigurationError, DEFAULT_OUTPUT_DIR, load_config
 
 
 class ConfigTests(unittest.TestCase):
@@ -27,6 +28,9 @@ class ConfigTests(unittest.TestCase):
             "dataset_path": str(self.dataset),
             "reasoning_mode": "direct",
         }
+        self.output_patch = patch("src.config.DEFAULT_OUTPUT_DIR", self.root / "outputs")
+        self.output_patch.start()
+        self.addCleanup(self.output_patch.stop)
 
     def write(self, values):
         self.source.write_text(yaml.safe_dump(values), encoding="utf-8")
@@ -65,6 +69,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(self.dataset.read_text(encoding="utf-8"), "not a JSON record")
+
+    def test_default_output_is_repository_relative_not_yaml_or_working_directory(self):
+        self.output_patch.stop()
+        self.write(self.required)
+        self.assertEqual(DEFAULT_OUTPUT_DIR, Path(__file__).resolve().parents[1] / "outputs")
+        with patch("pathlib.Path.cwd", return_value=self.root):
+            self.assertEqual(load_config(self.source).output_dir, DEFAULT_OUTPUT_DIR)
+            nested = self.root / "configs"
+            nested.mkdir()
+            nested_source = nested / "task.yaml"
+            nested_source.write_bytes(self.source.read_bytes())
+            self.assertEqual(load_config(nested_source).output_dir, DEFAULT_OUTPUT_DIR)
 
     def test_explicit_settings_and_local_checkpoint(self):
         checkpoint = self.root / "checkpoint"

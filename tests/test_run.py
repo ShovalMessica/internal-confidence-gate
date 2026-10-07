@@ -60,6 +60,7 @@ class RunTests(unittest.TestCase):
             "model_name_or_path": "organization/model",
             "dataset_path": str(self.dataset),
             "reasoning_mode": "direct",
+            "output_dir": str(self.root / "outputs"),
         }
         values.update(changes)
         path = path or self.config
@@ -93,6 +94,14 @@ class RunTests(unittest.TestCase):
         self.test_evaluation_mock = evaluate_test
         self.report_mock = create_report
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def invoke_registration(self, path=None):
+        with (
+            patch("src.run._generate"),
+            patch("src.run._evaluate"),
+            patch("src.run._evaluate_custom_metrics"),
+        ):
+            return self.invoke_full(path, "--behavior-only")
 
     def run_directories(self):
         output = self.root / "outputs"
@@ -137,7 +146,7 @@ class RunTests(unittest.TestCase):
         self.write_dataset(self.record(index) for index in range(700))
         self.write_config(reasoning_mode="reasoning")
 
-        code, stdout, stderr = self.invoke()
+        code, stdout, stderr = self.invoke_registration()
 
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
@@ -147,7 +156,7 @@ class RunTests(unittest.TestCase):
             "Excluded examples: 0", "Split source: automatic",
             "train: 490", "validation: 105", "test: 105",
             "Run record: created",
-            "Preparation complete. No model was run.",
+            "Model Behavior complete.",
         ):
             self.assertIn(text, stdout)
 
@@ -220,6 +229,38 @@ class RunTests(unittest.TestCase):
         self.assertIn("Probe-size minimums: deferred", stdout)
         self.assertIn("Preparation complete. No model was run.", stdout)
 
+    def test_prepare_only_writes_nothing_and_ignores_existing_run_artifacts(self):
+        self.write_dataset(self.record(index) for index in range(20))
+        self.write_config()
+        output = self.root / "outputs"
+        for existing_output in (False, True):
+            with self.subTest(existing_output=existing_output):
+                if existing_output:
+                    output.mkdir()
+                    (output / "run.json").write_text("existing content", encoding="utf-8")
+                before = {
+                    path: (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in self.root.rglob("*") if path.is_file()
+                }
+                paths_before = set(self.root.rglob("*"))
+                with (
+                    patch("src.run.register_run") as register,
+                    patch("src.run._start_execution_log") as log,
+                    patch("src.run.load_model") as model,
+                    patch("src.run._generate") as generate,
+                ):
+                    code, stdout, stderr = self.invoke()
+                self.assertEqual((code, stderr), (0, ""))
+                self.assertIn("No files were written.", stdout)
+                self.assertNotIn("Run ID:", stdout)
+                for mock in (register, log, model, generate):
+                    mock.assert_not_called()
+                self.assertEqual(set(self.root.rglob("*")), paths_before)
+                self.assertEqual({
+                    path: (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in self.root.rglob("*") if path.is_file()
+                }, before)
+
     def test_full_run_keeps_probe_dataset_minimums(self):
         self.write_dataset(self.record(index) for index in range(10))
         self.write_config()
@@ -249,7 +290,7 @@ class RunTests(unittest.TestCase):
         output = self.root / "shared-output"
         self.write_config(output_dir=str(output))
 
-        first_code, first_stdout, _ = self.invoke()
+        first_code, first_stdout, _ = self.invoke_registration()
         record_path = next(output.iterdir()) / "run.json"
         fixed_time = 1_600_000_000_000_000_000
         os.utime(record_path, ns=(fixed_time, fixed_time))
@@ -265,7 +306,7 @@ class RunTests(unittest.TestCase):
             split_ratios={"train": 0.70, "validation": 0.15, "test": 0.15},
             split_seed=42,
         )
-        second_code, second_stdout, _ = self.invoke(second_config)
+        second_code, second_stdout, _ = self.invoke_registration(second_config)
 
         self.assertEqual((first_code, second_code), (0, 0))
         self.assertIn("Run record: created", first_stdout)
@@ -1392,13 +1433,13 @@ class RunTests(unittest.TestCase):
         run_directory = prepared.config.output_dir / identity.run_id
         run_directory.mkdir(parents=True)
 
-        code, stdout, stderr = self.invoke()
+        code, stdout, stderr = self.invoke_registration()
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("Run record: created", stdout)
 
         (run_directory / "run.json").write_text("not json", encoding="utf-8")
-        code, stdout, stderr = self.invoke()
+        code, stdout, stderr = self.invoke_registration()
         self.assertEqual(code, 1)
         self.assertEqual(stdout, "")
         self.assertIn("Run storage error:", stderr)
@@ -1407,7 +1448,7 @@ class RunTests(unittest.TestCase):
         shutil.rmtree(run_directory)
         run_directory.mkdir()
         (run_directory / "unexpected.txt").write_text("unexpected", encoding="utf-8")
-        code, stdout, stderr = self.invoke()
+        code, stdout, stderr = self.invoke_registration()
         self.assertEqual(code, 1)
         self.assertEqual(stdout, "")
         self.assertIn("nonempty but has no run.json", stderr)

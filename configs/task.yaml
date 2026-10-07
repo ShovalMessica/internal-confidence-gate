@@ -12,7 +12,7 @@ device: "auto"             # auto, cpu, cuda, or cuda:N
 dtype: "auto"              # auto, float16, bfloat16, or float32
 
 # Optional - uncomment to choose an absolute output directory.
-# Otherwise, use an outputs folder beside this YAML.
+# Otherwise, use the outputs folder at the repository root.
 # output_dir: "C:/results/my-task"
 
 # Optional - defaults

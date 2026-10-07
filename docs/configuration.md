@@ -18,7 +18,7 @@ your [JSONL dataset](dataset-format.md).
   placeholders. When omitted, generation uses only the dataset `input` as the
   user message. The file's SHA-256 hash is recorded in the run identity, so
   changing its contents creates a different generation run.
-- **`output_dir` (optional)** - Absolute path to the results directory. If omitted, use an `outputs` folder beside the YAML file. Each validated run is stored under `<output_dir>/<run_id>`.
+- **`output_dir` (optional)** - Absolute path to the results directory. If omitted, use `<repository>/outputs`, regardless of the YAML location. Behavior and full runs are stored under `<output_dir>/<run_id>`. Preparation checks write no files.
 
 User-supplied filesystem paths must be absolute; relative paths are rejected. Hugging Face model IDs are identifiers, not filesystem paths.
 
@@ -283,7 +283,8 @@ Run preparation from the repository root:
 python -m src.run configs/task.yaml --prepare-only
 ```
 
-Preparation checks the configuration and dataset without loading the model.
+Preparation checks the configuration and dataset without loading the model or
+writing files. Results are printed in the terminal.
 Unknown fields, invalid values, duplicate YAML keys, and bad paths are reported
 together. In the command above, replace `--prepare-only` with `--behavior-only`
 to run through answer evaluation without capturing activations or training probes.
@@ -292,7 +293,8 @@ predictions, targets, and outcomes. These flags go in the command, not the YAML.
 
 ## Run identity and reuse
 
-Each validated setup is stored under `<output_dir>/<run_id>`. The run ID depends
+Behavior and full runs are stored under `<output_dir>/<run_id>`.
+`--prepare-only` creates no run folder or log. The run ID depends
 on the effective configuration and exact dataset contents, not their file paths.
 The resolved model revision is pinned so resumed runs use the same weights.
 
@@ -302,5 +304,5 @@ metrics, probe settings, or threshold selection reuse compatible earlier stages.
 
 Add `--force-recompute` to your `python -m src.run configs/task.yaml` command
 to regenerate the current run. This clears its downstream
-evaluation, activation, probe, and report artifacts. Every invocation is also
+evaluation, activation, probe, and report artifacts. Behavior and full invocations are also
 recorded in `<run_dir>/execution.log`.

@@ -26,7 +26,7 @@ Fill in [`configs/task.yaml`](configs/task.yaml), then run the commands below
 from the repository root. If you use a different YAML file, replace
 `configs/task.yaml` in each command with its path.
 
-Validate those inputs without loading the model:
+Validate those inputs without loading the model or writing files:
 
 ```sh
 python -m src.run configs/task.yaml --prepare-only
@@ -50,7 +50,9 @@ python -m src.run configs/task.yaml
 
 The full command captures activations, trains and selects a probe, evaluates
 the frozen gate on test data, and creates a report under
-`<output_dir>/<run_id>/`. Preparation and behavior checks accept small
+`<output_dir>/<run_id>/` (`output_dir` defaults to `outputs/` at the repository
+root). Preparation checks only print results; they create no files or folders.
+Preparation and behavior checks accept small
 development samples; the full run enforces the data minimums listed below.
 
 ## Research goal

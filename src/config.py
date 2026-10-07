@@ -12,6 +12,9 @@ from typing import Literal
 import yaml
 
 
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
+
+
 class ConfigurationError(ValueError):
     """Configuration problems that the caller can display or log together."""
 
@@ -185,7 +188,7 @@ def load_config(path: str | Path) -> TaskConfig:
     Explicit nulls remain invalid. Raises ConfigurationError for the caller to
     display; does not read data records, load models, print, or create directories.
     """
-    source, raw = _read_yaml(path)
+    _, raw = _read_yaml(path)
     values = _DEFAULTS | raw
     errors = [f"Unknown field '{name}'; remove it or correct its spelling."
               for name in sorted(raw.keys() - _FIELDS)]
@@ -277,7 +280,7 @@ def load_config(path: str | Path) -> TaskConfig:
     if "output_dir" in raw:
         output = _absolute_path(raw["output_dir"], "output_dir", errors)
     else:
-        output = source.parent / "outputs"
+        output = DEFAULT_OUTPUT_DIR
     if output is not None and output.exists() and not output.is_dir():
         errors.append("output_dir points to a file; supply a directory path instead.")
     values["output_dir"] = output

@@ -232,7 +232,7 @@ def _preparation_summary(prepared: PreparedRun) -> dict:
 
 
 def _print_preparation(
-    prepared: PreparedRun, registered: RegisteredRun, stream: TextIO
+    prepared: PreparedRun, registered: RegisteredRun | None, stream: TextIO
 ) -> None:
     config, dataset = prepared.config, prepared.dataset
     print("Configuration valid.", file=stream)
@@ -246,11 +246,12 @@ def _print_preparation(
     if prepared.custom_metrics is not None:
         print(f"Custom metrics: {prepared.custom_metrics.source_path}", file=stream)
     print(f"Dataset: {config.dataset_path}", file=stream)
-    print(f"Run ID: {registered.directory.name}", file=stream)
-    print(f"Run directory: {registered.directory}", file=stream)
-    print(
-        f"Run record: {'created' if registered.created else 'reused'}", file=stream
-    )
+    if registered is not None:
+        print(f"Run ID: {registered.directory.name}", file=stream)
+        print(f"Run directory: {registered.directory}", file=stream)
+        print(
+            f"Run record: {'created' if registered.created else 'reused'}", file=stream
+        )
     print(f"Valid examples: {len(dataset.examples)}", file=stream)
     print(f"Excluded examples: {len(dataset.excluded)}", file=stream)
     source = "provided by dataset" if prepared.split_source == "dataset" else "automatic"
@@ -1166,7 +1167,7 @@ def _parser() -> argparse.ArgumentParser:
     stop.add_argument(
         "--prepare-only",
         action="store_true",
-        help="Validate and register the run without loading a model.",
+        help="Validate inputs without loading a model or writing files.",
     )
     stop.add_argument(
         "--behavior-only",
@@ -1206,6 +1207,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.config,
             enforce_probe_sizes=not (args.prepare_only or args.behavior_only),
         )
+        if args.prepare_only:
+            _print_preparation(prepared, None, sys.stdout)
+            print("Preparation complete. No model was run. No files were written.")
+            return 0
         identity = build_run_identity(
             prepared.config,
             prepared.dataset.content_sha256,
@@ -1219,48 +1224,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         log, terminal_out, terminal_err = _start_execution_log(registered.directory)
         _print_preparation(prepared, registered, sys.stdout)
-        if args.prepare_only:
-            print("Preparation complete. No model was run.")
-        else:
-            loaded = _generate(
-                prepared, registered, args.config.resolve(), args.force_recompute
+        loaded = _generate(
+            prepared, registered, args.config.resolve(), args.force_recompute
+        )
+        summary = _evaluate(prepared, registered)
+        _evaluate_custom_metrics(prepared, registered)
+        if args.show_examples is not None:
+            _print_prediction_examples(prepared, registered, args.show_examples)
+        if args.behavior_only:
+            print(
+                "Model Behavior complete. Activation capture and probe stages "
+                "were not run."
             )
-            summary = _evaluate(prepared, registered)
-            _evaluate_custom_metrics(prepared, registered)
-            if args.show_examples is not None:
-                _print_prediction_examples(prepared, registered, args.show_examples)
-            if args.behavior_only:
-                print(
-                    "Model Behavior complete. Activation capture and probe stages "
-                    "were not run."
-                )
-            else:
-                if not summary["probe_ready"]:
-                    _print_shortages(summary["shortages"], sys.stderr)
-                    return 1
-                _capture_activations(
-                    prepared, registered, loaded, args.force_recompute
-                )
-                probe_identity, probe_sha256 = _train_probes(prepared, registered)
-                selection_identity, selection_sha256 = _select_probe(
-                    prepared, registered, probe_identity, probe_sha256
-                )
-                test_identity, test_sha256 = _evaluate_frozen_test(
-                    prepared,
-                    registered,
-                    probe_identity,
-                    selection_identity,
-                    selection_sha256,
-                )
-                _create_report(
-                    prepared,
-                    registered,
-                    probe_identity,
-                    selection_identity,
-                    selection_sha256,
-                    test_identity,
-                    test_sha256,
-                )
+        else:
+            if not summary["probe_ready"]:
+                _print_shortages(summary["shortages"], sys.stderr)
+                return 1
+            _capture_activations(
+                prepared, registered, loaded, args.force_recompute
+            )
+            probe_identity, probe_sha256 = _train_probes(prepared, registered)
+            selection_identity, selection_sha256 = _select_probe(
+                prepared, registered, probe_identity, probe_sha256
+            )
+            test_identity, test_sha256 = _evaluate_frozen_test(
+                prepared,
+                registered,
+                probe_identity,
+                selection_identity,
+                selection_sha256,
+            )
+            _create_report(
+                prepared,
+                registered,
+                probe_identity,
+                selection_identity,
+                selection_sha256,
+                test_identity,
+                test_sha256,
+            )
     except ConfigurationError as error:
         print(error, file=sys.stderr)
         return 1

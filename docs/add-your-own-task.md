@@ -157,7 +157,7 @@ Edit [`configs/task.yaml`](../configs/task.yaml). Replace these required fields:
 In that YAML file, uncomment `system_prompt_path` if you use shared instructions
 and enter the prompt file's absolute path. To choose a results directory,
 uncomment `output_dir` and enter its absolute path. Otherwise, results go under
-`outputs` beside the YAML file.
+`outputs/` at the repository root, regardless of where the YAML is saved.
 
 Review the remaining defaults, especially token limits and abstention. See
 [Model and paths](configuration.md#model-and-paths) for supported models and
@@ -176,7 +176,8 @@ Copy `configs/task.yaml` to `configs/dev-task.yaml`. In that copy, set
 `dataset_path` to the absolute path of your development JSONL file. Keep model
 and generation settings consistent with the planned full run.
 
-Validate the files without loading a model:
+Validate the files without loading a model or writing files. Results appear only
+in the terminal:
 
 ```sh
 python -m src.run configs/dev-task.yaml --prepare-only
