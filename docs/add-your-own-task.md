@@ -54,9 +54,9 @@ and mark where the assistant's response begins. A compatible chat model is
 required, even without a system prompt. You do not add role markers yourself.
 
 Supply finished text without unresolved placeholders or code fences around the
-prompt. Test your instructions on separate development examples, then keep the
+prompt. **Test your instructions on separate development examples, then keep the
 instruction template and message structure consistent across training,
-validation, and test.
+validation, and test.**
 
 See [Prompt examples](prompt-examples.md) for more detailed task prompts.
 
