@@ -143,7 +143,7 @@ The runner prints and stores a Model Behavior summary overall and by split. For 
 
 - **Correct prediction:** a concrete answer accepted by `answer_match`; rate `N_correct / N`.
 - **Wrong prediction:** a concrete answer rejected by `answer_match`; rate `N_wrong / N`.
-- **Missed prediction:** the model returned `UNKNOWN`; rate `N_missed / N`.
+- **Missed prediction:** the model returned `UNKNOWN` with `allow_abstention: true`; rate `N_missed / N`. With abstention disabled, `UNKNOWN` is evaluated as an ordinary answer and this rate is zero.
 - **Invalid output:** the response could not be evaluated structurally; rate `N_invalid / N`.
 - **Token-limit output:** answer generation reached its token limit; rate `N_token_limit / N`. This is an independent diagnostic, so the same example also appears in one of the four outcomes above.
 
@@ -234,6 +234,10 @@ target with these fields in your task YAML.
   `none`.
 - **`target_tpr` (optional; default: `0.90`)** - Minimum fraction of correct validation predictions the selected gate must accept. Must be greater than `0` and at most `1`.
 
+`probe_positions` and `probe_layers` restrict probe training and reports.
+Activation capture still saves all default positions, supplied semantic spans,
+and every returned model state.
+
 The toolkit trains an L2 logistic-regression probe for each selected position and
 layer. By default, it uses every captured position and state. Multi-token spans
 are mean-pooled, and feature standardization is fitted on training data only.
@@ -246,10 +250,24 @@ Candidates and selections are stored in `<run_dir>/probes.h5`.
 ## Gate evaluation
 
 The toolkit applies the validation-selected probe and threshold unchanged to
-test predictions. It reports TPR, FPR, balanced accuracy, AUROC, coverage, and
-accepted-error rate. Coverage is the accepted fraction of eligible predictions;
-accepted-error rate is the incorrect fraction among accepted predictions.
-Invalid outputs and enabled abstentions are ineligible.
+test predictions. `target_tpr` is a validation target, not guaranteed test
+retention: test TPR may be higher or lower.
+
+Metrics use eligible predictions: correct and incorrect answers, excluding
+invalid outputs and enabled abstentions. "Accepted" means the score meets the
+gate's threshold.
+
+| Metric | Meaning | Better direction |
+| --- | --- | --- |
+| TPR | Accepted correct predictions / all correct predictions | Higher |
+| FPR | Accepted incorrect predictions / all incorrect predictions | Lower, at comparable TPR |
+| Balanced accuracy | `(TPR + 1 - FPR) / 2` | Higher |
+| AUROC | How well scores rank correct answers above incorrect ones across thresholds; 0.5 is chance, 1 is perfect | Higher |
+| Coverage | All accepted predictions / all eligible predictions | A tradeoff with accepted-error rate |
+| Accepted-error rate | Accepted incorrect predictions / all accepted predictions; `null` if none are accepted | Lower |
+
+FPR and accepted-error rate have different denominators: all incorrect
+predictions versus all accepted predictions.
 
 The output-probability baseline uses the same examples and receives its own threshold selected on validation at the same `target_tpr`. Its answer-level score is the geometric mean of generated answer-token probabilities, which avoids penalizing longer answers merely for containing more tokens. One-token answers keep their original token probability. Token probabilities are calculated from the model's raw next-token logits, before temperature, top-k, top-p, or other sampling filters are applied.
 
@@ -259,8 +277,8 @@ Neither method uses test data to select a representation or threshold.
 
 Reporting runs automatically after gate evaluation and uses only saved scores. It reports TPR, FPR, balanced accuracy, and AUROC.
 
-- `validation_layers_<position>.png` shows validation balanced accuracy across Layer 0 (the token embedding) and every transformer layer.
-- `validation_tpr_fpr.png` shows one validation-selected representative per captured position plus output probability. Each representative is the position's layer with the lowest FPR while meeting `target_tpr`.
+- `validation_layers_<position>.png` shows validation balanced accuracy across the trained layers for each selected position. By default, this includes Layer 0 (the token embedding) and every transformer layer.
+- `validation_tpr_fpr.png` shows one validation-selected representative per trained position plus output probability. Each representative is the position's trained layer with the lowest FPR while meeting `target_tpr`.
 - `test_tpr_fpr.png` compares only the validation-selected overall winner and output-probability baseline. Test data does not choose either method or threshold.
 - `metrics.json` and CSV files store the exact values behind the figures.
 

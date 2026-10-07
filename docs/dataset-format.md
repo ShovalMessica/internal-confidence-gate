@@ -101,7 +101,7 @@ distinct. One-token and multi-token answers use the same tensor structure.
 
 Full probe runs require at least 700 valid examples. Each resulting split must contain at least 200 train, 100 validation, and 100 test examples. User-supplied splits are preserved but must meet the same requirements. `--prepare-only` and `--behavior-only` defer these minimums so small prompt-development samples can be checked.
 
-After generation, the toolkit requires at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid and `UNKNOWN` predictions do not count. Evaluation results are saved before a shortage stops the runner.
+After generation, the toolkit requires at least 100 correct and 100 incorrect usable predictions in train, and 50 correct and 50 incorrect in both validation and test. Invalid outputs do not count. `UNKNOWN` predictions are excluded only when `allow_abstention: true`; otherwise, they count as ordinary correct or incorrect answers. Evaluation results are saved before a shortage stops the runner.
 
 ## Example
 
