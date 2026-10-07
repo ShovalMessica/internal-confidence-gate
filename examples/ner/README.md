@@ -37,7 +37,7 @@ python -m src.run examples/ner/generated/task.yaml
 ```
 
 The final command reuses saved generations, captures activations, trains and
-selects probes, evaluates the frozen gate on test data, and writes the report.
+selects probes, evaluates the gate on test data, and writes the report.
 Generated data and outputs stay under `examples/ner/generated/`, which Git
 ignores.
 

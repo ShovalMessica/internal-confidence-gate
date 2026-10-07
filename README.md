@@ -49,7 +49,7 @@ python -m src.run configs/task.yaml
 ```
 
 The full command captures activations, trains and selects a probe, evaluates
-the frozen gate on test data, and creates a report under
+the gate on test data, and creates a report under
 `<output_dir>/<run_name>/` (`output_dir` defaults to `outputs/` at the repository
 root). Preparation checks only print results; they create no files or folders.
 Preparation and behavior checks accept small
@@ -64,7 +64,7 @@ score for deciding which completed predictions to accept.
 The pipeline is:
 
 **Configuration and dataset → generation → answer evaluation → activation
-capture → probe training → validation selection → frozen test evaluation →
+capture → probe training → validation selection → gate evaluation →
 report.**
 
 Target answers are used to determine whether saved model predictions are
@@ -99,12 +99,13 @@ task-specific locations in the input.
 Linear probes are trained on the training split across configured positions and
 layers. Validation data chooses the probe and the strictest threshold that
 retains at least `target_tpr` of correct predictions while minimizing FPR. Test
-data is used once to evaluate that frozen choice against an independently
+data is used once to evaluate that choice without changing it against an independently
 thresholded output-probability baseline.
 
 The final gate report includes TPR, FPR, balanced accuracy, AUROC, coverage, and
-accepted-error rate. See [Configuration](docs/configuration.md) for the precise
-training, selection, baseline, reporting, and reuse contracts.
+accepted-error rate. See [Gate evaluation](docs/configuration.md#gate-evaluation)
+for evaluation details and [Configuration](docs/configuration.md) for training,
+selection, reporting, and reuse rules.
 
 ## Data requirements
 

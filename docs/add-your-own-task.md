@@ -213,7 +213,7 @@ Behavior-only runs save results even when those counts are insufficient. See
 [Answer evaluation](configuration.md#answer-evaluation) for matching rules and
 metric definitions.
 
-## 7. Train and evaluate the gate
+## 7. Probe training and gate evaluation
 
 Run the same configuration without a stopping flag:
 
@@ -222,9 +222,10 @@ python -m src.run configs/task.yaml
 ```
 
 The toolkit reuses saved generations, captures activations, trains probes on
-train, selects a probe and threshold on validation, and compares the frozen
-gate with output probability on test. If usable counts are insufficient, it
-reports the shortage and stops before probe training.
+train, and selects a probe and threshold on validation. Gate evaluation compares
+it with output probability on test data, keeping the selected probe and threshold
+unchanged. If usable counts are insufficient, the toolkit reports the shortage
+and stops before probe training.
 
 The printed run directory contains:
 
@@ -242,7 +243,7 @@ The generation manifest references saved model outputs in the shared
 `<output_dir>/.cache/generations` directory. Read
 `reports/<report_id>/metrics.json` for exact values and the PNG files for layer
 comparisons and TPR-FPR curves. Metric definitions are in
-[Configuration](configuration.md#frozen-test-evaluation).
+[Gate evaluation](configuration.md#gate-evaluation).
 
 ## Optional task-specific behavior
 

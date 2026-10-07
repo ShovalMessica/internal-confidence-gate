@@ -975,7 +975,7 @@ def complete_test_evaluation(
     }
     existing = evaluations.get(identity.test_id)
     if existing is not None and existing != entry:
-        raise RunStoreError("Test evaluation ID collision or conflicting run record.")
+        raise RunStoreError("Gate evaluation ID collision or conflicting run record.")
     evaluations[identity.test_id] = entry
     _save_run_record(directory, record)
 
@@ -996,7 +996,7 @@ def validate_completed_test_evaluation(
     if evaluation is None:
         return False
     if "test_evaluation" not in record.get("completed_stages", []):
-        raise RunStoreError("Saved test evaluation is missing its completed stage.")
+        raise RunStoreError("Saved gate evaluation is missing its completed stage.")
     if (
         not isinstance(evaluation, dict)
         or evaluation.get("test_id") != identity.test_id
@@ -1009,7 +1009,7 @@ def validate_completed_test_evaluation(
         or evaluation.get("group") != f"test_evaluations/{identity.test_id}"
         or not isinstance(evaluation.get("summary"), dict)
     ):
-        raise RunStoreError("Completed test evaluation is invalid.")
+        raise RunStoreError("Completed gate evaluation is invalid.")
     _, summary = validate_test_evaluation_group(
         directory,
         probe_identity,

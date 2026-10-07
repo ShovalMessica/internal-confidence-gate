@@ -215,7 +215,7 @@ For each probe, validation chooses the highest observed threshold that meets
 but does not affect selection. Test data is not read during this process.
 Candidates and selections are stored in `<run_dir>/probes.h5`.
 
-## Frozen test evaluation
+## Gate evaluation
 
 The toolkit applies the validation-selected probe and threshold unchanged to
 test predictions. It reports TPR, FPR, balanced accuracy, AUROC, coverage, and
@@ -229,14 +229,14 @@ Neither method uses test data to select a representation or threshold.
 
 ## Reporting
 
-Reporting runs automatically after frozen test evaluation and uses only saved scores. It reports TPR, FPR, balanced accuracy, and AUROC.
+Reporting runs automatically after gate evaluation and uses only saved scores. It reports TPR, FPR, balanced accuracy, and AUROC.
 
 - `validation_layers_<position>.png` shows validation balanced accuracy across Layer 0 (the token embedding) and every transformer layer.
 - `validation_tpr_fpr.png` shows one validation-selected representative per captured position plus output probability. Each representative is the position's layer with the lowest FPR while meeting `target_tpr`.
-- `test_tpr_fpr.png` compares only the frozen overall winner and output-probability baseline. Test data does not choose either method or threshold.
+- `test_tpr_fpr.png` compares only the validation-selected overall winner and output-probability baseline. Test data does not choose either method or threshold.
 - `metrics.json` and CSV files store the exact values behind the figures.
 
-The TPR-FPR plots reverse conventional ROC axes: TPR is on the horizontal axis and FPR is on the vertical axis. Lower-right is better. Reports are stored under `<run_dir>/reports/<report_id>` with a hash-validated manifest and are reused when their frozen inputs match.
+The TPR-FPR plots reverse conventional ROC axes: TPR is on the horizontal axis and FPR is on the vertical axis. Lower-right is better. Reports are stored under `<run_dir>/reports/<report_id>` with a hash-validated manifest and are reused when their saved inputs match.
 
 ## Automatic splitting
 

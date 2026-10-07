@@ -26,7 +26,7 @@ from src.probe import (
 from src.probe_math import answer_probability
 
 
-REPORT_PROTOCOL_VERSION = 3
+REPORT_PROTOCOL_VERSION = 4
 REPORT_SCHEMA_VERSION = 1
 REPORTS_DIR = "reports"
 
@@ -497,7 +497,7 @@ def create_report(
                 temporary / "test_tpr_fpr.png",
                 test_curve_rows,
                 test_points,
-                "Frozen test TPR-FPR comparison",
+                "Gate evaluation: TPR-FPR comparison (test)",
                 representative_series[overall_position],
             )
 

@@ -1003,7 +1003,7 @@ def _test_summary(group) -> dict[str, object]:
 
 def _test_sha256(group) -> str:
     if not bool(group.attrs.get("completed", False)):
-        raise ProbeError("Cannot hash incomplete frozen test evaluation.")
+        raise ProbeError("Cannot hash incomplete gate evaluation.")
     metadata_names = (
         "fingerprint",
         "selection_id",
@@ -1039,7 +1039,7 @@ def _validate_test_layout(group, identity: TestEvaluationIdentity) -> None:
         "probability_aggregation": PROBABILITY_AGGREGATION,
     }
     if any(group.attrs.get(name) != value for name, value in expected.items()):
-        raise ProbeError(f"Frozen test evaluation is incompatible: {identity.test_id}")
+        raise ProbeError(f"Gate evaluation is incompatible: {identity.test_id}")
     arrays = {
         "ids": "int64",
         "labels": "int8",
@@ -1049,14 +1049,14 @@ def _validate_test_layout(group, identity: TestEvaluationIdentity) -> None:
         "probability_accepted": "bool",
     }
     if set(group.keys()) != set(arrays):
-        raise ProbeError(f"Frozen test evaluation is incomplete: {identity.test_id}")
+        raise ProbeError(f"Gate evaluation is incomplete: {identity.test_id}")
     size = group["ids"].shape
     if len(size) != 1 or size[0] == 0:
-        raise ProbeError(f"Frozen test evaluation has no examples: {identity.test_id}")
+        raise ProbeError(f"Gate evaluation has no examples: {identity.test_id}")
     for name, dtype in arrays.items():
         if group[name].shape != size or group[name].dtype.name != dtype:
             raise ProbeError(
-                f"Frozen test evaluation has invalid '{name}': {identity.test_id}"
+                f"Gate evaluation has invalid '{name}': {identity.test_id}"
             )
     labels = group["labels"][...]
     probe_scores = group["probe_scores"][...]
@@ -1082,7 +1082,7 @@ def _validate_test_layout(group, identity: TestEvaluationIdentity) -> None:
         )
         or not isinstance(_json_attr(group, "probability_validation"), dict)
     ):
-        raise ProbeError(f"Frozen test evaluation is invalid: {identity.test_id}")
+        raise ProbeError(f"Gate evaluation is invalid: {identity.test_id}")
 
 
 def validate_test_evaluation_group(
@@ -1104,13 +1104,13 @@ def validate_test_evaluation_group(
         with _open(path, "r") as source:
             tests = _test_evaluations(source)
             if tests is None or identity.test_id not in tests:
-                raise ProbeError(f"Frozen test evaluation is missing: {identity.test_id}")
+                raise ProbeError(f"Gate evaluation is missing: {identity.test_id}")
             group = tests[identity.test_id]
             _validate_test_layout(group, identity)
             content_hash = _test_sha256(group)
             if expected_sha256 is not None and content_hash != expected_sha256:
                 raise ProbeError(
-                    f"Frozen test evaluation has changed: {identity.test_id}"
+                    f"Gate evaluation has changed: {identity.test_id}"
                 )
             return content_hash, _test_summary(group)
     except ProbeError:
@@ -1199,12 +1199,12 @@ def evaluate_frozen_test(
             )
             if not np.isfinite(logits).all():
                 raise ProbeError(
-                    f"Frozen probe produced nonfinite logits at '{position}', "
+                    f"Selected probe produced nonfinite logits at '{position}', "
                     f"{selected_state}."
                 )
             probe_scores = _sigmoid(np.asarray(logits, dtype=np.float64))
             if not np.isfinite(probe_scores).all():
-                raise ProbeError("Frozen probe produced nonfinite test scores.")
+                raise ProbeError("Selected probe produced nonfinite test scores.")
 
             pending_name = f"_pending_{identity.test_id}"
             if pending_name in tests:
@@ -1246,7 +1246,7 @@ def evaluate_frozen_test(
     except ProbeError:
         raise
     except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
-        raise ProbeError(f"Cannot evaluate or save frozen test results: {path}") from exc
+        raise ProbeError(f"Cannot evaluate or save gate evaluation results: {path}") from exc
 
 
 def train_probes(

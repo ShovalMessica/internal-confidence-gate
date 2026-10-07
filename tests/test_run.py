@@ -1065,7 +1065,7 @@ class RunTests(unittest.TestCase):
         load_tokenizer.assert_not_called()
         capture.assert_not_called()
         self.assertIn("Probe artifact: reused.", reused_stdout.getvalue())
-        self.assertIn("Test evaluation: reused.", reused_stdout.getvalue())
+        self.assertIn("Gate evaluation: reused.", reused_stdout.getvalue())
 
     def test_semantic_mapping_failure_precedes_activation_file_writes(self):
         run_directory = self.root / "run"

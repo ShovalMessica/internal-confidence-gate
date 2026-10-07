@@ -1100,8 +1100,8 @@ def _select_probe(
 
 
 def _print_test_evaluation(test_id: str, summary: dict, reused: bool) -> None:
-    print(f"Test evaluation ID: {test_id}")
-    print(f"Test evaluation: {'reused' if reused else 'created'}.")
+    print(f"Gate evaluation ID: {test_id}")
+    print(f"Gate evaluation: {'reused' if reused else 'created'}.")
     for label, key in (
         ("Probe", "probe"),
         ("Output probability", "output_probability"),
@@ -1129,7 +1129,7 @@ def _evaluate_frozen_test(
     run_record = load_run_record(directory)
     generation = run_record.get("generation")
     if not isinstance(generation, dict):
-        raise RunStoreError("Frozen test evaluation requires completed generation.")
+        raise RunStoreError("Gate evaluation requires completed generation.")
     identity = build_test_evaluation_identity(
         selection_identity.selection_id,
         selection_sha256,
