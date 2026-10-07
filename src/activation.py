@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -10,13 +10,14 @@ from typing import Any, Mapping, Sequence
 
 from src.generation import (
     REASONING_INSTRUCTION,
+    _pad_contexts,
     initial_prompt_content,
     render_initial_prompt,
 )
 from src.model import LoadedModel
 
 
-ACTIVATION_PROTOCOL_VERSION = 4
+ACTIVATION_PROTOCOL_VERSION = 5
 ACTIVATION_SCHEMA_VERSION = 1
 CAPTURE_BACKEND = "transformers_hidden_states"
 POSITION_PROTOCOL = "semantic_spans_v1"
@@ -34,6 +35,7 @@ class ReplayPlan:
     answer_token_ids: tuple[int, ...]
     answer_token_logprobs: tuple[float, ...]
     replay_sha256: str
+    batch_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ def _sequence_hash(token_ids: Sequence[int]) -> str:
 def build_replay_plan(
     generation: Mapping[str, object],
     semantic_positions: Mapping[str, Sequence[int]] | None = None,
+    *,
+    allow_empty_answer: bool = False,
 ) -> ReplayPlan:
     """Build exact replay tokens and default capture positions without retokenizing."""
     if generation.get("status") != "success":
@@ -100,7 +104,9 @@ def build_replay_plan(
     answer = generation.get("answer")
     if not isinstance(answer, dict):
         raise ActivationError("answer must be an object.")
-    answer_ids = _token_ids(answer.get("token_ids"), "answer.token_ids", nonempty=True)
+    answer_ids = _token_ids(
+        answer.get("token_ids"), "answer.token_ids", nonempty=not allow_empty_answer
+    )
     raw_logprobs = answer.get("token_logprobs")
     if (
         not isinstance(raw_logprobs, list)
@@ -140,6 +146,62 @@ def build_replay_plan(
         answer_token_logprobs=answer_logprobs,
         replay_sha256=_sequence_hash(token_ids),
     )
+
+
+def build_replay_batches(
+    generations: Mapping[int, dict],
+    selected: Mapping[int, ReplayPlan],
+    reasoning_mode: str,
+) -> tuple[dict[int, ReplayPlan], ...]:
+    """Restore original batch membership, including ineligible companion rows."""
+    batches = []
+    covered = set()
+    for example_id in selected:
+        if example_id in covered:
+            continue
+        if reasoning_mode == "reasoning":
+            ids = [example_id]
+        else:
+            batch = generations[example_id].get("generation_batch")
+            ids = batch.get("ids") if isinstance(batch, dict) else None
+            if (
+                not isinstance(ids, list) or not ids
+                or any(type(i) is not int for i in ids)
+                or len(set(ids)) != len(ids) or example_id not in ids
+            ):
+                raise ActivationError(
+                    f"Missing or invalid generation batch for example ID {example_id}."
+                )
+        plans = {}
+        for member_id in ids:
+            record = generations.get(member_id)
+            if record is None:
+                raise ActivationError(
+                    f"Replay for example ID {example_id} requires original batch "
+                    f"member ID {member_id}; use the original dataset or regenerate "
+                    "this dataset with --force-recompute."
+                )
+            batch = record.get("generation_batch")
+            if reasoning_mode == "direct" and (
+                not isinstance(batch, dict) or batch.get("ids") != ids
+            ):
+                raise ActivationError(
+                    f"Inconsistent generation batch for example ID {member_id}; "
+                    "regenerate this dataset with --force-recompute."
+                )
+            if record.get("status") != "success":
+                continue  # Failed prompt/context checks never entered the model batch.
+            plans[member_id] = selected.get(member_id) or build_replay_plan(
+                record, allow_empty_answer=True
+            )
+        # Companion content and answer lengths affect padding and replay numerics.
+        payload = [(i, p.token_ids, p.positions["answer_tokens"]) for i, p in plans.items()]
+        batch_hash = hashlib.sha256(
+            json.dumps(payload, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+        batches.append({i: replace(p, batch_sha256=batch_hash) for i, p in plans.items()})
+        covered.update(plans)
+    return tuple(batches)
 
 
 def map_semantic_spans(
@@ -264,22 +326,17 @@ def _runtime():
     return torch
 
 
-def _model_device(model: Any) -> Any:
-    device = getattr(model, "device", None)
-    if device is None:
-        raise ActivationError("The loaded model does not expose an input device.")
-    return device
-
-
-def _replay_logprob_difference(output: Any, plan: ReplayPlan, torch: Any) -> float:
+def _replay_logprob_difference(
+    output: Any, plan: ReplayPlan, torch: Any, row: int = 0, offset: int = 0
+) -> float:
     logits = getattr(output, "logits", None)
     if logits is None or getattr(logits, "ndim", None) != 3:
         raise ActivationError("The model did not return valid causal-language-model logits.")
     answer_positions = plan.positions["answer_tokens"]
-    prediction_positions = [position - 1 for position in answer_positions]
+    prediction_positions = [position + offset - 1 for position in answer_positions]
     if any(position < 0 for position in prediction_positions):
         raise ActivationError("An answer token has no preceding prediction position.")
-    selected = logits[0, prediction_positions].float()
+    selected = logits[row, prediction_positions].float()
     targets = torch.tensor(
         plan.answer_token_ids, dtype=torch.long, device=selected.device
     ).unsqueeze(1)
@@ -288,22 +345,58 @@ def _replay_logprob_difference(output: Any, plan: ReplayPlan, torch: Any) -> flo
     differences = []
     for actual, expected in zip(replayed, plan.answer_token_logprobs):
         difference = abs(float(actual) - expected)
+        if not math.isfinite(actual) or difference > 0.01 + 0.002 * abs(expected):
+            raise ActivationError(
+                "Replay probability mismatch: "
+                f"saved log-probability {expected:.6g}, replayed {actual:.6g}. "
+                "Capture stopped; activations from this batch were not saved."
+            )
         differences.append(difference)
     return max(differences, default=0.0)
 
 
 def capture_hidden_states(loaded: LoadedModel, plan: ReplayPlan) -> ActivationResult:
-    """Run one frozen replay and return selected hidden states on CPU."""
+    """Capture a singleton generation batch (including reasoning-mode answers)."""
+    return capture_hidden_state_batch(loaded, {0: plan})[0]
+
+
+def capture_hidden_state_batch(
+    loaded: LoadedModel, plans: Mapping[int, ReplayPlan]
+) -> dict[int, ActivationResult]:
+    """Replay a complete saved batch, preserving its original prompt padding."""
+    if not plans:
+        raise ActivationError("Cannot replay an empty generation batch.")
     torch = _runtime()
     model = loaded.model
-    device = _model_device(model)
-    input_ids = torch.tensor([plan.token_ids], dtype=torch.long, device=device)
-    attention_mask = torch.ones_like(input_ids)
+    contexts = [
+        list(plan.token_ids[:len(plan.token_ids) - len(plan.answer_token_ids)])
+        for plan in plans.values()
+    ]
+    inputs = _pad_contexts(loaded.tokenizer, contexts, model)
+    context_width = int(inputs["input_ids"].shape[1])
+    answer_width = max(len(p.answer_token_ids) for p in plans.values())
+    # Answers grow on the right during generation. Left-padding whole replay
+    # sequences instead would move shorter answers' original prompt columns.
+    answers = torch.full(
+        (len(plans), answer_width), loaded.tokenizer.pad_token_id,
+        dtype=torch.long, device=inputs["input_ids"].device,
+    )
+    answer_mask = torch.zeros_like(answers)
+    for row, plan in enumerate(plans.values()):
+        count = len(plan.answer_token_ids)
+        if count:
+            answers[row, :count] = torch.tensor(plan.answer_token_ids, device=answers.device)
+            answer_mask[row, :count] = 1
+    input_ids = torch.cat((inputs["input_ids"], answers), dim=1)
+    attention_mask = torch.cat((inputs["attention_mask"], answer_mask), dim=1)
+    position_ids = attention_mask.long().cumsum(-1) - 1
+    position_ids.masked_fill_(attention_mask == 0, 1)
     try:
         with torch.inference_mode():
             output = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                position_ids=position_ids,
                 output_hidden_states=True,
                 use_cache=False,
                 return_dict=True,
@@ -314,11 +407,11 @@ def capture_hidden_states(loaded: LoadedModel, plan: ReplayPlan) -> ActivationRe
     hidden_states = getattr(output, "hidden_states", None)
     if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
         raise ActivationError("The model did not return hidden states.")
-    sequence_length = len(plan.token_ids)
+    sequence_length = input_ids.shape[1]
     hidden_size = None
     for index, state in enumerate(hidden_states):
         shape = getattr(state, "shape", ())
-        if len(shape) != 3 or shape[0] != 1 or shape[1] != sequence_length:
+        if len(shape) != 3 or shape[0] != len(plans) or shape[1] != sequence_length:
             raise ActivationError(
                 f"hidden_states[{index}] has an unsupported shape {tuple(shape)}."
             )
@@ -327,14 +420,32 @@ def capture_hidden_states(loaded: LoadedModel, plan: ReplayPlan) -> ActivationRe
         elif shape[2] != hidden_size:
             raise ActivationError("Hidden-state dimensions differ across layers.")
 
-    max_difference = _replay_logprob_difference(output, plan, torch)
+    results = {}
+    for row, (example_id, plan) in enumerate(plans.items()):
+        offset = context_width - len(contexts[row])
+        try:
+            difference = _replay_logprob_difference(output, plan, torch, row, offset)
+            results[example_id] = _select_hidden_states(
+                hidden_states, plan, row, offset, difference, torch
+            )
+        except ActivationError as exc:
+            raise ActivationError(f"Example ID {example_id}: {exc}") from exc
+    return results
+
+
+def _select_hidden_states(
+    hidden_states: Sequence[Any], plan: ReplayPlan, row: int, offset: int,
+    max_difference: float, torch: Any,
+) -> ActivationResult:
     tensors = {}
     for name, positions in plan.positions.items():
         selected_states = []
         for index, state in enumerate(hidden_states):
-            selected = state[0].index_select(
+            selected = state[row].index_select(
                 0,
-                torch.tensor(positions, dtype=torch.long, device=state.device),
+                torch.tensor(
+                    [p + offset for p in positions], dtype=torch.long, device=state.device
+                ),
             )
             if not bool(torch.isfinite(selected).all()):
                 raise ActivationError(

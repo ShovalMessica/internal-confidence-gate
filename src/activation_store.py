@@ -251,6 +251,7 @@ def _validate_example(
         int(group.attrs.get("id", -1)) != example["id"]
         or group.attrs.get("generation_sha256") != generation_sha256
         or group.attrs.get("replay_sha256") != plan.replay_sha256
+        or group.attrs.get("batch_sha256", "") != plan.batch_sha256
         or group.attrs.get("positions") != _positions_json(plan)
         or (require_split and group.attrs.get("split") != example["split"])
     ):
@@ -370,6 +371,7 @@ def append_activation_record(
             group.attrs["split"] = example["split"]
             group.attrs["generation_sha256"] = generation_sha256
             group.attrs["replay_sha256"] = plan.replay_sha256
+            group.attrs["batch_sha256"] = plan.batch_sha256
             group.attrs["positions"] = _positions_json(plan)
             group.attrs["max_logprob_difference"] = result.max_logprob_difference
             if set(result.tensors) != set(plan.positions):

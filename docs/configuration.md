@@ -201,6 +201,21 @@ uses `null` when the denominator is zero. Return the same metric names overall
 and for every split. Changing this file recalculates custom metrics without
 rerunning the model.
 
+## Activation replay
+
+Capture reuses saved tokens and the original generation batches, including
+companions excluded from probe training. Reasoning-mode answers replay individually.
+Resuming a partial batch replays the whole batch and saves only missing captures.
+
+Each answer-token log-probability must match generation within
+`0.01 + 0.002 * abs(saved_logprob)`. A mismatch stops capture before that batch
+is saved. Float16 rounding can still differ between generation and replay;
+the toolkit reports the affected example rather than accepting a mismatch.
+
+Capture reuse requires matching batch contents as well as token positions.
+This replay update creates a new run directory and reuses compatible generations;
+older captures and probes remain untouched and are not reused.
+
 ## Probe training and validation selection
 
 Customize probe positions, layers, fitting settings, and the gate's retention

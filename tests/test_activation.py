@@ -1,6 +1,8 @@
 """Offline checks for exact replay and default hidden-state capture."""
 
 from math import exp, log
+from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +14,9 @@ import torch
 from src.activation import (
     ActivationError,
     build_replay_plan,
+    build_replay_batches,
     capture_hidden_states,
+    capture_hidden_state_batch,
     map_semantic_spans,
 )
 from src.activation_store import (
@@ -98,8 +102,22 @@ class _NonfiniteReplayModel(_ReplayModel):
         return output
 
 
+class _PaddingTokenizer:
+    pad_token_id = 0
+    padding_side = "right"
+
+    def pad(self, values, **kwargs):
+        assert self.padding_side == "left"
+        rows = values["input_ids"]
+        width = max(map(len, rows))
+        return {
+            "input_ids": torch.tensor([[0] * (width - len(r)) + r for r in rows]),
+            "attention_mask": torch.tensor([[0] * (width - len(r)) + [1] * len(r) for r in rows]),
+        }
+
+
 def _loaded(model):
-    return LoadedModel(model, object(), "cpu", "float32", "commit")
+    return LoadedModel(model, _PaddingTokenizer(), "cpu", "float32", "commit")
 
 
 class _SpanTokenizer:
@@ -165,6 +183,93 @@ def _generation_for_spans(
 
 
 class ActivationTests(unittest.TestCase):
+    def test_batches_preserve_companions_and_change_identity_with_their_content(self):
+        records = {i: {**_generation(), "id": i, "generation_batch": {"ids": [1, 2, 3]}} for i in (1, 2, 3)}
+        records[2]["answer"].update(token_ids=[], token_logprobs=[], text="")
+        records[3]["status"] = "failed"
+        selected = {1: build_replay_plan(records[1])}
+        batch, = build_replay_batches(records, selected, "direct")
+        self.assertEqual(list(batch), [1, 2])
+        self.assertEqual(batch[2].answer_token_ids, ())
+        self.assertEqual(batch[1].batch_sha256, batch[2].batch_sha256)
+        records[2]["formatted_prompt_token_ids"].append(8)
+        changed, = build_replay_batches(records, selected, "direct")
+        self.assertNotEqual(batch[1].batch_sha256, changed[1].batch_sha256)
+        records[2]["generation_batch"]["ids"] = [2]
+        with self.assertRaisesRegex(ActivationError, "Inconsistent generation batch"):
+            build_replay_batches(records, selected, "direct")
+        del records[2]
+        with self.assertRaisesRegex(ActivationError, "requires original batch member"):
+            build_replay_batches(records, selected, "direct")
+        del records[1]["generation_batch"]
+        with self.assertRaisesRegex(ActivationError, "Missing or invalid"):
+            build_replay_batches(records, selected, "direct")
+
+    def test_reasoning_batches_remain_singletons(self):
+        records = {i: {**_generation(reasoning=True), "id": i} for i in (1, 2)}
+        selected = {i: build_replay_plan(r) for i, r in records.items()}
+        batches = build_replay_batches(records, selected, "reasoning")
+        self.assertEqual([list(b) for b in batches], [[1], [2]])
+
+    def test_batch_padding_and_capture_with_different_answer_lengths(self):
+        first = _generation()
+        second = _generation(answer_ids=(5, 6))
+        second["formatted_prompt_token_ids"] = [1]
+        plans = {1: build_replay_plan(first, {"span_1": (0, 1)}), 2: build_replay_plan(second)}
+
+        class Model:
+            device = torch.device("cpu")
+
+            def __call__(self, **kwargs):
+                self.inputs = kwargs
+                logits = torch.zeros(2, 6, VOCAB_SIZE)
+                logits[:, 3, 5] = 2
+                logits[1, 4, 6] = 2
+                states = torch.arange(6).reshape(1, 6, 1).expand(2, 6, 4).float()
+                return SimpleNamespace(logits=logits, hidden_states=(states, states + 10))
+
+        model = Model()
+        results = capture_hidden_state_batch(_loaded(model), plans)
+        self.assertEqual(model.inputs["input_ids"].tolist(), [[1, 2, 3, 4, 5, 0], [0, 1, 3, 4, 5, 6]])
+        self.assertEqual(model.inputs["attention_mask"].tolist(), [[1, 1, 1, 1, 1, 0], [0, 1, 1, 1, 1, 1]])
+        self.assertEqual(model.inputs["position_ids"].tolist(), [[0, 1, 2, 3, 4, 1], [1, 0, 1, 2, 3, 4]])
+        self.assertEqual(results[1].tensors["answer_tokens"].shape, (2, 1, 4))
+        self.assertEqual(results[2].tensors["answer_tokens"].shape, (2, 2, 4))
+        self.assertEqual(results[2].tensors["prompt_end"][0, 0, 0], 1)
+        self.assertEqual(results[1].tensors["span_1"][0, :, 0].tolist(), [0, 1])
+        corrupted = deepcopy(plans)
+        corrupted[2] = replace(corrupted[2], answer_token_logprobs=(-20, -20))
+        with self.assertRaisesRegex(ActivationError, "Example ID 2: Replay probability mismatch"):
+            capture_hidden_state_batch(_loaded(model), corrupted)
+
+    def test_tiny_cpu_transformer_replay_matches_cached_multi_token_generation(self):
+        from transformers import GPT2Config, GPT2LMHeadModel
+        from src.generation import _pad_contexts
+
+        torch.manual_seed(3)
+        model = GPT2LMHeadModel(GPT2Config(
+            vocab_size=16, n_positions=32, n_embd=8, n_layer=2, n_head=2,
+            bos_token_id=1, eos_token_id=None, pad_token_id=0,
+        )).eval()
+        loaded = _loaded(model)
+        records = [_generation(), _generation(reasoning=True)]
+        contexts = [list(build_replay_plan(r).token_ids[:-1]) for r in records]
+        inputs = _pad_contexts(loaded.tokenizer, contexts, model)
+        with torch.inference_mode():
+            output = model.generate(**inputs, max_new_tokens=2, do_sample=False,
+                output_logits=True, return_dict_in_generate=True)
+        plans = {}
+        for row, record in enumerate(records):
+            count = row + 1
+            tokens = output.sequences[row, inputs["input_ids"].shape[1]:][:count].tolist()
+            record["answer"].update(token_ids=tokens, token_logprobs=[
+                float(output.logits[step][row].log_softmax(-1)[token]) for step, token in enumerate(tokens)
+            ])
+            plans[row] = build_replay_plan(record)
+        results = capture_hidden_state_batch(loaded, plans)
+        self.assertTrue(all(r.max_logprob_difference < 1e-5 for r in results.values()))
+        self.assertEqual(results[1].tensors["answer_tokens"].shape, (3, 2, 8))
+
     def test_semantic_spans_map_unicode_and_overlapping_tokens(self):
         tokenizer = _SpanTokenizer()
         task_input = "Ask José now"
@@ -288,13 +393,13 @@ class ActivationTests(unittest.TestCase):
 
         self.assertEqual(result.tensors["answer_tokens"].shape, (3, 2, 4))
 
-    def test_replay_probability_difference_is_recorded(self):
+    def test_replay_probability_mismatch_stops_capture(self):
         record = _generation()
         record["answer"]["token_logprobs"] = [-20.0]
         plan = build_replay_plan(record)
         model = _ReplayModel(plan.positions["answer_tokens"], plan.answer_token_ids)
-        result = capture_hidden_states(_loaded(model), plan)
-        self.assertGreater(result.max_logprob_difference, 1.0)
+        with self.assertRaisesRegex(ActivationError, "probability mismatch"):
+            capture_hidden_states(_loaded(model), plan)
 
     def test_nonfinite_and_float16_overflow_activations_are_rejected(self):
         plan = build_replay_plan(_generation())
@@ -458,6 +563,19 @@ class ActivationTests(unittest.TestCase):
                 context,
                 changed_expected,
                 set(),
+            )
+            self.assertEqual(set(reused), {2})
+
+            # An unchanged example cannot reuse activations from different
+            # companion inputs or batch membership.
+            batch_run = output / "changed-batch"
+            batch_run.mkdir()
+            batch_expected = {
+                1: (example, "a" * 64, replace(plan, batch_sha256="different-batch")),
+                2: (second_example, "b" * 64, second_plan),
+            }
+            reused = reuse_activation_records(
+                output, batch_run, changed_identity, context, batch_expected, set()
             )
             self.assertEqual(set(reused), {2})
 

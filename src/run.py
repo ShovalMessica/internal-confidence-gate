@@ -21,7 +21,8 @@ from src.activation import (
     ActivationError,
     ReplayPlan,
     build_replay_plan,
-    capture_hidden_states,
+    build_replay_batches,
+    capture_hidden_state_batch,
     map_semantic_spans,
 )
 from src.activation_store import (
@@ -815,12 +816,6 @@ def _print_replay_diagnostic(summary: dict) -> None:
         "Replay diagnostic: maximum answer-token log-probability difference "
         f"{difference:.6g}."
     )
-    if difference > 0.01:
-        print(
-            "Replay warning: saved tokens and model provenance match, but replay "
-            "numerics differ from generation. Captured activations represent the "
-            "documented per-example replay computation."
-        )
 
 
 def _capture_activations(
@@ -900,6 +895,17 @@ def _capture_activations(
             plan,
         )
 
+    batches = build_replay_batches(
+        generations,
+        {i: item[2] for i, item in expected.items()},
+        prepared.config.reasoning_mode,
+    )
+    for batch in batches:
+        for example_id, plan in batch.items():
+            if example_id in expected:
+                example, generation_sha256, _ = expected[example_id]
+                expected[example_id] = (example, generation_sha256, plan)
+
     records, recovered = load_activation_records(
         directory, identity, context, expected
     )
@@ -952,24 +958,19 @@ def _capture_activations(
     started = time.monotonic()
     if records:
         print(f"Resuming activation capture with {len(records)}/{total} complete.")
-    for example_id, (example, generation_sha256, plan) in expected.items():
-        if example_id in records:
+    for batch in batches:
+        missing = [i for i in batch if i in expected and i not in records]
+        if not missing:
             continue
-        result = capture_hidden_states(loaded, plan)
-        stored = append_activation_record(
-            directory,
-            identity,
-            context,
-            example,
-            generation_sha256,
-            plan,
-            result,
-        )
-        records[example_id] = stored
-        new_count = len(records) - starting_done
-        progress_interval = max(1, total // 100)
-        if new_count == 1 or len(records) == total or new_count % progress_interval == 0:
-            _activation_progress(len(records), total, started, starting_done)
+        results = capture_hidden_state_batch(loaded, batch)
+        # Verify the entire batch before committing any of its missing examples.
+        for example_id in missing:
+            example, generation_sha256, plan = expected[example_id]
+            records[example_id] = append_activation_record(
+                directory, identity, context, example, generation_sha256,
+                plan, results[example_id],
+            )
+        _activation_progress(len(records), total, started, starting_done)
 
     artifact_hash = finalize_activation_file(
         directory, identity, context, expected, records

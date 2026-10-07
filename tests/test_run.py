@@ -17,6 +17,8 @@ import torch
 import yaml
 
 from src.activation import ActivationError, ActivationResult
+from src.evaluation import load_answer_matcher
+from src.generation_cache import build_generation_context
 from src.config import TaskConfig
 from src.model import ModelLoadError
 from src.run import (
@@ -232,6 +234,7 @@ class RunTests(unittest.TestCase):
             "id": example["id"],
             "split": example["split"],
             "status": "success",
+            "generation_batch": {"ids": [example["id"]], "seed": 42},
             "formatted_prompt_token_ids": [1],
             "formatted_prompt_tokens": 1,
             "reasoning": None,
@@ -884,12 +887,14 @@ class RunTests(unittest.TestCase):
             "generation_config": {},
         }
 
-        def captured(_loaded, plan):
-            tensors = {
-                name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
-                for name, positions in plan.positions.items()
+        def captured(_loaded, batch):
+            return {
+                i: ActivationResult({
+                    name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
+                    for name, positions in plan.positions.items()
+                }, ("embedding", "hidden_state_1"), 0.0)
+                for i, plan in batch.items()
             }
-            return ActivationResult(tensors, ("embedding", "hidden_state_1"), 0.0)
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
@@ -901,7 +906,7 @@ class RunTests(unittest.TestCase):
                 "src.run.generation_units",
                 return_value=iter((GenerationUnit(records),)),
             ),
-            patch("src.run.capture_hidden_states", side_effect=captured) as capture,
+            patch("src.run.capture_hidden_state_batch", side_effect=captured) as capture,
         ):
             first_code = main([str(self.config)])
 
@@ -925,7 +930,7 @@ class RunTests(unittest.TestCase):
             redirect_stdout(stdout),
             redirect_stderr(stderr),
             patch("src.run.load_model") as load_model,
-            patch("src.run.capture_hidden_states") as capture,
+            patch("src.run.capture_hidden_state_batch") as capture,
         ):
             second_code = main([str(self.config)])
 
@@ -933,6 +938,48 @@ class RunTests(unittest.TestCase):
         self.assertIn("Activation artifact: reused (model not loaded).", stdout.getvalue())
         load_model.assert_not_called()
         capture.assert_not_called()
+
+    def test_capture_resume_keeps_original_batch_and_excludes_ineligible_storage(self):
+        examples = [self.record(i, "train") for i in range(1, 5)]
+        config = TaskConfig("organization/model", self.dataset, "direct", self.root / "outputs")
+        prepared = SimpleNamespace(config=config, dataset=SimpleNamespace(examples=examples), answer_matcher=load_answer_matcher(None))
+        registered = SimpleNamespace(directory=self.root / "outputs" / "task")
+        generations = {e["id"]: self.generation_record(e) for e in examples}
+        for g in generations.values():
+            g["generation_batch"] = {"ids": [1, 2, 3, 4], "seed": 42}
+        generations[4]["answer"].update(text="", token_ids=[], token_logprobs=[], tokens=0)
+        evaluations = {i: {"outcome": outcome} for i, outcome in enumerate(
+            ("correct", "abstained", "incorrect", "invalid"), 1)}
+        run_record = {"generation": {"artifact_sha256": "g" * 64}, "model": {"resolved_revision": "commit"}}
+        for fail in (False, True):
+            with (
+                self.subTest(fail=fail),
+                patch("src.run.load_run_record", return_value=run_record),
+                patch("src.run._recorded_generation_context", return_value=build_generation_context(config)),
+                patch("src.run.load_evaluation_records", return_value=evaluations),
+                patch("src.run.load_generation_records", return_value=(generations, False)),
+                patch("src.run.validate_completed_activation_capture", return_value=False),
+                patch("src.run.load_activation_records", return_value=({1: object()}, False)),
+                patch("src.run.reuse_activation_records", return_value={}),
+                patch("src.run.capture_hidden_state_batch", return_value={3: object()}) as capture,
+                patch("src.run.append_activation_record") as append,
+                patch("src.run.finalize_activation_file", return_value="hash"),
+                patch("src.run.complete_activation_capture"),
+                patch("src.run._activation_summary", return_value={"max_logprob_difference": 0}),
+                redirect_stdout(io.StringIO()),
+            ):
+                if fail:
+                    capture.side_effect = ActivationError("Replay probability mismatch")
+                    with self.assertRaisesRegex(ActivationError, "probability mismatch"):
+                        _capture_activations(prepared, registered, object(), False)
+                    append.assert_not_called()
+                else:
+                    _capture_activations(prepared, registered, object(), False)
+                    append.assert_called_once()
+                    self.assertEqual(append.call_args.args[3]["id"], 3)
+                capture.assert_called_once()
+                self.assertEqual(list(capture.call_args.args[1]), [1, 2, 3, 4])
+                self.assertEqual(capture.call_args.args[1][4].answer_token_ids, ())
 
     def test_semantic_spans_are_captured_and_completed_run_skips_loading(self):
         class FastTokenizer:
@@ -1000,14 +1047,14 @@ class RunTests(unittest.TestCase):
             "generation_config": {},
         }
 
-        def captured(_loaded, plan):
-            tensors = {
-                name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
-                for name, positions in plan.positions.items()
+        def captured(_loaded, batch):
+            return {
+                i: ActivationResult({
+                    name: torch.zeros(2, len(positions), 3, dtype=torch.float16)
+                    for name, positions in plan.positions.items()
+                }, ("embedding", "hidden_state_1"), 0.0)
+                for i, plan in batch.items()
             }
-            return ActivationResult(
-                tensors, ("embedding", "hidden_state_1"), 0.0
-            )
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
@@ -1019,7 +1066,7 @@ class RunTests(unittest.TestCase):
                 "src.run.generation_units",
                 return_value=iter((GenerationUnit(tuple(records)),)),
             ),
-            patch("src.run.capture_hidden_states", side_effect=captured) as capture,
+            patch("src.run.capture_hidden_state_batch", side_effect=captured) as capture,
         ):
             first_code = main([str(self.config)])
 
@@ -1057,7 +1104,7 @@ class RunTests(unittest.TestCase):
             redirect_stderr(io.StringIO()),
             patch("src.run.load_model") as load_model,
             patch("src.run.load_tokenizer") as load_tokenizer,
-            patch("src.run.capture_hidden_states") as capture,
+            patch("src.run.capture_hidden_state_batch") as capture,
         ):
             second_code = main([str(self.config)])
         self.assertEqual(second_code, 0)
