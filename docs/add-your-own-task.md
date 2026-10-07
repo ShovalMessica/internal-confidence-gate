@@ -123,10 +123,14 @@ Local checkpoints also require `model_revision`.
 
 ## 5. Check the prompt on development data
 
-Use a small, separate development dataset while refining your prompt. Copy
-your configuration to `configs/dev-task.yaml` and change its `dataset_path`
-to that sample. Keep model and generation settings consistent with the planned
-full run.
+Refine your prompt on a small development subset, kept separate from training,
+validation, and test. Adjust the instructions, examples, and decision rules
+until the model consistently follows the task and answer format. Then keep the
+prompt design fixed for the full run.
+
+Copy your configuration to `configs/dev-task.yaml` and change its
+`dataset_path` to that subset. Keep model and generation settings consistent
+with the planned full run.
 
 Validate the files without loading a model:
 
@@ -143,7 +147,6 @@ python -m src.run configs/dev-task.yaml --behavior-only --show-examples 10
 This command downloads Hub weights if needed and stops after answer evaluation.
 Both checks accept small samples. Revise your prompt file or dataset inputs and
 rerun the behavior command as needed. The toolkit reads your files directly.
-Freeze the prompt before using the full dataset, including its test split.
 
 ## 6. Run Model Behavior on the full dataset
 
