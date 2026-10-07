@@ -16,10 +16,6 @@ Transformers text-only, decoder-only chat models through
 python -m pip install -r requirements.txt
 ```
 
-[`requirements-tested.txt`](requirements-tested.txt) records the exact top-level
-versions used by the offline test suite; choose the Torch wheel appropriate for
-your CPU or CUDA environment.
-
 **New task? Start with [Add your own task](docs/add-your-own-task.md)** to create
 the prompt, [JSONL dataset](docs/dataset-format.md), and configuration.
 
