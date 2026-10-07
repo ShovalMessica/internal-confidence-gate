@@ -79,10 +79,10 @@ Set `reasoning_mode` to choose when it is added:
 - **`direct`:** the toolkit appends the answer instruction to your user message,
   formats the messages, starts the assistant's response with `FINAL:`, then lets
   the model generate the answer.
-- **`reasoning`:** the toolkit requests reasoning first. When it finishes or
-  reaches its token limit, the toolkit closes reasoning if needed, appends the
-  final-answer instruction and `FINAL:` inside the same assistant response,
-  then lets the model generate the answer.
+- **`reasoning`:** the model first generates reasoning. When reasoning ends or
+  reaches its token limit, the toolkit appends the final-answer instruction and
+  `FINAL:` after it. The model then continues with the answer. This happens
+  within the same assistant response, without a new user message.
 
 The toolkit supplies `FINAL:` so it can locate the answer and identify its
 tokens for activation capture. **You do not add this marker yourself.**
@@ -108,8 +108,13 @@ instruction and token limits.
 ## 3. Prepare your dataset
 
 Create a UTF-8 `.jsonl` file with one object per example. Each record needs a
-unique integer `id`, the complete user message in `input`, and one plain
-`target_answer`:
+unique integer `id`, an `input`, and one expected `target_answer`.
+
+- **With a system prompt:** `input` contains the example-specific content.
+- **Without a system prompt:** `input` contains the full task instructions and
+  example-specific content.
+
+For example, with the shared sentiment instructions from step 1:
 
 ```json
 {"id":1,"input":"The battery lasts all day.","target_answer":"POSITIVE","split":"train"}
