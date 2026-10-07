@@ -13,11 +13,14 @@ Transformers text-only, decoder-only chat models through
 `AutoModelForCausalLM`; CUDA is optional.
 
 ```sh
+git clone https://github.com/ShovalMessica/internal-confidence-gate.git
+cd internal-confidence-gate
 python -m pip install -r requirements.txt
 ```
 
 **New task? Start with [Add your own task](docs/add-your-own-task.md)** to create
 the prompt, [JSONL dataset](docs/dataset-format.md), and configuration.
+Run the commands below from the repository root after filling in your configuration.
 
 Validate those inputs without loading the model:
 
@@ -124,7 +127,7 @@ complete layout and rules.
 
 | File | Purpose |
 | --- | --- |
-| [Add your own task](docs/add-your-own-task.md) | Step-by-step adaptation and complete NER example |
+| [Add your own task](docs/add-your-own-task.md) | Prepare your own data and run the pipeline |
 | [Dataset format](docs/dataset-format.md) | Exact JSONL record contract |
 | [Configuration](docs/configuration.md) | Complete settings and artifact reference |
 | [Prompt examples](docs/prompt-examples.md) | Direct and reasoning prompt designs |

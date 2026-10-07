@@ -1,120 +1,117 @@
 # Add your own task
 
-This walkthrough uses the synthetic
-[name-correction example](../examples/ner/README.md) to demonstrate the full
-workflow. It is an example, not evidence about gate quality.
+Use this guide to run the toolkit on your own dataset. Complete the
+[installation](../README.md#quick-start) first, then run commands from the
+repository root.
 
-Install the dependencies and run each command from the repository root.
-`--prepare-only` validates files without loading a model. `--behavior-only`
-runs the model, then stops after answer evaluation.
+Want a ready-made demo instead? See the optional
+[synthetic NER example](../examples/ner/README.md). Its generator creates demo
+data only; it is not part of preparing your own task.
 
-Use [Dataset format](dataset-format.md) and
-[Configuration](configuration.md) as the exact references.
+## 1. Prepare your prompt
 
-## 1. Define the task
+Define the task, allowed answers, decision rules, and any demonstrations.
+Put shared instructions in a UTF-8 text file, such as `system-prompt.txt`.
+The file is read literally: fill in any placeholders and do not wrap it in
+Markdown code fences. Alternatively, include all instructions in each dataset
+`input` and omit the separate prompt file.
 
-Each example needs one final answer that can be evaluated as correct or
-incorrect. In the example, dataset targets are a participant label (`A`-`J`) or
-`NONE`. With abstention enabled, `UNKNOWN` is reserved for a model that cannot
-decide and cannot be a dataset target.
+For example, a sentiment task could use:
 
-Fixed rules and demonstrations are in
-[`system-prompt.md`](../examples/ner/system-prompt.md). It uses one text code
-block so GitHub displays the exact prompt literally; `prepare.py` extracts that
-block without its fences for the model. Each dataset `input`
-contains the participant list and utterance for one example. Do not include
-`FINAL:` in either place; the toolkit supplies its answer instruction and marker.
-
-## 2. Check the prompt on development data
-
-The repository includes a small [`dev-sample.jsonl`](../examples/ner/dev-sample.jsonl)
-for prompt development. Generate configurations and the separate full dataset:
-
-```sh
-python examples/ner/prepare.py --model Qwen/Qwen3-4B-Instruct-2507 --seed 91337 --examples 1000
+```text
+Classify the review as POSITIVE or NEGATIVE.
 ```
 
-Validate the development configuration without loading a model:
+Do not add `FINAL:`. The toolkit adds the answer-format instruction and marker.
+See [Prompt examples](prompt-examples.md) for more detailed task instructions.
 
-```sh
-python -m src.run examples/ner/generated/dev-task.yaml --prepare-only
-```
+## 2. Prepare your dataset
 
-Then inspect the first 20 inputs, raw model answers, targets, and outcomes:
-
-```sh
-python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-examples 20
-```
-
-Revise the task instructions, demonstrations, or decision rules if the model
-misunderstands the task or output contract. After editing `system-prompt.md`,
-rerun the same `prepare.py` command with the same model, seed, and example
-count before the next behavior check. This regenerates the text file referenced
-by the YAML. The development sample is separate from the final test split. Once
-behavior is satisfactory, freeze the prompt before the full run.
-
-## 3. Understand one record
-
-A record contains a unique integer ID, the complete example-specific user
-message, its target answer, its split, and optional annotations:
+Create a UTF-8 `.jsonl` file with one object per example. Each record needs a
+unique integer `id`, the complete user message in `input`, and one plain
+`target_answer`:
 
 ```json
-{"id":1000000,"input":"<PARTICIPANTS>\nA William Gonzalez\nB Taylor Allen\nC Thomas Moore\nD Christopher Lopez\nE Isabella Jones\nF Olivia Harris\nG Knox Smith\nH Kenneth Scott\nI Edward Thompson\nJ Teresa Thomas\n</PARTICIPANTS>\n\n<MEETING_TRANSCRIPT>\n<846479><Speaker 14>We still need feedback from Will about hiring.\n</MEETING_TRANSCRIPT>","target_answer":"A","split":"train","semantic_spans":{"span_1":{"start_char":266,"end_char":270}},"metadata":{"case_family":"dev_00000","example_type":"corrupted"}}
+{"id":1,"input":"The battery lasts all day.","target_answer":"POSITIVE","split":"train"}
 ```
 
-Here `span_1` selects characters `[266, 270)`, the complete substring `Will`.
-The span marks an additional task-specific activation location; it does not
-reveal whether the model's answer is correct.
+Assign every record to `train`, `validation`, or `test`, or omit `split` from
+all records for automatic splitting. Keep related examples in the same split.
+See [Dataset format](dataset-format.md) for the exact fields and minimum sizes.
 
-The target is never sent to the model or used as a probe feature. `A` and
-`NONE` are task answers; the probe label is whether the prediction is correct.
-Balanced task answers do not guarantee balanced probe labels.
+With abstention enabled, `UNKNOWN` is reserved for model responses and cannot
+be a target. Other task answers, such as `NONE`, participate normally.
+Targets are never sent to the model or used as probe features. The probe learns
+whether a prediction is correct; balanced task answers do not guarantee enough
+correct and incorrect predictions.
 
-## 4. Review the configuration
+## 3. Fill in the configuration
 
-`prepare.py` writes `generated/task.yaml` with absolute paths and these central
-settings:
+Edit [`configs/task.yaml`](../configs/task.yaml). Replace these required fields:
 
-```yaml
-model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
-dataset_path: <absolute path>/dataset.jsonl
-system_prompt_path: <absolute path>/generated/system-prompt.txt
-reasoning_mode: direct
-decoding_strategy: greedy
-answer_max_new_tokens: 4
-allow_abstention: true
-output_dir: <absolute path>/outputs
-```
+- `model_name_or_path`: a supported Hugging Face model ID or local checkpoint.
+- `dataset_path`: the absolute path to your JSONL file.
+- `reasoning_mode`: `direct` for an immediate answer, or `reasoning` for reasoning
+  followed by an answer.
 
-The generated dataset has 1,000 examples with fixed 600/200/200 train,
-validation, and test splits. Related clean and corrupted examples stay in the
-same split.
+If you created a shared prompt file, uncomment `system_prompt_path` and set its
+absolute path. Set `output_dir` if you want results in a specific directory;
+otherwise they go under `outputs` beside the YAML file.
 
-## 5. Run Model Behavior
+Review the remaining defaults, especially token limits and abstention. See
+[Configuration](configuration.md) for supported models and all settings.
+Local checkpoints also require `model_revision`.
 
-Run generation and correctness evaluation before spending time on activation
-capture:
+## 4. Check the prompt on development data
+
+Use a small, separate development dataset while refining your prompt. Copy
+your configuration to `configs/dev-task.yaml` and change its `dataset_path`
+to that sample. Keep model and generation settings consistent with the planned
+full run.
+
+Validate the files without loading a model:
 
 ```sh
-python -m src.run examples/ner/generated/task.yaml --behavior-only
+python -m src.run configs/dev-task.yaml --prepare-only
+```
+
+Run the model and inspect the first 10 inputs, predictions, targets, and outcomes:
+
+```sh
+python -m src.run configs/dev-task.yaml --behavior-only --show-examples 10
+```
+
+This command downloads Hub weights if needed and stops after answer evaluation.
+Both checks accept small samples. Revise your prompt file or dataset inputs and
+rerun the behavior command as needed. The toolkit reads your files directly.
+Freeze the prompt before using the full dataset, including its test split.
+
+## 5. Run Model Behavior on the full dataset
+
+Use `configs/task.yaml`, pointing to your full dataset:
+
+```sh
+python -m src.run configs/task.yaml --prepare-only
+python -m src.run configs/task.yaml --behavior-only --show-examples 10
 ```
 
 The terminal and `run.json` report correct, wrong, abstained, invalid, and
-token-limit outputs overall and by split. The full pipeline requires enough
-correct and incorrect concrete predictions in every split. The runner reports
-the exact shortage when this requirement is not met.
+token-limit outputs overall and by split. Check the
+[probe-training minimums](dataset-format.md#dataset-size) before proceeding.
+Behavior-only runs save results even when those counts are insufficient.
 
 ## 6. Train and evaluate the gate
 
 Run the same configuration without a stopping flag:
 
 ```sh
-python -m src.run examples/ner/generated/task.yaml
+python -m src.run configs/task.yaml
 ```
 
-The toolkit reuses saved generations, then captures activations, trains probe
-candidates on train, chooses a probe and threshold on validation, and compares
-the frozen probe with output probability on test.
+The toolkit reuses saved generations, captures activations, trains probes on
+train, selects a probe and threshold on validation, and compares the frozen
+gate with output probability on test. If usable counts are insufficient, it
+reports the shortage and stops before probe training.
 
 The printed run directory contains:
 
@@ -128,54 +125,26 @@ probes.h5
 reports/<report_id>/
 ```
 
-Read `reports/<report_id>/metrics.json` for exact values and the PNG files for
-layer comparisons and TPR-FPR curves. Metric definitions are in
+The generation manifest references saved model outputs in the shared
+`<output_dir>/.cache/generations` directory. Read
+`reports/<report_id>/metrics.json` for exact values and the PNG files for layer
+comparisons and TPR-FPR curves. Metric definitions are in
 [Configuration](configuration.md#frozen-test-evaluation).
-
-## 7. Create files for your own task
-
-`examples/ner/prepare.py` creates only the synthetic NER example. Do not use it
-to prepare another task. Create these files yourself:
-
-1. **Prompt:** optionally create a plain UTF-8 text file containing fixed task
-   instructions, valid answers, decision rules, and demonstrations. Set its
-   absolute path as `system_prompt_path`. If you omit it, include the task
-   instructions in every dataset `input`.
-2. **Dataset:** create a JSONL file with one object per example. Put the complete
-   example-specific user message in `input` and the plain expected answer in
-   `target_answer`. Never add `FINAL:`. Assign every record to train,
-   validation, or test, or omit all split assignments for automatic splitting.
-3. **Configuration:** copy [`configs/task.yaml`](../configs/task.yaml), fill in
-   the model, absolute dataset and prompt paths, reasoning mode, token limits,
-   abstention behavior, and output directory.
-
-Use the same commands shown above with your configuration path.
-
-For example, a sentiment task could replace the prompt with “Classify the review
-as POSITIVE or NEGATIVE” and use records such as:
-
-```json
-{"id":1,"input":"Review: The battery lasts all day.","target_answer":"POSITIVE","split":"train"}
-```
-
-The pipeline and probe labels remain unchanged.
 
 ## Optional task-specific behavior
 
-Use these only when the default contract is insufficient:
+- **Custom matching:** use `answer_matcher_path` when normalized complete-answer
+  equality does not fit your task.
+- **Semantic spans:** mark additional input text for activation capture. Every
+  example must supply the same span keys and semantic roles.
+- **Custom metrics:** use `metadata` and `custom_metrics_path` for task-specific
+  summaries.
 
-- **Custom answer matching:** configure `answer_matcher_path` when normalized
-  complete-answer equality is not the right correctness rule.
-- **Semantic spans:** add `semantic_spans` to every example to capture an
-  additional role-specific input location. The NER generator marks the name
-  mention as `span_1`.
-- **Custom metrics:** attach free-form `metadata` and configure
-  `custom_metrics_path` for task-specific count-based summaries.
+For example, this complete record marks `battery` at characters `[4, 11)`:
 
-Their exact interfaces and validation rules are documented in
-[Configuration](configuration.md) and [Dataset format](dataset-format.md).
+```json
+{"id":1,"input":"The battery lasts all day.","target_answer":"POSITIVE","split":"train","semantic_spans":{"span_1":{"start_char":4,"end_char":11}}}
+```
 
-## Reproducibility
-
-Freeze the prompt, model, dataset, generation settings, and splits before the
-final run. Changed inputs create a separate run instead of overwriting results.
+See [Dataset format](dataset-format.md) and [Configuration](configuration.md)
+for the exact interfaces.
