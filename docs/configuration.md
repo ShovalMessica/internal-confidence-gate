@@ -90,7 +90,11 @@ assistant generation boundary.
 
 - **`generation_seed` (optional; default: `42`)** - Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 
-- **`direct_batch_size` (optional; default: `8`)** - Batch size in direct mode. Reasoning mode always processes one example at a time.
+- **`direct_batch_size` (optional; default: `8`)** - Batch size in direct mode.
+  When the model's decoding defaults enable sampling, the toolkit processes one
+  example at a time to preserve each example's seed across resume and dataset
+  extensions. This overrides the batch size and can be slower. Reasoning mode
+  always processes one example at a time.
 
 - **`decoding_strategy` (optional; default: `model_default`)** -
   `model_default` preserves the checkpoint's decoding behavior; `greedy`
@@ -313,3 +317,4 @@ evaluation, activation, probe, and report artifacts. Behavior and full invocatio
 recorded in `<run_dir>/execution.log`.
 Progress updates one terminal line; the log keeps the final update or the last
 update before interruption.
+Elapsed time and ETA use readable units, such as `4h 30m` or `30m 8s`.

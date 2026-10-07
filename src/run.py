@@ -349,16 +349,34 @@ def _provenance(config_path: Path, force_recompute: bool) -> dict:
     return {"invocation": invocation, "git": _git_state()}
 
 
+def _format_duration(seconds: float) -> str:
+    """Show the largest duration unit and the next smaller unit."""
+    milliseconds = max(0, round(seconds * 1000))
+    if milliseconds == 0:
+        return "0s"
+    for size, unit, next_size, next_unit in (
+        (86400000, "d", 3600000, "h"),
+        (3600000, "h", 60000, "m"),
+        (60000, "m", 1000, "s"),
+        (1000, "s", 1, "ms"),
+    ):
+        if milliseconds >= size:
+            largest, remainder = divmod(milliseconds, size)
+            smaller = remainder // next_size
+            return f"{largest}{unit}" + (f" {smaller}{next_unit}" if smaller else "")
+    return f"{milliseconds}ms"
+
+
 def _print_progress(
     label: str, done: int, total: int, started: float, starting_done: int,
     details: str = "",
 ) -> None:
     elapsed = max(time.monotonic() - started, 1e-9)
     rate = (done - starting_done) / elapsed
-    eta = f"{(total - done) / rate:.0f}s" if rate else "unknown"
+    eta = _format_duration((total - done) / rate) if rate else "unknown"
     message = (
         f"{label}: {done}/{total} {100 * done / total:.1f}% | "
-        f"{elapsed:.0f}s {rate:.2f}/s ETA {eta}{details}"
+        f"{_format_duration(elapsed)} {rate:.2f}/s ETA {eta}{details}"
     )
     progress = getattr(sys.stdout, "progress", None)
     if progress is not None:

@@ -20,7 +20,7 @@ from src.activation import ActivationError, ActivationResult
 from src.config import TaskConfig
 from src.model import ModelLoadError
 from src.run import (
-    _Tee, _capture_activations, _print_progress, _start_execution_log,
+    _Tee, _capture_activations, _format_duration, _print_progress, _start_execution_log,
     _stop_execution_log, main, prepare_run,
 )
 from src.generation import (
@@ -36,6 +36,26 @@ from src.run_store import build_run_identity
 
 
 class ExecutionLogTests(unittest.TestCase):
+    def test_duration_uses_largest_two_units(self):
+        for seconds, expected in (
+            (0, "0s"), (0.25, "250ms"), (1, "1s"), (8, "8s"),
+            (1.25, "1s 250ms"), (59.9, "59s 900ms"), (60, "1m"), (61, "1m 1s"),
+            (1808, "30m 8s"), (3599, "59m 59s"), (3600, "1h"),
+            (16200, "4h 30m"), (16208, "4h 30m"), (86400, "1d"),
+            (97200, "1d 3h"),
+        ):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(_format_duration(seconds), expected)
+
+    def test_progress_formats_elapsed_and_eta_in_hours_and_minutes(self):
+        terminal, log = io.StringIO(), io.StringIO()
+        with redirect_stdout(_Tee(terminal, log)), patch(
+            "src.run.time.monotonic", return_value=3600
+        ):
+            _print_progress("Generation", 2, 11, 0, 0)
+            sys.stdout.finish_progress()
+        self.assertIn("1h 0.00/s ETA 4h 30m", log.getvalue())
+
     def test_thousands_of_updates_use_one_terminal_line_and_one_log_entry(self):
         terminal, log = io.StringIO(), io.StringIO()
         stream = _Tee(terminal, log)
