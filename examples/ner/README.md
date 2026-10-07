@@ -25,8 +25,9 @@ To run its model behavior check:
 python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-examples 20
 ```
 
-After editing `system-prompt.md`, rerun the same `prepare.py` command before
-the next behavior check so `generated/system-prompt.txt` is updated.
+After editing `examples/ner/system-prompt.md`, rerun the same `prepare.py`
+command before the next behavior check so
+`examples/ner/generated/system-prompt.txt` is updated.
 
 After the prompt is stable, use the separately generated full dataset:
 
@@ -40,8 +41,10 @@ selects probes, evaluates the frozen gate on test data, and writes the report.
 Generated data and outputs stay under `examples/ner/generated/`, which Git
 ignores.
 
-Use `--model` to replace the default `Qwen/Qwen3-4B-Instruct-2507`, and `--seed`
-to create another deterministic full dataset.
+In the `python examples/ner/prepare.py` command above, change `--model` to
+choose another model and `--seed` to generate a different dataset. To change
+runner settings, edit `examples/ner/generated/dev-task.yaml` or
+`examples/ner/generated/task.yaml`. Rerunning `prepare.py` rewrites these files.
 
 See [Add your own task](../../docs/add-your-own-task.md) for the adaptation
 walkthrough and [Dataset format](../../docs/dataset-format.md) for the exact

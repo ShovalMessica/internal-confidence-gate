@@ -22,7 +22,9 @@ python -m pip install -r requirements.txt
 
 **New task? Start with [Add your own task](docs/add-your-own-task.md)** to create
 the prompt, [JSONL dataset](docs/dataset-format.md), and configuration.
-Run the commands below from the repository root after filling in your configuration.
+Fill in [`configs/task.yaml`](configs/task.yaml), then run the commands below
+from the repository root. If you use a different YAML file, replace
+`configs/task.yaml` in each command with its path.
 
 Validate those inputs without loading the model:
 

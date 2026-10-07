@@ -1,6 +1,8 @@
 # Dataset format
 
 Provide a UTF-8 `.jsonl` file with one JSON object per line.
+The fields below belong in each JSON object. Save the file anywhere and set
+`dataset_path` in [`configs/task.yaml`](../configs/task.yaml) to its absolute path.
 
 ```text
 Example
@@ -21,22 +23,23 @@ Example
 - **`id`** - Unique integer identifier. Boolean values are not accepted as integers.
 
 - **`input`** - The complete nonempty user message for this example. When an
-  optional fixed [`system_prompt_path`](configuration.md#model-and-paths) is
-  configured, put only example-specific content here. Otherwise, include the
+  [`system_prompt_path`](configuration.md#model-and-paths) is set in
+  `configs/task.yaml`, put only example-specific content here. Otherwise, include the
   task instructions in every `input`. Do not leave unresolved placeholders or
   add `FINAL:`; the toolkit adds its own output instruction and marker.
 
 - **`target_answer`** - One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
   Correctness ignores case, surrounding whitespace, and repeated internal
-  whitespace, but keeps punctuation and extra words. Configure a custom
-  [`answer_match`](configuration.md#answer-evaluation) when the task needs
-  different rules. Targets create probe labels; they are never probe features.
+  whitespace, but keeps punctuation and extra words. For different rules, save a
+  custom [`answer_match`](configuration.md#answer-evaluation) in a Python file
+  and set `answer_matcher_path` in `configs/task.yaml` to its absolute path.
+  Targets create probe labels; they are never probe features.
 
 - **`split` (optional)** - `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
 
-  If omitted, the toolkit assigns reproducible 70%/15%/15% splits. Ratios and
-  seed are configurable.
+  If omitted, the toolkit assigns reproducible 70%/15%/15% splits. Change
+  `split_ratios` and `split_seed` in `configs/task.yaml` to use other settings.
 
   Automatic splitting treats records independently. If several records come from the same source, conversation, document, or template instance, assign splits yourself so related examples cannot cross split boundaries.
 
@@ -109,4 +112,5 @@ Append records with new IDs and rerun the same configuration. Unchanged IDs and
 inputs reuse saved generations. New or changed inputs run through the model;
 target changes rerun evaluation.
 
-Automatic splitting is recalculated for the new dataset. Supply explicit splits on every record when existing split assignments must remain fixed.
+Automatic splitting is recalculated for the new dataset. Set `split` in every
+JSONL record when existing split assignments must remain fixed.

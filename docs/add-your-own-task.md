@@ -47,8 +47,8 @@ Choose one of these two options:
 - **Complete prompt in each input**
 
   Use this when you already have complete prompts or need different instructions
-  per example. Omit `system_prompt_path` and put everything in each record's
-  `input`:
+  per example. Leave `system_prompt_path` commented out in `configs/task.yaml`
+  and put everything in each JSONL record's `input`:
 
   ```text
   Classify the review as POSITIVE or NEGATIVE.
@@ -79,7 +79,8 @@ Both modes use this final-answer instruction, supplied by the toolkit:
 Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
 ```
 
-Set `reasoning_mode` to choose when it is added:
+In [`configs/task.yaml`](../configs/task.yaml), replace `reasoning_mode: null`
+with `reasoning_mode: direct` or `reasoning_mode: reasoning`:
 
 - **`direct`:** the toolkit appends the answer instruction to your user message,
   formats the messages, starts the assistant's response with `FINAL:`, then lets
@@ -95,7 +96,8 @@ tokens for activation capture. **You do not add this marker yourself.**
 For example, the toolkit supplies `FINAL:` and the model generates `POSITIVE`,
 producing `FINAL: POSITIVE`.
 
-`allow_abstention` controls how uncertainty is handled in both modes:
+In the same YAML file, `allow_abstention` controls uncertainty in both modes.
+Keep `allow_abstention: true` or change it to `allow_abstention: false`:
 
 - **`true` (default):** adds "If you cannot determine the answer, return UNKNOWN."
   Exact `UNKNOWN` responses are reported as abstentions and excluded from probe
@@ -130,8 +132,9 @@ For example, with the shared sentiment instructions from step 1:
 {"id":1,"input":"The battery lasts all day.","target_answer":"POSITIVE","split":"train"}
 ```
 
-Assign every record to `train`, `validation`, or `test`, or omit `split` from
-all records for automatic splitting. Keep related examples in the same split.
+In your JSONL file, set each record's `split` to `train`, `validation`, or
+`test`, or omit `split` from all records for automatic splitting. Keep related
+examples in the same split.
 See [dataset fields](dataset-format.md#fields),
 [validation rules](dataset-format.md#validation), and
 [minimum sizes](dataset-format.md#dataset-size) when preparing your records.
@@ -151,14 +154,16 @@ Edit [`configs/task.yaml`](../configs/task.yaml). Replace these required fields:
 - `reasoning_mode`: `direct` for an immediate answer, or `reasoning` for reasoning
   followed by an answer.
 
-If you created a shared prompt file, uncomment `system_prompt_path` and set its
-absolute path. Set `output_dir` if you want results in a specific directory;
-otherwise they go under `outputs` beside the YAML file.
+In that YAML file, uncomment `system_prompt_path` if you use shared instructions
+and enter the prompt file's absolute path. To choose a results directory,
+uncomment `output_dir` and enter its absolute path. Otherwise, results go under
+`outputs` beside the YAML file.
 
 Review the remaining defaults, especially token limits and abstention. See
 [Model and paths](configuration.md#model-and-paths) for supported models and
 [Generation](configuration.md#generation) for answer settings.
-Local checkpoints also require `model_revision`.
+For a local checkpoint, also uncomment `model_revision` in the YAML and enter
+a version string that you change whenever the checkpoint files change.
 
 ## 5. Check the prompt on development data
 
@@ -167,9 +172,9 @@ validation, and test. Adjust the instructions, examples, and decision rules
 until the model consistently follows the task and answer format. Then keep the
 prompt design fixed for the full run.
 
-Copy your configuration to `configs/dev-task.yaml` and change its
-`dataset_path` to that subset. Keep model and generation settings consistent
-with the planned full run.
+Copy `configs/task.yaml` to `configs/dev-task.yaml`. In that copy, set
+`dataset_path` to the absolute path of your development JSONL file. Keep model
+and generation settings consistent with the planned full run.
 
 Validate the files without loading a model:
 
@@ -189,7 +194,8 @@ rerun the behavior command as needed. The toolkit reads your files directly.
 
 ## 6. Run Model Behavior on the full dataset
 
-Use `configs/task.yaml`, pointing to your full dataset:
+In `configs/task.yaml`, make sure `dataset_path` points to your full JSONL file,
+then run:
 
 ```sh
 python -m src.run configs/task.yaml --prepare-only
@@ -236,12 +242,16 @@ comparisons and TPR-FPR curves. Metric definitions are in
 
 ## Optional task-specific behavior
 
-- **[Custom matching](configuration.md#answer-evaluation):** use
-  `answer_matcher_path` when normalized complete-answer equality does not fit your task.
-- **[Semantic spans](dataset-format.md#capture-locations):** mark additional input
-  text for activation capture. Every example must supply the same span keys and semantic roles.
-- **[Custom metrics](configuration.md#custom-task-metrics):** use `metadata` and
-  `custom_metrics_path` for task-specific summaries.
+- **[Custom matching](configuration.md#answer-evaluation):** save your
+  `answer_match` function in a Python file. In `configs/task.yaml`, uncomment
+  `answer_matcher_path` and set it to that file's absolute path.
+- **[Semantic spans](dataset-format.md#capture-locations):** add `semantic_spans`
+  to each JSONL record to mark input text for activation capture. Use the same
+  span keys and semantic roles across examples.
+- **[Custom metrics](configuration.md#custom-task-metrics):** add any needed
+  `metadata` to your JSONL records and save `compute_metrics` in a Python file.
+  In `configs/task.yaml`, uncomment `custom_metrics_path` and set it to that
+  file's absolute path.
 
 For example, this complete record marks `battery` at characters `[4, 11)`:
 

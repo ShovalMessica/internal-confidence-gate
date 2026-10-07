@@ -1,8 +1,10 @@
 # Configuration
 
-Edit [configs/task.yaml](../configs/task.yaml) to supply shared settings. Replace its required `null` placeholders with your values; optional settings already contain the agreed defaults. Example-specific data belongs in the [dataset](dataset-format.md).
-
-The fields below are accepted by the configuration loader.
+Edit [configs/task.yaml](../configs/task.yaml), or your own copy of it.
+All configuration fields below are top-level YAML keys in that file.
+Replace required `null` values, edit optional defaults as needed, and remove the
+leading `#` to enable a commented setting. Example-specific fields belong in
+your [JSONL dataset](dataset-format.md).
 
 ## Model and paths
 
@@ -35,27 +37,27 @@ assistant generation boundary.
 
   **`direct`**
 
-  Append this instruction to the user message:
+  The toolkit appends this instruction to the user message:
 
   ```text
   Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
   ```
 
-  Render the messages through the chat template, open the assistant's response,
-  supply `FINAL:`, then generate the answer.
+  It renders the messages through the chat template, opens the assistant's
+  response, supplies `FINAL:`, then generates the answer.
 
   **`reasoning`**
 
-  Append this instruction to the user message:
+  The toolkit appends this instruction to the user message:
 
   ```text
   Reason about the task first. A separate final-answer instruction will follow.
   ```
 
-  Generate reasoning until `</think>`, the model's end-of-response token, or
-  the reasoning-token limit. Supply `</think>` if missing, then append the
-  final-answer instruction above and `FINAL:` inside the same assistant
-  response. Resume generation to produce the answer.
+  It generates reasoning until `</think>`, the model's end-of-response token,
+  or the reasoning-token limit. It supplies `</think>` if missing, then appends
+  the final-answer instruction above and `FINAL:` inside the same assistant
+  response and resumes generation to produce the answer.
 
   The toolkit requests thinking enabled for reasoning mode and disabled for
   direct mode through the chat template when supported.
@@ -108,6 +110,9 @@ After generation, the runner compares each saved answer with its dataset target.
       return prediction.casefold().strip() == target_answer.casefold().strip()
   ```
 
+  Save the function in a file such as `answer_matcher.py`. In your YAML, uncomment
+  `answer_matcher_path` and set it to that file's absolute path.
+
   The function receives the raw prediction and target and must return a Boolean.
   Use it for aliases, punctuation rules, numeric tolerance, or other task-specific
   matching. The toolkit still handles invalid outputs and `UNKNOWN`.
@@ -135,6 +140,10 @@ Changing the matcher reevaluates saved answers without rerunning the model.
   trusted Python file defining `compute_metrics(records)`. Generic Model
   Behavior metrics are always reported first; custom metrics are additional
   summaries and do not change correctness labels, probe readiness, or probes.
+
+Save the function below in a file such as `custom_metrics.py`. In your YAML,
+uncomment `custom_metrics_path` and set it to that file's absolute path.
+Any metadata it uses belongs in each JSONL record's `metadata` object.
 
 The toolkit calls the function once for all examples and once for each split.
 Each record is a dictionary with this structure:
@@ -233,6 +242,9 @@ Applies only when the dataset omits `split`.
 
 ## Example
 
+These settings belong in `configs/task.yaml` or your own configuration file.
+Replace the example paths with your actual paths.
+
 ```yaml
 # Required
 model_name_or_path: "C:/models/my-model"
@@ -273,9 +285,10 @@ python -m src.run configs/task.yaml --prepare-only
 
 Preparation checks the configuration and dataset without loading the model.
 Unknown fields, invalid values, duplicate YAML keys, and bad paths are reported
-together. Use `--behavior-only` to run through answer evaluation without
-capturing activations or training probes. Add `--show-examples N` to inspect
-individual inputs, predictions, targets, and outcomes.
+together. In the command above, replace `--prepare-only` with `--behavior-only`
+to run through answer evaluation without capturing activations or training probes.
+Add `--show-examples 10` to that command to inspect the first 10 inputs,
+predictions, targets, and outcomes. These flags go in the command, not the YAML.
 
 ## Run identity and reuse
 
@@ -287,6 +300,7 @@ Running the same setup again reuses completed work. Dataset extensions can reuse
 generations and activations for unchanged examples. Changes limited to matching,
 metrics, probe settings, or threshold selection reuse compatible earlier stages.
 
-Use `--force-recompute` to regenerate the current run. This clears its downstream
+Add `--force-recompute` to your `python -m src.run configs/task.yaml` command
+to regenerate the current run. This clears its downstream
 evaluation, activation, probe, and report artifacts. Every invocation is also
 recorded in `<run_dir>/execution.log`.
