@@ -11,7 +11,7 @@ your [JSONL dataset](dataset-format.md).
 - **`model_name_or_path`** - Required Hugging Face model ID or absolute path to a local pretrained checkpoint. Uses Transformers’ `AutoModelForCausalLM` for text-only, decoder-only models. The tokenizer comes from the same location by default.
 - **`model_revision`** - Optional Hub commit, tag, or branch. When omitted for a Hub model, the loader resolves and records the exact commit. For a local checkpoint, this field is required as a stable version string; change it whenever any checkpoint file changes. It identifies caches but is not passed to Transformers.
 - **`device` (optional; default: `auto`)** - `auto`, `cpu`, `cuda`, or a numbered CUDA device such as `cuda:1`.
-- **`dtype` (optional; default: `auto`)** - `auto`, `float16`, `bfloat16`, or `float32`. `auto` uses the dtype stored with the checkpoint.
+- **`dtype` (optional; default: `auto`)** - `auto`, `float16`, `bfloat16`, or `float32`. `auto` uses the checkpoint's precision, not a hardware-based choice. Before generation, the toolkit warns if BF16 is loaded on a GPU without native BF16 support. If your model supports FP16, consider setting `dtype: "float16"` in your task YAML. The warning does not change precision automatically.
 - **`dataset_path`** - Required absolute path to the JSONL dataset.
 - **`system_prompt_path` (optional)** - Absolute path to a nonempty UTF-8 text
   file used as the fixed system message for every example. It must not contain

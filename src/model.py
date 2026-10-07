@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,35 @@ def _resolved_dtype(model: Any, requested: str) -> str:
     if model_dtype is None:
         return requested
     return str(model_dtype).removeprefix("torch.")
+
+
+def _warn_slow_precision(torch: Any, loaded: LoadedModel) -> None:
+    """Check native BF16 support on the GPUs actually used by the model."""
+    if loaded.resolved_dtype != "bfloat16":
+        return
+    devices = loaded.resolved_device
+    placements = devices.values() if isinstance(devices, dict) else [devices]
+    indices = set()
+    for device in placements:
+        if device.isdecimal():
+            indices.add(int(device))
+        elif device == "cuda":
+            indices.add(torch.cuda.current_device())
+        elif device.startswith("cuda:"):
+            indices.add(int(device.split(":", 1)[1]))
+
+    unsupported = []
+    for index in sorted(indices):
+        with torch.cuda.device(index):
+            if not torch.cuda.is_bf16_supported(including_emulation=False):
+                unsupported.append(f"cuda:{index} ({torch.cuda.get_device_name(index)})")
+    if unsupported:
+        logging.getLogger(__name__).warning(
+            "Model precision: bfloat16 lacks native support on %s; generation may "
+            "be slow. Consider setting dtype: \"float16\" in your task YAML if your "
+            "model supports FP16. Continuing with bfloat16; precision was not changed.",
+            ", ".join(unsupported),
+        )
 
 
 def _resolve_model(
@@ -212,13 +242,15 @@ def load_model(
         raise ModelLoadError("The loaded model does not support text generation.")
     model.eval()
 
-    return LoadedModel(
+    loaded = LoadedModel(
         model=model,
         tokenizer=tokenizer,
         resolved_device=_resolved_device(model, config.device),
         resolved_dtype=_resolved_dtype(model, config.dtype),
         resolved_revision=resolved_revision,
     )
+    _warn_slow_precision(torch, loaded)
+    return loaded
 
 
 def describe_model(loaded: LoadedModel) -> dict:

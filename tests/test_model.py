@@ -1,5 +1,6 @@
 """Offline tests for model loading and compatibility checks."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -14,12 +15,34 @@ class _Cuda:
     def __init__(self, available=True, count=2):
         self.available = available
         self.count = count
+        self.current = 0
+        self.native_bf16 = {index: True for index in range(count)}
+        self.checked_devices = []
 
     def is_available(self):
         return self.available
 
     def device_count(self):
         return self.count
+
+    def current_device(self):
+        return self.current
+
+    @contextmanager
+    def device(self, index):
+        previous = self.current
+        self.current = index
+        try:
+            yield
+        finally:
+            self.current = previous
+
+    def is_bf16_supported(self, including_emulation=True):
+        self.checked_devices.append((self.current, including_emulation))
+        return including_emulation or self.native_bf16[self.current]
+
+    def get_device_name(self, index):
+        return f"GPU {index}"
 
 
 class _Tokenizer:
@@ -123,6 +146,72 @@ class ModelTests(unittest.TestCase):
         self.assertIs(loaded.tokenizer, tokenizer)
         dependencies[3].from_pretrained.assert_called_once()
         dependencies[2].from_pretrained.assert_called_once()
+
+    def test_warns_for_emulated_bf16_without_changing_auto_or_explicit_precision(self):
+        for requested in ("auto", "bfloat16"):
+            with self.subTest(dtype=requested):
+                model = _Model()
+                model.dtype = "torch.bfloat16"
+                dependencies = self.dependencies(model=model)
+                cuda = dependencies[0].cuda
+                cuda.native_bf16[0] = False
+                with self.assertLogs("src.model", level="WARNING") as logs:
+                    loaded, _ = self.load(self.config(dtype=requested), dependencies)
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn("cuda:0 (GPU 0)", logs.output[0])
+                self.assertIn('dtype: "float16" in your task YAML', logs.output[0])
+                self.assertIn("if your model supports FP16", logs.output[0])
+                self.assertIn("precision was not changed", logs.output[0])
+                self.assertEqual(loaded.resolved_dtype, "bfloat16")
+                self.assertEqual(cuda.checked_devices, [(0, False)])
+                self.assertEqual(dependencies[2].from_pretrained.call_args.kwargs["torch_dtype"],
+                                 "auto" if requested == "auto" else "torch.bfloat16")
+
+    def test_checks_each_sharded_gpu_once_and_reports_only_unsupported_devices(self):
+        model = _Model()
+        model.dtype = "torch.bfloat16"
+        model.hf_device_map = {"a": 0, "b": "cuda:1", "c": 1, "d": "cpu", "e": "disk"}
+        dependencies = self.dependencies(model=model)
+        cuda = dependencies[0].cuda
+        cuda.native_bf16[1] = False
+        with self.assertLogs("src.model", level="WARNING") as logs:
+            self.load(dependencies=dependencies)
+        self.assertIn("cuda:1 (GPU 1)", logs.output[0])
+        self.assertNotIn("cuda:0", logs.output[0])
+        self.assertEqual(cuda.checked_devices, [(0, False), (1, False)])
+        self.assertEqual(cuda.current_device(), 0)
+
+    def test_warns_for_single_device_models_without_a_device_map(self):
+        for device in ("cuda", "cuda:1"):
+            with self.subTest(device=device):
+                model = _Model()
+                model.dtype = "torch.bfloat16"
+                model.hf_device_map = None
+                model.device = device
+                dependencies = self.dependencies(model=model)
+                cuda = dependencies[0].cuda
+                cuda.current = 1
+                cuda.native_bf16[1] = False
+                with self.assertLogs("src.model", level="WARNING") as logs:
+                    self.load(dependencies=dependencies)
+                self.assertIn("cuda:1 (GPU 1)", logs.output[0])
+                self.assertEqual(cuda.checked_devices, [(1, False)])
+                self.assertEqual(cuda.current_device(), 1)
+
+    def test_no_warning_for_supported_bf16_cpu_or_other_precisions(self):
+        cases = (("bfloat16", "cuda:1"), ("bfloat16", "cpu"),
+                 ("float16", "cuda:0"), ("float32", "cuda:0"))
+        for dtype, device in cases:
+            with self.subTest(dtype=dtype, device=device):
+                model = _Model()
+                model.dtype = f"torch.{dtype}"
+                model.hf_device_map = {"": device}
+                dependencies = self.dependencies(model=model)
+                dependencies[0].cuda.native_bf16[0] = False
+                with self.assertNoLogs("src.model", level="WARNING"):
+                    self.load(dependencies=dependencies)
+                self.assertEqual(dependencies[0].cuda.checked_devices,
+                                 [(1, False)] if (dtype, device) == cases[0] else [])
 
     def test_forwards_requested_revision_and_explicit_loading_settings(self):
         config = self.config(
