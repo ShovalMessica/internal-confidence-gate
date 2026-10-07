@@ -22,7 +22,8 @@ Choose one of these two options:
 - **Shared instructions in a system prompt**
 
   Use this when the same instructions apply to every example. Save them in a
-  UTF-8 text file, such as `system-prompt.txt`. You can keep it anywhere.
+  UTF-8 text file, such as `system-prompt.txt`. Both `.txt` and `.md` files are
+  accepted; the toolkit reads their contents literally. You can keep it anywhere.
   In [`configs/task.yaml`](../configs/task.yaml), uncomment `system_prompt_path`
   and replace the example path with your file's absolute path.
   [Step 4](#4-fill-in-the-configuration) covers the configuration.
