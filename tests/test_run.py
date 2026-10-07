@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -18,7 +19,9 @@ import yaml
 from src.activation import ActivationError, ActivationResult
 from src.config import TaskConfig
 from src.model import ModelLoadError
-from src.run import _capture_activations, main, prepare_run
+from src.run import (
+    _capture_activations, _start_execution_log, _stop_execution_log, main, prepare_run,
+)
 from src.generation import (
     ALLOW_ABSTENTION_INSTRUCTION,
     ANSWER_INSTRUCTION,
@@ -29,6 +32,33 @@ from src.generation import (
 )
 from src.generation_cache import generation_runtime_versions
 from src.run_store import build_run_identity
+
+
+class ExecutionLogTests(unittest.TestCase):
+    def test_retained_streams_can_write_and_flush_after_log_closes(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                log, terminal_out, terminal_err = _start_execution_log(directory)
+                retained_out, retained_err = sys.stdout, sys.stderr
+                try:
+                    print("saved output")
+                    print("saved error", file=sys.stderr)
+                finally:
+                    _stop_execution_log(log, terminal_out, terminal_err)
+                self.assertIs(sys.stdout, stdout)
+                self.assertIs(sys.stderr, stderr)
+                self.assertTrue(log.closed)
+                saved = (directory / "execution.log").read_bytes()
+                for stream in (retained_out, retained_err):
+                    self.assertEqual(stream.write("shutdown reset"), len("shutdown reset"))
+                    stream.flush()
+                self.assertEqual((directory / "execution.log").read_bytes(), saved)
+            self.assertIn(b"saved output", saved)
+            self.assertIn(b"saved error", saved)
+            self.assertIn("shutdown reset", stdout.getvalue())
+            self.assertIn("shutdown reset", stderr.getvalue())
 
 
 class RunTests(unittest.TestCase):

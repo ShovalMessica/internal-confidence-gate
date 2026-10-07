@@ -131,12 +131,15 @@ class _Tee:
 
     def write(self, value: str) -> int:
         self.terminal.write(value)
-        self.log.write(value)
+        # Console libraries may retain this stream for their shutdown callbacks.
+        if not self.log.closed:
+            self.log.write(value)
         return len(value)
 
     def flush(self) -> None:
         self.terminal.flush()
-        self.log.flush()
+        if not self.log.closed:
+            self.log.flush()
 
     def __getattr__(self, name: str):
         return getattr(self.terminal, name)
