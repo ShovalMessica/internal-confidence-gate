@@ -10,20 +10,42 @@ data only; it is not part of preparing your own task.
 
 ## 1. Prepare your prompt
 
-Define the task, allowed answers, decision rules, and any demonstrations.
-Put shared instructions in a UTF-8 text file, such as `system-prompt.txt`.
-The file is read literally: fill in any placeholders and do not wrap it in
-Markdown code fences. Alternatively, include all instructions in each dataset
-`input` and omit the separate prompt file.
+Write instructions that tell the model what to do and what kind of answer to
+return. Include the context, decision rules, and examples it needs to understand
+your task.
 
-For example, a sentiment task could use:
+Separate the shared instructions from the content that changes between examples:
+
+- **Shared instructions:** save these in a UTF-8 text file, such as
+  `system-prompt.txt`. The toolkit sends this same file as the system message
+  for every example. Set its path through `system_prompt_path` in step 3.
+- **Example content:** put this in each dataset record's `input` field. The
+  toolkit sends it as the user message alongside the shared instructions.
+
+For a sentiment task, `system-prompt.txt` could contain:
 
 ```text
 Classify the review as POSITIVE or NEGATIVE.
 ```
 
-Do not add `FINAL:`. The toolkit adds the answer-format instruction and marker.
-See [Prompt examples](prompt-examples.md) for more detailed task instructions.
+One example's `input` would be `The battery lasts all day.` The instructions
+stay the same; the review changes for each example.
+
+The prompt file is read as written. Copy only the instructions, without the
+surrounding code fences shown above. The toolkit does not fill placeholders.
+If you prefer a single message, include the instructions in every `input` and
+omit `system_prompt_path`.
+
+**Answer formatting is handled by the toolkit.** It adds an instruction to
+return only the final answer, then starts the model's answer with `FINAL:`.
+The model generates the answer after that marker, for example `POSITIVE`.
+This lets the toolkit locate the answer and its tokens. Do not add the marker
+yourself. In reasoning mode, this answer step follows a separate reasoning phase.
+See [Generation](configuration.md#generation) for the exact instructions.
+
+See [Prompt examples](prompt-examples.md) for fuller task prompts. Try your
+instructions on a separate development sample before the full run, as described
+in step 4.
 
 ## 2. Prepare your dataset
 
