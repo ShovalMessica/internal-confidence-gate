@@ -159,11 +159,3 @@ prompts, generation, splits, answer matching, semantic spans, metrics, and probe
 
 Circuit finding, TransformerLens/PEAP signals, head-level analysis, and
 uncertainty intervals remain future extensions.
-
-## Development
-
-Run the offline suite without loading a model:
-
-```sh
-python -m unittest discover -s tests -v
-```
