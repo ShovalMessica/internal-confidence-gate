@@ -263,24 +263,14 @@ The configuration loader itself does not read dataset records, inspect model wei
 
 ## Run identity and reuse
 
-After validation, the runner creates a small `run.json` record. The run ID is derived from the effective configuration and the SHA-256 hash of the exact dataset bytes. YAML and dataset paths do not affect the ID; `output_dir` only controls where the run is stored.
+Each validated setup is stored under `<output_dir>/<run_id>`. The run ID depends
+on the effective configuration and exact dataset contents, not their file paths.
+The resolved model revision is pinned so resumed runs use the same weights.
 
-Model revision, device, dtype, generation seed, active generation settings, and pipeline protocol versions affect run identity. Inactive settings are excluded. For example, `reasoning_max_new_tokens` does not affect a direct-mode run, and split settings do not affect a dataset with supplied splits. Folder existence alone is not treated as completed work.
+Running the same setup again reuses completed work. Dataset extensions can reuse
+generations and activations for unchanged examples. Changes limited to matching,
+metrics, probe settings, or threshold selection reuse compatible earlier stages.
 
-When `model_revision` is omitted for a Hub model, the model loader resolves one exact commit and uses it for the tokenizer and weights. That commit is recorded at the first model load and reused by interrupted and forced runs rather than silently switching weights. Local checkpoints require an explicit version string, which participates in run and cache identity; users must change it whenever the local files change.
-
-Generations are cached per example under `<output_dir>/.cache/generations`. A cache entry is reusable only when the example ID, exact input, model context, and generation settings match. Each run stores an ordered `generation-manifest.jsonl` that references those shared records. Extending a dataset therefore generates only new or modified inputs; target-answer changes require reevaluation but not model generation.
-
-After evaluation meets the probe-readiness requirements, each run stores all activations in one `<run_dir>/activations.h5` file. Capture replays the exact saved token sequence and stores float16 Hugging Face hidden states for `prompt_end`, every `answer_tokens` position, any configured semantic spans, and `final_prompt_end`. The toolkit verifies token and model provenance and records the difference between generation and replay log probabilities. If the difference exceeds the diagnostic tolerance, it prints a warning that the stored activations represent the per-example replay computation. Padded generation batches and unpadded replay can differ numerically in reduced precision. Semantic spans require a fast tokenizer and are mapped before the activation file is modified. Interrupted capture resumes within the same file. When a dataset is extended, compatible unchanged examples are copied from an earlier run without running the model again.
-
-Probe training uses a separate probe ID, so `probe_seed` and matcher changes do not affect generation or activation identity. Validation selection and frozen test evaluation have their own IDs, so downstream setting changes reuse completed upstream work. All groups share `<run_dir>/probes.h5`; completed groups are validated and reused.
-
-The custom metric path does not affect run, generation, evaluation, activation,
-or probe identity. Its file hash identifies a small summary stored in
-`run.json`. Changing dataset metadata creates a new run because the exact
-dataset bytes changed, while generations for unchanged IDs and inputs remain
-reusable from the shared generation cache.
-
-Sampled direct generation runs one example at a time so its ID-derived seed is independent of neighboring examples. Greedy direct generation may use `direct_batch_size`. Use `--force-recompute` to bypass cached generations for the current run while retaining the pinned model revision; downstream evaluations, activations, and probes for that run are cleared.
-
-Two YAML files in different folders use different default output roots. Set the same absolute `output_dir` when they should share stored runs. Every invocation is also appended to `<run_dir>/execution.log` while remaining visible in the terminal.
+Use `--force-recompute` to regenerate the current run. This clears its downstream
+evaluation, activation, probe, and report artifacts. Every invocation is also
+recorded in `<run_dir>/execution.log`.
