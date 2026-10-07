@@ -2,7 +2,7 @@
 
 Edit [configs/task.yaml](../configs/task.yaml), or your own copy of it.
 All configuration fields below are top-level YAML keys in that file.
-Replace required `null` values, edit optional defaults as needed, and remove the
+Fill in required `""` values, edit optional defaults as needed, and remove the
 leading `#` to enable a commented setting. Example-specific fields belong in
 your [JSONL dataset](dataset-format.md).
 
@@ -250,12 +250,12 @@ Replace the example paths with your actual paths.
 model_name_or_path: "C:/models/my-model"
 model_revision: "my-model-v1"
 dataset_path: "C:/data/dataset.jsonl"
-reasoning_mode: reasoning
+reasoning_mode: "reasoning"
 
 # Optional - example output path; remaining values show defaults
 output_dir: "C:/results/confidence-gate"
-device: auto
-dtype: auto
+device: "auto"
+dtype: "auto"
 reasoning_max_new_tokens: 1024
 answer_max_new_tokens: 64
 allow_abstention: true
@@ -263,10 +263,10 @@ allow_abstention: true
 # custom_metrics_path: "C:/tasks/my-task/custom_metrics.py"
 generation_seed: 42
 direct_batch_size: 8
-decoding_strategy: model_default
+decoding_strategy: "model_default"
 probe_seed: 42
 probe_regularization_c: 1.0
-probe_class_weight: balanced
+probe_class_weight: "balanced"
 target_tpr: 0.90
 split_ratios:
   train: 0.70

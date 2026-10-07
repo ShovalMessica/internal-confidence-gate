@@ -1,15 +1,15 @@
-# Required - replace null with your values.
-model_name_or_path: null  # Hugging Face ID or absolute checkpoint path
-dataset_path: null        # Absolute path to your JSONL dataset
-reasoning_mode: null      # direct or reasoning
+# Required - fill in the empty strings below.
+model_name_or_path: ""    # Hugging Face ID or absolute checkpoint path
+dataset_path: ""          # Absolute path to your JSONL dataset
+reasoning_mode: ""        # direct or reasoning
 
 # Optional fixed system message shared by every example.
 # system_prompt_path: "C:/path/to/system-prompt.txt"
 
 # Model loading defaults
 # model_revision: "abc123" # Optional Hub revision; required local checkpoint version
-device: auto               # auto, cpu, cuda, or cuda:N
-dtype: auto                # auto, float16, bfloat16, or float32
+device: "auto"             # auto, cpu, cuda, or cuda:N
+dtype: "auto"              # auto, float16, bfloat16, or float32
 
 # Optional - uncomment to choose an absolute output directory.
 # Otherwise, use an outputs folder beside this YAML.
@@ -23,12 +23,12 @@ allow_abstention: true
 # custom_metrics_path: "C:/path/to/custom_metrics.py"
 generation_seed: 42
 direct_batch_size: 8       # Used only in direct mode
-decoding_strategy: model_default    # model_default or greedy
+decoding_strategy: "model_default"  # model_default or greedy
 probe_seed: 42
-# probe_positions: [prompt_end]  # Omit to train every captured position
+# probe_positions: ["prompt_end"]  # Omit to train every captured position
 # probe_layers: [35]             # 0 is the embedding output; omit for every state
 probe_regularization_c: 1.0
-probe_class_weight: balanced     # balanced or none
+probe_class_weight: "balanced"   # balanced or none
 target_tpr: 0.90           # Retain at least this fraction of correct validation predictions
 
 # Used only when the dataset omits split assignments.

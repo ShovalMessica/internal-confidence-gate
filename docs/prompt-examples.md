@@ -7,7 +7,7 @@ prompt. See [Generation](configuration.md#generation).
 
 ## Named-entity correction - no reasoning
 
-In [`configs/task.yaml`](../configs/task.yaml), set `reasoning_mode: direct`
+In [`configs/task.yaml`](../configs/task.yaml), set `reasoning_mode: "direct"`
 and keep `allow_abstention: true`. Save the system prompt below in a text file
 without its code fences, then set `system_prompt_path` in the YAML to its
 absolute path. Put the example-specific content in each JSONL record's `input`.
@@ -129,7 +129,7 @@ The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Ill
 
 ## Speaker attribution - with reasoning
 
-In `configs/task.yaml`, set `reasoning_mode: reasoning`, keep
+In `configs/task.yaml`, set `reasoning_mode: "reasoning"`, keep
 `allow_abstention: true`, and leave `system_prompt_path` commented out for this
 complete-prompt example. Fill the placeholders yourself and put the resulting
 text in each JSONL record's `input`.

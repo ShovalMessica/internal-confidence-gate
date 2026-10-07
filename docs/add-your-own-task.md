@@ -79,8 +79,8 @@ Both modes use this final-answer instruction, supplied by the toolkit:
 Answer immediately after FINAL: with only the final answer. Do not repeat the prefix or add reasoning or explanation.
 ```
 
-In [`configs/task.yaml`](../configs/task.yaml), replace `reasoning_mode: null`
-with `reasoning_mode: direct` or `reasoning_mode: reasoning`:
+In [`configs/task.yaml`](../configs/task.yaml), replace `reasoning_mode: ""`
+with `reasoning_mode: "direct"` or `reasoning_mode: "reasoning"`:
 
 - **`direct`:** the toolkit appends the answer instruction to your user message,
   formats the messages, starts the assistant's response with `FINAL:`, then lets
