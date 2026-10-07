@@ -1,10 +1,12 @@
 # Internal Confidence Gate
 
-Can a model's internal states identify incorrect answers better than output
-probability alone? This toolkit lets you test that question on your own task.
-You provide a model, task prompt, and examples with target answers; it trains a
-confidence gate and reports how reliably it accepts correct predictions while
-rejecting incorrect ones. It does not modify the model or replace its answers.
+A toolkit for building confidence gates from internal model activations for
+user-defined tasks.
+
+The toolkit trains lightweight probes to estimate whether a model's prediction
+is correct, then compares their performance with confidence derived from output
+probabilities. It supports task-specific prompts, correctness rules, and token
+positions for collecting activations without modifying the underlying model.
 
 ## Quick start
 
