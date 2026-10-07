@@ -189,8 +189,8 @@ rerunning the model.
 
 - **`probe_seed` (optional; default: `42`)** - Seed for reproducible linear-probe fitting.
 - **`probe_positions` (optional)** - Capture positions to use for probe training,
-  such as `[prompt_end]`. When omitted, train on every captured default and
-  semantic position.
+  such as `[prompt_end]` or `[span_1]`. When omitted, train on every default
+  capture position and semantic span.
 - **`probe_layers` (optional)** - Model-state numbers to use, such as `[35]`.
   Layer `0` is the embedding output; positive numbers identify returned
   transformer hidden states. When omitted, use every state.

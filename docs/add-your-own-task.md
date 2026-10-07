@@ -247,7 +247,7 @@ comparisons and TPR-FPR curves. Metric definitions are in
 - **[Custom matching](configuration.md#answer-evaluation):** save your
   `answer_match` function in a Python file. In `configs/task.yaml`, uncomment
   `answer_matcher_path` and set it to that file's absolute path.
-- **[Semantic spans](dataset-format.md#capture-locations):** add `semantic_spans`
+- **[Semantic spans](dataset-format.md#semantic-spans):** add `semantic_spans`
   to each JSONL record to mark input text for activation capture. Use the same
   span keys and semantic roles across examples.
 - **[Custom metrics](configuration.md#custom-task-metrics):** add any needed

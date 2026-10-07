@@ -59,21 +59,11 @@ Example
 
   For example, `{"start_char":11,"end_char":15}` selects `Jhon` in `Please ask Jhon.`. Count Unicode code points using Python string indexing into the decoded input, not bytes or JSON escape characters. Combining marks count separately. The loader preserves input text without trimming or normalization.
 
-## Capture locations
+## Semantic spans
 
 As explained in the [README](../README.md), probes use internal activations to estimate prediction reliability.
 
-Default capture uses the Hugging Face hidden states at three locations:
-
-- `prompt_end`: the final token of the rendered chat prompt before generation.
-- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker.
-- `answer_tokens`: every generated answer token.
-
-The toolkit saves the embedding output and every returned layer state. When a
-final marker is used, the two prompt positions remain distinct. One-token and
-multi-token answers use the same tensor structure.
-
-Additional spans can mark useful task-specific text, such as the name being
+Semantic spans mark task-specific text in `input`, such as the name being
 checked in a correction task. The role stays fixed even when the text and
 location change.
 
@@ -83,6 +73,18 @@ include toolkit instructions or special tokens because they refer only to
 `input`.
 
 Semantic spans require a fast Hugging Face tokenizer with character-offset support. Before writing activations, the toolkit verifies that rendering reproduces the saved prompt tokens and that every span maps to at least one token. A mapping failure stops activation capture and reports the example ID and span name.
+
+## Default capture positions
+
+Without annotations, the toolkit captures Hugging Face hidden states at:
+
+- `prompt_end`: the final token of the rendered chat prompt before generation.
+- `final_prompt_end`: the final token of the toolkit's injected `FINAL:` marker.
+- `answer_tokens`: every generated answer token.
+
+The toolkit saves the embedding output and every returned layer state for
+default capture positions and semantic spans. The two prompt positions remain
+distinct. One-token and multi-token answers use the same tensor structure.
 
 ## Validation
 
