@@ -82,7 +82,9 @@ assistant generation boundary.
   ```
 
   Enabled `UNKNOWN` responses are reported as abstentions and excluded from
-  probe training and gate evaluation.
+  probe training and gate evaluation. When disabled, any `UNKNOWN` response
+  is compared with the target as an ordinary answer. This setting does not
+  block the model from generating it.
 
 - **`generation_seed` (optional; default: `42`)** - Base seed used to derive a reproducible seed from each example ID. It controls generation only. Activation capture replays saved tokens without sampling.
 

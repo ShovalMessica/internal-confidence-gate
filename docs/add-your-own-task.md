@@ -61,7 +61,13 @@ See [Prompt examples](prompt-examples.md) for more detailed task prompts.
 
 ## 2. Reasoning mode
 
-Set `reasoning_mode` to choose how the model answers:
+Both modes use this final-answer instruction, supplied by the toolkit:
+
+```text
+Complete the FINAL: line with only the answer, without reasoning or explanation.
+```
+
+Set `reasoning_mode` to choose when it is added:
 
 - **`direct`:** the toolkit appends the answer instruction to your user message,
   formats the messages, starts the assistant's response with `FINAL:`, then lets
@@ -77,12 +83,20 @@ tokens for activation capture. **You do not add this marker yourself.**
 For example, the toolkit supplies `FINAL:` and the model generates `POSITIVE`,
 producing `FINAL: POSITIVE`.
 
-By default, the model may return `UNKNOWN` when uncertain. Set
-`allow_abstention: false` to request its best answer instead. Keep your task
-instructions consistent with that choice.
+`allow_abstention` controls how uncertainty is handled in both modes:
 
-See [Generation settings](configuration.md#generation) for the exact
-instructions and token limits.
+- **`true` (default):** adds "If you cannot determine the answer, return UNKNOWN."
+  Exact `UNKNOWN` responses are reported as abstentions and excluded from probe
+  training and gate evaluation. Dataset targets cannot be `UNKNOWN`.
+- **`false`:** adds "Provide your best answer. Do not return UNKNOWN."
+  If the model still returns `UNKNOWN`, it is compared with the target as an
+  ordinary answer.
+
+This setting changes instructions and evaluation; it does not block the model
+from generating `UNKNOWN`. Keep your task instructions consistent with it.
+
+See [Generation settings](configuration.md#generation) for the reasoning
+instruction and token limits.
 
 ## 3. Prepare your dataset
 
