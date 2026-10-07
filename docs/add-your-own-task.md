@@ -11,41 +11,42 @@ data only; it is not part of preparing your own task.
 ## 1. Prepare your prompt
 
 Describe the task, expected answer, and any rules or examples the model needs.
-Choose one of these two options.
+Choose one of these two options:
 
-**Shared instructions in a system prompt**
+- **Shared instructions in a system prompt**
 
-Use this when the same instructions apply to every example. Save them in a
-UTF-8 text file and set its absolute path as `system_prompt_path`.
+  Use this when the same instructions apply to every example. Save them in a
+  UTF-8 text file and set its absolute path as `system_prompt_path`.
 
-Contents of `system-prompt.txt`:
+  Contents of `system-prompt.txt`:
 
-```text
-Classify the review as POSITIVE or NEGATIVE.
-```
+  ```text
+  Classify the review as POSITIVE or NEGATIVE.
+  ```
 
-Each dataset record's `input` contains only the changing content:
+  Each dataset record's `input` contains only the changing content:
 
-```text
-The battery lasts all day.
-```
+  ```text
+  The battery lasts all day.
+  ```
 
-The toolkit sends the file as a **system message** and each `input` as a
-**user message**.
+  The toolkit sends the file as a **system message** and each `input` as a
+  **user message**.
 
-**Complete prompt in each input**
+- **Complete prompt in each input**
 
-Use this when you already have complete prompts or need different instructions
-per example. Omit `system_prompt_path` and put everything in each record's
-`input`:
+  Use this when you already have complete prompts or need different instructions
+  per example. Omit `system_prompt_path` and put everything in each record's
+  `input`:
 
-```text
-Classify the review as POSITIVE or NEGATIVE.
+  ```text
+  Classify the review as POSITIVE or NEGATIVE.
 
-Review: The battery lasts all day.
-```
+  Review: The battery lasts all day.
+  ```
 
-The toolkit sends this as **one user message**, without a system message.
+  The toolkit sends this as **one user message**, without a system message.
+
 These examples show two ways to supply the same task.
 
 Both options use the model tokenizer's **chat template** to format the messages
