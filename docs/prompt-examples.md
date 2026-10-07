@@ -1,12 +1,12 @@
 # Prompt design examples
 
-Design and refine the task prompt you supply so the model reliably answers in the form your task expects—for example, a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
+Design and refine the task prompt you supply so the model reliably answers in the form your task expects, such as a participant ID rather than a name or explanation. Your instructions, context, examples, and decision rules all influence this behavior. Test different versions on a small development sample before settling on a prompt design.
 
 Below are two prompt examples showing how instructions, decision rules, and demonstrations can be combined. Fixed instructions may be supplied once as an optional system prompt; each dataset `input` is always the complete user message for its example.
 
 The separately marked **toolkit-added** text is automatic; users do not write it. It illustrates the toolkit's fixed [generation behavior](configuration.md#generation).
 
-## Named-entity correction — no reasoning
+## Named-entity correction - no reasoning
 
 **Example system prompt (fixed across examples):**
 
@@ -123,7 +123,7 @@ If you cannot determine the answer, return UNKNOWN.
 
 The toolkit starts the reply with `FINAL:`; the model supplies the answer. **Illustrative reply:** `FINAL: J`.
 
-## Speaker attribution — with reasoning
+## Speaker attribution - with reasoning
 
 **Example prompt:**
 

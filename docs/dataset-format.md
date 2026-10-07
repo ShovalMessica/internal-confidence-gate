@@ -18,9 +18,9 @@ Example
 
 ## Fields
 
-- **`id`** — Unique integer identifier. Boolean values are not accepted as integers.
+- **`id`** - Unique integer identifier. Boolean values are not accepted as integers.
 
-- **`input`** — The complete nonempty user message for this example. When an
+- **`input`** - The complete nonempty user message for this example. When an
   optional fixed [`system_prompt_path`](configuration.md#model-and-paths) is
   configured, put shared task instructions in that file and only the
   example-specific user content here. Otherwise, include all task instructions
@@ -28,25 +28,25 @@ Example
   generation, the toolkit adds its output instruction and `FINAL:` prefix. See
   [Generation](configuration.md#generation).
 
-- **`target_answer`** — One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
+- **`target_answer`** - One expected answer as a nonempty string, without `FINAL:`. Targets containing `FINAL:` (case-insensitive) are rejected. When abstention is enabled, `UNKNOWN` is reserved for model abstention and cannot be a target answer. When abstention is disabled, it is allowed as a normal target.
 
   Correctness uses complete-answer matching after ignoring case, trimming surrounding whitespace, and collapsing repeated whitespace. Extra words remain significant. Tasks requiring different equivalence rules can configure a custom [`answer_match`](configuration.md#answer-evaluation) function.
 
   Target answers support supervised probe training and evaluation. They never enter the probe as features, and applying a trained probe does not require them.
 
-- **`split` (optional)** — `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
+- **`split` (optional)** - `"train"`, `"validation"`, or `"test"`. Supply it for every example or none.
 
   If omitted, the toolkit randomly assigns 70%/15%/15% using seed 42. Both proportions and seed are configurable. Fractions are rounded down, then remaining examples go to the splits with the largest fractional remainders. Ties follow train, validation, test order.
 
   Automatic splitting treats records independently. If several records come from the same source, conversation, document, or template instance, assign splits yourself so related examples cannot cross split boundaries.
 
-- **`metadata` (optional)** — Free-form JSON object passed to a configured
+- **`metadata` (optional)** - Free-form JSON object passed to a configured
   [custom metric function](configuration.md#custom-task-metrics). You choose
   its inner field names and values; they may differ between examples. Metadata
   is never sent to the model or used as a probe feature. Omit it or use `{}`
   when no metadata is needed; `null` and non-object values are invalid.
 
-- **`semantic_spans` (optional)** — Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
+- **`semantic_spans` (optional)** - Additional input spans for activation capture, using keys `span_1`, `span_2`, etc.
 
   Each span contains integer `start_char` and `end_char` offsets into the original input: zero-based, start inclusive, end exclusive.
 
@@ -70,7 +70,7 @@ The toolkit saves the embedding output and every returned layer state. When a
 final marker is used, the two prompt positions remain distinct. One-token and
 multi-token answers use the same tensor structure.
 
-Additional semantic positions are encouraged when useful—for example, the name being checked in a name-correction task. Their role stays consistent even when their location changes.
+Additional semantic positions are encouraged when useful. In a name-correction task, for example, you could mark the name being checked. Its role stays consistent even when its location changes.
 
 For each correct or incorrect prediction, the toolkit renders the exact initial chat prompt and maps each character span to every overlapping prompt token. One-token spans retain a token dimension of one; multi-token spans preserve every token. Toolkit instructions and special tokens cannot belong to these spans because their offsets are outside the original `input`.
 

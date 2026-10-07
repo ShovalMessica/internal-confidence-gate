@@ -52,8 +52,8 @@ python -m src.run examples/ner/generated/dev-task.yaml --behavior-only --show-ex
 
 Revise the task instructions, demonstrations, or decision rules if the model
 misunderstands the task or output contract. After editing `system-prompt.md`,
-rerun the same `prepare.py` command—with the same model, seed, and example
-count—before the next behavior check. This regenerates the text file referenced
+rerun the same `prepare.py` command with the same model, seed, and example
+count before the next behavior check. This regenerates the text file referenced
 by the YAML. The development sample is separate from the final test split. Once
 behavior is satisfactory, freeze the prompt before the full run.
 

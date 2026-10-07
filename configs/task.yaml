@@ -1,4 +1,4 @@
-# Required — replace null with your values.
+# Required - replace null with your values.
 model_name_or_path: null  # Hugging Face ID or absolute checkpoint path
 dataset_path: null        # Absolute path to your JSONL dataset
 reasoning_mode: null      # direct or reasoning
@@ -11,11 +11,11 @@ reasoning_mode: null      # direct or reasoning
 device: auto               # auto, cpu, cuda, or cuda:N
 dtype: auto                # auto, float16, bfloat16, or float32
 
-# Optional — uncomment to choose an absolute output directory.
+# Optional - uncomment to choose an absolute output directory.
 # Otherwise, use an outputs folder beside this YAML.
 # output_dir: "C:/results/my-task"
 
-# Optional — defaults
+# Optional - defaults
 reasoning_max_new_tokens: 1024  # Used only in reasoning mode
 answer_max_new_tokens: 64
 allow_abstention: true
